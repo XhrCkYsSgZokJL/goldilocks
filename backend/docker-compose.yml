@@ -1,0 +1,96 @@
+# Goldilocks-specific Docker stack.
+#
+# Brings up:
+#   - goldilocks-db          Postgres for the backend + notification server
+#   - notification-server    XMTP push relay (APNs / FCM)
+#   - backend                The Fastify app
+#
+# Bring up the upstream XMTP node first via convos-ios's `./dev/up`, then
+# run `docker compose -f goldilocks-backend/docker-compose.yml up -d`.
+# The notification server connects to the XMTP node on the host network.
+
+name: goldilocks
+
+services:
+  goldilocks-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: goldilocks
+      POSTGRES_PASSWORD: goldilocks
+      POSTGRES_DB: goldilocks
+    ports:
+      - "25433:5432"
+    volumes:
+      - goldilocks-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U goldilocks -d goldilocks"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # The XMTP example notification server. It subscribes to topics on the
+  # XMTP node and relays envelopes to APNs (iOS) / FCM (Android).
+  #
+  # Reads its own subscription state from a separate goldilocks_notif_db.
+  # We don't share state with our backend; the backend's notification
+  # subscribe/unsubscribe endpoints write to the same DB the notification
+  # server reads from (configurable). For now we let the notification
+  # server own its own DB, and you can wire your backend to the same
+  # tables once you've decided on a topic format.
+  #
+  # Source: https://github.com/xmtp/example-notification-server-go
+  # Image: built locally from that repo, or pull a pre-built one.
+  # We pin to "latest" for now; pin to a SHA in production.
+  notification-server:
+    image: xmtp/example-notification-server-go:latest
+    platform: linux/amd64
+    depends_on:
+      goldilocks-db:
+        condition: service_healthy
+    environment:
+      # Postgres
+      DB_CONNECTION_STRING: postgres://goldilocks:goldilocks@goldilocks-db:5432/goldilocks?sslmode=disable
+      # XMTP node — uses the host network to reach the convos-ios `node` container.
+      # On macOS, host.docker.internal points at the host. The XMTP node listens
+      # on 5556 (gRPC) on the host.
+      XMTP_GRPC_ADDRESS: host.docker.internal:5556
+      # APNs — REQUIRES an Apple Developer membership. Until you have one,
+      # leave these blank and push delivery will silently no-op.
+      # Once you have a .p8 auth key, mount it and set the path here.
+      APNS_TOPIC: org.convos.ios-local      # change to your bundle id once you rebrand
+      APNS_KEY_PATH: /run/secrets/apns_auth_key.p8
+      APNS_KEY_ID: ""
+      APNS_TEAM_ID: ""
+      APNS_MODE: development                # development | production
+      # FCM (optional, for Android later)
+      FCM_CREDENTIALS_JSON: ""
+      LOG_LEVEL: info
+    ports:
+      - "8080:8080"     # gRPC API the notification server exposes
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Mount your APNs key here once you have it. Until then this is a no-op.
+    # volumes:
+    #   - ./secrets/apns_auth_key.p8:/run/secrets/apns_auth_key.p8:ro
+
+  backend:
+    build: .
+    depends_on:
+      goldilocks-db:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      HOST: 0.0.0.0
+      DATABASE_URL: postgres://goldilocks:goldilocks@goldilocks-db:5432/goldilocks
+      JWT_SECRET: ${JWT_SECRET:-dev_only_secret_replace_me_with_openssl_rand_hex_32_xx}
+      JWT_TTL_SECONDS: 86400
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-mock}
+      LIGHTHOUSE_API_KEY: ${LIGHTHOUSE_API_KEY:-}
+      IPFS_GATEWAY: ${IPFS_GATEWAY:-https://gateway.lighthouse.storage/ipfs}
+      CORS_ORIGIN: "*"
+      LOG_LEVEL: info
+    ports:
+      - "4000:4000"
+
+volumes:
+  goldilocks-pgdata:
