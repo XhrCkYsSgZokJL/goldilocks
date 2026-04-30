@@ -345,10 +345,22 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
             return inbox.clientId
         }
 
+        // Fall back to the group's id when no inviteTag is set on the
+        // group's app-data. The DB has a UNIQUE index on inviteTag and an
+        // empty string would collide across every group that isn't user-
+        // created (Goldilocks agent-owned groups, anything received via
+        // a welcome where the creator never called ensureInviteTag, etc).
+        // Group ids are guaranteed unique, so reusing them as a stable
+        // fallback is safe and idempotent across re-syncs.
+        let resolvedInviteTag: String = {
+            let tag = (try? conversation.inviteTag) ?? ""
+            return tag.isEmpty ? conversation.id : tag
+        }()
+
         return DBConversation(
             id: conversation.id,
             clientConversationId: clientConversationId ?? conversation.id,
-            inviteTag: try conversation.inviteTag,
+            inviteTag: resolvedInviteTag,
             creatorId: try await conversation.creatorInboxId(),
             kind: metadata.kind,
             consent: try conversation.consentState().consent,

@@ -479,6 +479,101 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         try await apiClient.fetchInviteCodeStatus(code)
     }
 
+    /// SIWE handshake against the Goldilocks backend. Loads the device's
+    /// XMTP private key from the keychain, has it sign a challenge, posts
+    /// the message + signature to /v2/me, returns the assigned client info.
+    public func registerWithGoldilocks(claimAdminRole: Bool) async throws -> GoldilocksAuth.Identity {
+        guard let identity = try await identityStore.load() else {
+            throw GoldilocksAuth.AuthError.missingPrivateKey
+        }
+        return try await GoldilocksAuth.register(
+            inboxId: identity.inboxId,
+            privateKey: identity.keys.privateKey,
+            apiClient: apiClient,
+            claimAdminRole: claimAdminRole
+        )
+    }
+
+    public func refreshGoldilocksIdentity() async throws -> GoldilocksAuth.Identity {
+        let response = try await apiClient.fetchGoldilocksMe()
+        return GoldilocksAuth.Identity(
+            clientNumber: response.clientNumber,
+            isAdmin: response.isAdmin,
+            inboxId: response.inboxId
+        )
+    }
+
+    public func promoteSelfToAdminDev() async throws {
+        try await apiClient.promoteSelfToAdminDev()
+    }
+
+    public func fetchGoldilocksAdminInboxIds() async throws -> [String] {
+        let response = try await apiClient.fetchGoldilocksAdmins()
+        return response.inboxes.map { $0.inboxId }
+    }
+
+    public func fetchGoldilocksAgentInboxIds() async throws -> [String] {
+        let response = try await apiClient.fetchGoldilocksAgents()
+        return response.agents.map { $0.inboxId }
+    }
+
+    public func fetchGoldilocksAdminsGroupId() async throws -> String? {
+        let response = try await apiClient.fetchGoldilocksAgents()
+        return response.adminsGroupId
+    }
+
+    public func fetchGoldilocksAlertsGroupId() async throws -> String? {
+        let response = try await apiClient.fetchGoldilocksAgents()
+        return response.alertsGroupId
+    }
+
+    public func fetchAdminChannels() async throws -> [ConvosAPI.GoldilocksAdminChannel] {
+        let response = try await apiClient.fetchGoldilocksAdminChannels()
+        return response.channels
+    }
+
+    public func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws {
+        _ = try await apiClient.registerGoldilocksChannel(role: role, xmtpGroupId: xmtpGroupId)
+    }
+
+    public func markGoldilocksChannelExploded(role: String) async throws {
+        try await apiClient.markGoldilocksChannelExploded(role: role)
+    }
+
+    public func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws {
+        _ = try await apiClient.recreateGoldilocksChannel(role: role, xmtpGroupId: xmtpGroupId)
+    }
+
+    public func listGoldilocksChannels() async throws -> [ConvosAPI.GoldilocksChannel] {
+        let response = try await apiClient.listGoldilocksChannels()
+        return response.channels
+    }
+
+    public func recoverGoldilocksChannels() async throws {
+        try await apiClient.recoverGoldilocksChannels()
+    }
+
+    public func goldilocksManagedConversationCount() async throws -> Int {
+        try await databaseReader.read { db in
+            let trustedIds = GoldilocksAgentTrust.snapshot()
+            guard !trustedIds.isEmpty else { return 0 }
+            return try DBConversation
+                .filter(trustedIds.contains(DBConversation.Columns.creatorId))
+                .fetchCount(db)
+        }
+    }
+
+    public func missingGoldilocksConversationIds(_ xmtpGroupIds: [String]) async throws -> [String] {
+        guard !xmtpGroupIds.isEmpty else { return [] }
+        return try await databaseReader.read { db in
+            let presentIds = try String.fetchAll(db, DBConversation
+                .filter(xmtpGroupIds.contains(DBConversation.Columns.id))
+                .select(DBConversation.Columns.id, as: String.self))
+            let presentSet = Set(presentIds)
+            return xmtpGroupIds.filter { !presentSet.contains($0) }
+        }
+    }
+
     public func conversationRepository(for conversationId: String) -> any ConversationRepositoryProtocol {
         ConversationRepository(
             conversationId: conversationId,

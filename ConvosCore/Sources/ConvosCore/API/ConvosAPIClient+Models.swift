@@ -207,6 +207,116 @@ public enum ConvosAPI {
         }
     }
 
+    // MARK: - Goldilocks identity registration (SIWE)
+
+    public struct GoldilocksChallengeRequest: Codable {
+        public let inboxId: String
+        public let ethAddress: String
+    }
+
+    public struct GoldilocksChallengeResponse: Codable {
+        public let siweMessage: String
+        public let nonce: String
+        public let expiresAt: String
+    }
+
+    public struct GoldilocksMeRequest: Codable {
+        public let inboxId: String
+        public let siweMessage: String
+        public let signature: String
+        /// iOS sets this to `true` on builds whose role is `.admin`,
+        /// so the backend can promote the inbox to admin in the same
+        /// transaction as the client row creation. That ordering makes
+        /// `admin_changed` arrive at the agent before
+        /// `client_registered`, which means reports-agent never creates
+        /// a Reports group for an admin in the first place. Backend
+        /// ignores this flag in production (gate via env var).
+        public let claimAdminRole: Bool
+
+        public init(inboxId: String, siweMessage: String, signature: String, claimAdminRole: Bool) {
+            self.inboxId = inboxId
+            self.siweMessage = siweMessage
+            self.signature = signature
+            self.claimAdminRole = claimAdminRole
+        }
+    }
+
+    public struct GoldilocksMeResponse: Codable, Sendable {
+        public let clientNumber: Int64
+        public let isAdmin: Bool
+        public let inboxId: String
+    }
+
+    public struct GoldilocksAdminInbox: Codable, Sendable {
+        public let inboxId: String
+        public let name: String?
+    }
+
+    public struct GoldilocksAdminsResponse: Codable, Sendable {
+        public let inboxes: [GoldilocksAdminInbox]
+    }
+
+    // MARK: - Goldilocks server agents
+
+    public struct GoldilocksAgent: Codable, Sendable {
+        public let kind: String       // "admins" | "reports"
+        public let inboxId: String
+    }
+
+    public struct GoldilocksAgentsResponse: Codable, Sendable {
+        public let agents: [GoldilocksAgent]
+        /// xmtpGroupId of the cross-admin "Admins" coordination group, or
+        /// nil if the admins-agent hasn't created it yet (no admins
+        /// promoted). Admin iOS clients merge this into
+        /// `GoldilocksOwnedChannels` so the group passes the staleness
+        /// filter on the conversations list.
+        public let adminsGroupId: String?
+        /// xmtpGroupId of the cross-admin "Alerts" feed where client
+        /// reports get cross-posted. Same membership shape as Admins.
+        /// Null until the admins-agent creates it (after the first
+        /// admin is promoted).
+        public let alertsGroupId: String?
+    }
+
+    // MARK: - Goldilocks channel lifecycle
+
+    public struct GoldilocksChannelResponse: Codable, Sendable {
+        public let role: String
+        public let xmtpGroupId: String
+        public let status: String
+    }
+
+    public struct GoldilocksChannel: Codable, Sendable {
+        public let role: String
+        public let xmtpGroupId: String?
+        public let status: String                 // "active" | "exploded"
+        public let createdAt: String
+        public let explodedAt: String?
+        public let recreatedAt: String?
+    }
+
+    public struct GoldilocksChannelsListResponse: Codable, Sendable {
+        public let clientNumber: Int64
+        public let channels: [GoldilocksChannel]
+    }
+
+    /// One row in the admin's view of all clients' channels. Admins use
+    /// `clientNumber` as the human-readable identifier ("Advisory #55").
+    public struct GoldilocksAdminChannel: Codable, Sendable {
+        public let clientNumber: Int64
+        public let clientInboxId: String
+        public let role: String
+        public let xmtpGroupId: String?
+        public let status: String
+        public let createdAt: String
+        public let explodedAt: String?
+        public let recreatedAt: String?
+    }
+
+    public struct GoldilocksAdminChannelsResponse: Codable, Sendable {
+        public let channels: [GoldilocksAdminChannel]
+    }
+
     // MARK: - Common Error Response
 
     public struct ErrorResponse: Codable {

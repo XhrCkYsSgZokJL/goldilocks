@@ -28,9 +28,47 @@ struct ConversationsView: View {
 
     var emptyConversationsView: some View {
         ConversationsListEmptyCTA(
-            onStartConvo: viewModel.onStartConvo,
+            onStartConvo: viewModel.onOpenGoldilocksGroup,
             onJoinConvo: viewModel.onJoinConvo
         )
+    }
+
+    @ViewBuilder
+    private var adminBanner: some View {
+        let role = GoldilocksConfig.role
+        let clientNumber = GoldilocksSession.shared.clientNumber
+        let label: String = {
+            switch role {
+            case .admin:
+                if let n = clientNumber { return "Admin #\(n)" }
+                return "Admin"
+            case .client:
+                if let n = clientNumber { return "Client #\(n)" }
+                return "Client"
+            }
+        }()
+        let icon: String = {
+            switch role {
+            case .admin:  return "shield.lefthalf.filled"
+            case .client: return "person.crop.circle.fill"
+            }
+        }()
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.caption2)
+            Text(label)
+                .font(.caption2)
+                .fontWeight(.medium)
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, DesignConstants.Spacing.step3x)
+        .padding(.vertical, 4)
+        .background(
+            Capsule().fill(Color.secondary.opacity(0.12))
+        )
+        .padding(.horizontal, DesignConstants.Spacing.step4x)
+        .padding(.vertical, DesignConstants.Spacing.step2x)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     var filteredEmptyStateView: some View {
@@ -69,7 +107,7 @@ struct ConversationsView: View {
             onTogglePin: { conversation in
                 viewModel.togglePin(conversation: conversation)
             },
-            onStartConvo: viewModel.onStartConvo,
+            onStartConvo: viewModel.onOpenGoldilocksGroup,
             onJoinConvo: viewModel.onJoinConvo,
             onShowAllFilter: { viewModel.activeFilter = .all }
         )
@@ -124,14 +162,17 @@ struct ConversationsView: View {
 
     @ViewBuilder
     private var sidebarContent: some View {
-        if viewModel.unpinnedConversations.isEmpty && viewModel.pinnedConversations.isEmpty && viewModel.activeFilter == .all && horizontalSizeClass == .compact {
-            emptyConversationsViewScrollable
-        } else if viewModel.isFilteredResultEmpty && viewModel.pinnedConversations.isEmpty && horizontalSizeClass == .compact {
-            ScrollView {
-                filteredEmptyStateView
+        VStack(spacing: 0) {
+            adminBanner
+            if viewModel.unpinnedConversations.isEmpty && viewModel.pinnedConversations.isEmpty && viewModel.activeFilter == .all && horizontalSizeClass == .compact {
+                emptyConversationsViewScrollable
+            } else if viewModel.isFilteredResultEmpty && viewModel.pinnedConversations.isEmpty && horizontalSizeClass == .compact {
+                ScrollView {
+                    filteredEmptyStateView
+                }
+            } else {
+                conversationsCollectionView
             }
-        } else {
-            conversationsCollectionView
         }
     }
 
@@ -161,6 +202,7 @@ struct ConversationsView: View {
             }
             .accessibilityLabel("Scan to join a conversation")
             .accessibilityIdentifier("scan-button")
+            .disabled(!viewModel.canStartNewConversation)
         }
         .matchedTransitionSource(id: "composer-transition-source", in: namespace)
 
@@ -170,6 +212,7 @@ struct ConversationsView: View {
             }
             .accessibilityLabel("Start a new conversation")
             .accessibilityIdentifier("compose-button")
+            .disabled(!viewModel.canStartNewConversation)
         }
         .matchedTransitionSource(id: "composer-transition-source", in: namespace)
     }

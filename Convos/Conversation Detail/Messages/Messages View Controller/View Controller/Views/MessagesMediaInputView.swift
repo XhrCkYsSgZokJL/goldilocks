@@ -51,7 +51,7 @@ struct MessagesMediaButtonsView: View {
             Button {
                 onConvosAction()
             } label: {
-                Image("convosOrangeIcon")
+                Image("goldilocksLogo")
                     .renderingMode(.template)
                     .resizable()
                     .scaledToFit()

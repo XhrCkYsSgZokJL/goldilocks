@@ -66,6 +66,25 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func completeConnection(connectionRequestId: String) async throws -> ConnectionsAPI.CompleteResponse
     func listConnections() async throws -> [ConnectionsAPI.ConnectionResponse]
     func revokeConnection(connectionId: String) async throws
+
+    // Goldilocks SIWE-based identity registration. The backend validates
+    // that the caller's eth_address is bound to the claimed inbox_id by
+    // querying the XMTP node, so other clients can't impersonate this
+    // inbox even if they steal the JWT.
+    func fetchGoldilocksChallenge(inboxId: String, ethAddress: String) async throws -> ConvosAPI.GoldilocksChallengeResponse
+    func registerWithGoldilocks(inboxId: String, siweMessage: String, signature: String, claimAdminRole: Bool) async throws -> ConvosAPI.GoldilocksMeResponse
+    func fetchGoldilocksMe() async throws -> ConvosAPI.GoldilocksMeResponse
+    func promoteSelfToAdminDev() async throws
+    func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse
+    func fetchGoldilocksAgents() async throws -> ConvosAPI.GoldilocksAgentsResponse
+    func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse
+
+    // Goldilocks channel lifecycle.
+    func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse
+    func markGoldilocksChannelExploded(role: String) async throws
+    func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse
+    func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse
+    func recoverGoldilocksChannels() async throws
 }
 
 extension ConvosAPIClientProtocol {
@@ -595,90 +614,159 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
     }
 
     // MARK: - Invite Codes
+    //
+    // disabled-for-goldilocks: the original implementation called the Convos
+    // backend at /v2/invite-codes/{redeem,status}. Goldilocks Digital does not
+    // gate access behind invite codes, so these methods now return a synthetic
+    // "always-valid" status. To restore: revert this file via git, and bring
+    // back the corresponding backend endpoints.
 
     func redeemInviteCode(_ code: String) async throws -> ConvosAPI.InviteCodeStatus {
-        var request = try authenticatedRequest(for: "v2/invite-codes/redeem", method: "POST")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
         let normalised = code.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        request.httpBody = try JSONEncoder().encode(ConvosAPI.RedeemCodeRequest(code: normalised))
-
-        let (data, httpResponse) = try await performAuthenticatedRequest(request)
-
-        switch httpResponse.statusCode {
-        case 200...299:
-            let response = try JSONDecoder().decode(ConvosAPI.RedeemInviteCodeResponse.self, from: data)
-            return response.data.inviteCode
-        case 409:
-            throw APIError.inviteCodeFullyRedeemed
-        case 404:
-            throw APIError.inviteCodeNotFound
-        case 422:
-            throw APIError.inviteCodeInvalidFormat
-        case 429:
-            throw APIError.rateLimitExceeded
-        default:
-            throw APIError.serverError(parseErrorMessage(from: data))
-        }
+        return ConvosAPI.InviteCodeStatus(
+            code: normalised,
+            name: nil,
+            maxRedemptions: .max,
+            redemptionCount: 0,
+            remainingRedemptions: .max
+        )
     }
 
     func fetchInviteCodeStatus(_ code: String) async throws -> ConvosAPI.InviteCodeStatus {
         let normalised = code.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        let request = try authenticatedRequest(for: "v2/invite-codes/\(normalised)/status", method: "GET")
-        let (data, httpResponse) = try await performAuthenticatedRequest(request)
-
-        switch httpResponse.statusCode {
-        case 200...299:
-            let response = try JSONDecoder().decode(ConvosAPI.InviteCodeStatusResponse.self, from: data)
-            return response.data
-        case 404:
-            throw APIError.inviteCodeNotFound
-        case 422:
-            throw APIError.inviteCodeInvalidFormat
-        case 429:
-            throw APIError.rateLimitExceeded
-        default:
-            throw APIError.serverError(parseErrorMessage(from: data))
-        }
+        return ConvosAPI.InviteCodeStatus(
+            code: normalised,
+            name: nil,
+            maxRedemptions: .max,
+            redemptionCount: 0,
+            remainingRedemptions: .max
+        )
     }
 
     // MARK: - Connections
+    //
+    // disabled-for-goldilocks: the original implementation talked to a Composio-
+    // backed service for SaaS integrations (connect Slack/GitHub/etc). Goldilocks
+    // is a security product and doesn't ship third-party app integrations, so we
+    // stub these to no-ops. The cloud-connections UI is also gated by
+    // FeatureFlags.isCloudConnectionsEnabled which defaults to false.
+    // To restore: revert this method block and re-implement the corresponding
+    // backend endpoints under /api/v2/connections/*.
 
     func initiateConnection(serviceId: String, redirectUri: String) async throws -> ConnectionsAPI.InitiateResponse {
-        var request = try authenticatedRequest(for: "v2/connections/initiate", method: "POST")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        struct InitiateBody: Codable {
-            let serviceId: String
-            let redirectUri: String
-        }
-        request.httpBody = try JSONEncoder().encode(
-            InitiateBody(serviceId: serviceId, redirectUri: redirectUri)
-        )
-
-        return try await performRequest(request)
+        throw APIError.notImplementedInGoldilocks
     }
 
     func completeConnection(connectionRequestId: String) async throws -> ConnectionsAPI.CompleteResponse {
-        var request = try authenticatedRequest(for: "v2/connections/complete", method: "POST")
+        throw APIError.notImplementedInGoldilocks
+    }
+
+    func listConnections() async throws -> [ConnectionsAPI.ConnectionResponse] {
+        return []
+    }
+
+    func revokeConnection(connectionId: String) async throws {
+        // no-op
+    }
+
+    // MARK: - Goldilocks identity registration
+
+    func fetchGoldilocksChallenge(inboxId: String, ethAddress: String) async throws -> ConvosAPI.GoldilocksChallengeResponse {
+        var request = try authenticatedRequest(for: "v2/auth/challenge", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        struct CompleteBody: Codable {
-            let connectionRequestId: String
-        }
-        request.httpBody = try JSONEncoder().encode(CompleteBody(connectionRequestId: connectionRequestId))
+        let body = ConvosAPI.GoldilocksChallengeRequest(inboxId: inboxId, ethAddress: ethAddress)
+        request.httpBody = try JSONEncoder().encode(body)
 
         return try await performRequest(request)
     }
 
-    func listConnections() async throws -> [ConnectionsAPI.ConnectionResponse] {
-        let request = try authenticatedRequest(for: "v2/connections", method: "GET")
-        let response: ConnectionsAPI.ListResponse = try await performRequest(request)
-        return response.connections
+    func registerWithGoldilocks(inboxId: String, siweMessage: String, signature: String, claimAdminRole: Bool) async throws -> ConvosAPI.GoldilocksMeResponse {
+        var request = try authenticatedRequest(for: "v2/me", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body = ConvosAPI.GoldilocksMeRequest(
+            inboxId: inboxId,
+            siweMessage: siweMessage,
+            signature: signature,
+            claimAdminRole: claimAdminRole
+        )
+        request.httpBody = try JSONEncoder().encode(body)
+
+        return try await performRequest(request)
     }
 
-    func revokeConnection(connectionId: String) async throws {
-        let request = try authenticatedRequest(for: "v2/connections/\(connectionId)", method: "DELETE")
+    func fetchGoldilocksMe() async throws -> ConvosAPI.GoldilocksMeResponse {
+        let request = try authenticatedRequest(for: "v2/me", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func promoteSelfToAdminDev() async throws {
+        var request = try authenticatedRequest(for: "v2/admin/promote-self", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([String: String]())
+        let _: EmptyResponse = try await performRequest(request)
+    }
+
+    func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse {
+        let request = try authenticatedRequest(for: "v2/admins", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func fetchGoldilocksAgents() async throws -> ConvosAPI.GoldilocksAgentsResponse {
+        let request = try authenticatedRequest(for: "v2/agents", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse {
+        let request = try authenticatedRequest(for: "v2/admin/channels", method: "GET")
+        return try await performRequest(request)
+    }
+
+    // MARK: - Goldilocks channel lifecycle
+
+    func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse {
+        var request = try authenticatedRequest(for: "v2/me/channels", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        struct Body: Codable { let role: String; let xmtpGroupId: String }
+        request.httpBody = try JSONEncoder().encode(Body(role: role, xmtpGroupId: xmtpGroupId))
+
+        return try await performRequest(request)
+    }
+
+    func markGoldilocksChannelExploded(role: String) async throws {
+        var request = try authenticatedRequest(for: "v2/me/channels/\(role)", method: "PATCH")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([String: String]())
+        let _: EmptyResponse = try await performRequest(request)
+    }
+
+    func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse {
+        var request = try authenticatedRequest(for: "v2/me/channels/\(role)/recreate", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        struct Body: Codable { let xmtpGroupId: String }
+        request.httpBody = try JSONEncoder().encode(Body(xmtpGroupId: xmtpGroupId))
+
+        return try await performRequest(request)
+    }
+
+    func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse {
+        let request = try authenticatedRequest(for: "v2/me/channels", method: "GET")
+        return try await performRequest(request)
+    }
+
+    /// Ask the backend to fire `channels_recover` NOTIFY for this client.
+    /// The agent removes + re-adds us to each Advisory/Reports group,
+    /// generating fresh MLS welcomes that iOS picks up on next sync.
+    /// Used when local conversation count is below the active channel
+    /// count reported by `/v2/me/channels` — typically after a dropped
+    /// initial welcome or an installation rotation.
+    func recoverGoldilocksChannels() async throws {
+        var request = try authenticatedRequest(for: "v2/me/channels/recover", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([String: String]())
         let _: EmptyResponse = try await performRequest(request)
     }
 
@@ -717,6 +805,7 @@ public enum APIError: Error {
     case inviteCodeNotFound
     case inviteCodeInvalidFormat
     case inviteCodeFullyRedeemed
+    case notImplementedInGoldilocks
 }
 
 extension APIError: DisplayError {
@@ -756,6 +845,8 @@ extension APIError: DisplayError {
             return "Invalid code"
         case .inviteCodeFullyRedeemed:
             return "Code already used up"
+        case .notImplementedInGoldilocks:
+            return "Not available"
         }
     }
 
@@ -795,6 +886,8 @@ extension APIError: DisplayError {
             return "Code must be 8 letters."
         case .inviteCodeFullyRedeemed:
             return "That invite code has already been fully redeemed."
+        case .notImplementedInGoldilocks:
+            return "This feature isn't available in Goldilocks."
         }
     }
 }

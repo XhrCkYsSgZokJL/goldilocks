@@ -29,8 +29,14 @@ public enum FirebaseHelperCore {
     }
 
     public static func getAppCheckToken(forceRefresh: Bool = false) async throws -> String {
-        let result = try await AppCheck.appCheck().token(forcingRefresh: forceRefresh)
-        return result.token
+        // disabled-for-goldilocks:
+        // The original implementation called Firebase App Check, which fails
+        // with 403 unless the debug token UUID is registered in xmtplabs'
+        // Firebase project. Goldilocks doesn't use App Check for now; the
+        // Goldilocks backend ignores the X-Firebase-AppCheck header anyway.
+        // To restore Firebase App Check, revert this method via git and
+        // register your debug token in your own Firebase project.
+        return "goldilocks-app-check-stub"
     }
 }
 

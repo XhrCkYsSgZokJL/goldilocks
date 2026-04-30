@@ -8,8 +8,6 @@ struct NewConvoIdentityView: View {
     var isAssistantJoinPending: Bool = false
     var isAssistantEnabled: Bool = false
 
-    @State private var presentingInfoSheet: Bool = false
-
     private var showInviteMenu: Bool { onCopyLink != nil }
 
     private var isAssistantActionDisabled: Bool { hasAssistant || isAssistantJoinPending }
@@ -22,17 +20,6 @@ struct NewConvoIdentityView: View {
 
     var body: some View {
         VStack(spacing: DesignConstants.Spacing.step4x) {
-            let infoAction = { presentingInfoSheet = true }
-            Button(action: infoAction) {
-                HStack(spacing: DesignConstants.Spacing.stepX) {
-                    Image(systemName: "infinity.circle.fill")
-                        .foregroundStyle(.colorTextTertiary)
-                    Text("New convo, new everything")
-                        .foregroundStyle(.colorTextSecondary)
-                }
-                .font(.caption)
-            }
-
             if showInviteMenu {
                 Menu {
                     let copyLinkAction: () -> Void = { onCopyLink?() }
@@ -44,7 +31,7 @@ struct NewConvoIdentityView: View {
 
                     let convoCodeAction: () -> Void = { onConvoCode?() }
                     Button(action: convoCodeAction) {
-                        Text("Convo code")
+                        Text("Gold code")
                         Text("Show, share or AirDrop it")
                         Image(systemName: "qrcode")
                     }
@@ -76,9 +63,6 @@ struct NewConvoIdentityView: View {
             }
         }
         .padding(.top, DesignConstants.Spacing.step2x)
-        .selfSizingSheet(isPresented: $presentingInfoSheet) {
-            NewConvoIdentityInfoSheet()
-        }
     }
 }
 

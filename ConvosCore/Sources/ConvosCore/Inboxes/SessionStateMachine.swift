@@ -716,7 +716,15 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
         await stopNetworkMonitoring()
         await syncingManager?.pause()
 
-        try result.client.dropLocalDatabaseConnection()
+        // disabled-for-goldilocks: Convos drops the SQLCipher connection on
+        // background to free resources, and re-opens it on foreground. On
+        // iOS 26 Simulator the foreground notification fires unreliably right
+        // after launch (the app briefly backgrounds during launch settle),
+        // which leaves libxmtp's worker pool in a permanently disconnected
+        // state ("Failed to delete expired messages: PoolNeedsConnection").
+        // For dev we leave the connection open through background; the cost
+        // is negligible relative to the broken-app risk.
+        // try result.client.dropLocalDatabaseConnection()
 
         emitStateChange(.backgrounded(result))
         Log.info("Inbox backgrounded successfully")
@@ -1044,6 +1052,16 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
 
         let backgroundNotificationName = appLifecycle.didEnterBackgroundNotification
         let foregroundNotificationName = appLifecycle.willEnterForegroundNotification
+        // didBecomeActive is our safety net: on iOS 26 Simulator the
+        // willEnterForeground notification fires unreliably right after
+        // launch (the app briefly backgrounds during launch settle), which
+        // would otherwise leave the SyncingManager paused forever and
+        // welcomes from server-side agents permanently undelivered.
+        // didBecomeActive fires every time the app actually becomes the
+        // active foreground app, with no precondition on having been in
+        // background. The state machine's `enterForeground` transition
+        // is a no-op when we're already ready, so re-firing is safe.
+        let didBecomeActiveNotificationName = appLifecycle.didBecomeActiveNotification
         let notificationCenter = NotificationCenter.default
 
         appLifecycleTask = Task { [weak self] in
@@ -1058,6 +1076,13 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
                 group.addTask { [weak self] in
                     let foregroundStream = notificationCenter.notifications(named: foregroundNotificationName)
                     for await _ in foregroundStream {
+                        await self?.enqueueAction(.enterForeground)
+                    }
+                }
+
+                group.addTask { [weak self] in
+                    let activeStream = notificationCenter.notifications(named: didBecomeActiveNotificationName)
+                    for await _ in activeStream {
                         await self?.enqueueAction(.enterForeground)
                     }
                 }

@@ -347,7 +347,16 @@ final class ConversationsViewController: UIViewController {
             guard let self = self else { return }
             let fresh = self.freshConversation(for: conversation)
             let isSelected = self.currentState.selectedConversationId == fresh.id
-            cell.configure(with: fresh, isSelected: isSelected)
+            // Show the "Pinned" divider only on the last *pinned-to-top*
+            // Goldilocks group in the list, so the divider sits between the
+            // pinned-Goldilocks block and the rest of the conversations.
+            // For admins, that's just the Admins row; for clients, it's
+            // Advisory + Reports. Admin's own Advisory/Reports flow with
+            // recency-sorted conversations below the divider.
+            let lastGoldilocksId = self.currentState.unpinnedConversations
+                .last(where: { $0.isPinnedGoldilocksGroup })?.id
+            let showsPinnedDivider = (fresh.id == lastGoldilocksId)
+            cell.configure(with: fresh, isSelected: isSelected, showsPinnedDivider: showsPinnedDivider)
         }
 
         // Cell registration for pinned items
@@ -430,20 +439,23 @@ final class ConversationsViewController: UIViewController {
 
         dataSource.apply(snapshot, animatingDifferences: animated)
 
-        if !changedIds.isEmpty {
-            var applied = dataSource.snapshot()
-            let itemsToReconfigure = applied.itemIdentifiers.filter { item in
-                switch item {
-                case .pinned(let c), .conversation(let c):
-                    return changedIds.contains(c.id)
-                case .emptyCTA, .filteredEmpty:
-                    return false
-                }
+        // Reconfigure changed items from the diff plus *all* Goldilocks
+        // groups — the latter is needed because their `showsPinnedDivider`
+        // flag depends on the position-of-last-Goldilocks across the list,
+        // and the diff datasource doesn't know that flag changed when only
+        // a sibling Goldilocks group was added/removed.
+        var applied = dataSource.snapshot()
+        let itemsToReconfigure = applied.itemIdentifiers.filter { item in
+            switch item {
+            case .pinned(let c), .conversation(let c):
+                return changedIds.contains(c.id) || c.isGoldilocksGroup
+            case .emptyCTA, .filteredEmpty:
+                return false
             }
-            if !itemsToReconfigure.isEmpty {
-                applied.reconfigureItems(itemsToReconfigure)
-                dataSource.apply(applied, animatingDifferences: false)
-            }
+        }
+        if !itemsToReconfigure.isEmpty {
+            applied.reconfigureItems(itemsToReconfigure)
+            dataSource.apply(applied, animatingDifferences: false)
         }
 
         updateSelection()

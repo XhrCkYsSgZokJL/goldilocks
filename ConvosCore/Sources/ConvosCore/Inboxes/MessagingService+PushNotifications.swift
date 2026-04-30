@@ -872,7 +872,7 @@ extension MessagingService {
                 .fetchAll(db)
 
             if memberProfiles.isEmpty {
-                return "New Convo"
+                return "New Channel"
             }
 
             let namedProfiles = memberProfiles.compactMap { $0.name }.filter { !$0.isEmpty }.sorted()

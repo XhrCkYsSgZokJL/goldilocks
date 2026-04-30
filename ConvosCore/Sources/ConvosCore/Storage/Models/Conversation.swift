@@ -37,6 +37,26 @@ public struct Conversation: Codable, Hashable, Identifiable, Sendable {
 public extension Conversation {
     static let maxMembers: Int = 150
 
+    /// True iff this conversation was created by a trusted Goldilocks
+    /// server agent (admins-agent, reports-agent). The agent owns the
+    /// group and reprovisions on demand, so the UI treats these as
+    /// system channels — no swipe-to-delete, no hide-on-consent-deny.
+    var isGoldilocksManaged: Bool {
+        GoldilocksAgentTrust.contains(inboxId: creator.profile.inboxId)
+    }
+
+    /// True iff this conversation looks like a Goldilocks-managed
+    /// channel (creator is a trusted agent) but isn't in the calling
+    /// client's owned channel set. Happens when stale MLS state from a
+    /// previous role (e.g. this device was an admin earlier) leaves
+    /// the user as a member of other clients' Advisories. Filtered out
+    /// of the conversations list so only this client's channels show.
+    var isStaleGoldilocksChannel: Bool {
+        guard isGoldilocksManaged else { return false }
+        guard GoldilocksOwnedChannels.isLoaded else { return false }
+        return !GoldilocksOwnedChannels.contains(xmtpGroupId: id)
+    }
+
     var isForked: Bool {
         debugInfo.commitLogForkStatus == .forked
     }
@@ -62,7 +82,7 @@ public extension Conversation {
         }
         let otherMembers = membersWithoutCurrent
         if otherMembers.isEmpty {
-            return "New Convo"
+            return "New Channel"
         }
         return otherMembers.formattedNamesString
     }

@@ -44,7 +44,7 @@ struct CustomizeSettingsView: View {
                 customizeToggleRow(
                     symbolName: "qrcode",
                     title: "Include info with invites",
-                    subtitle: "When enabled, anyone with your convo code can see its pic, name and description",
+                    subtitle: "When enabled, anyone with your Gold code can see its pic, name and description",
                     isOn: $defaults.includeInfoWithInvites,
                     toggleAccessibilityIdentifier: "customize-include-info-toggle"
                 )

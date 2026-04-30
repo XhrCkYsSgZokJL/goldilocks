@@ -140,10 +140,10 @@ extension AutoShareSheetView where Content == AnyView {
                 VStack(spacing: 0.0) {
                     VStack(spacing: 0.0) {
                         HStack(alignment: .center) {
-                            Text("Convos code")
+                            Text("Gold code")
                                 .kerning(1.0)
 
-                            Image("convosOrangeIcon")
+                            Image("goldilocksLogo")
                                 .renderingMode(.template)
                                 .resizable()
                                 .frame(width: 14.0, height: 14.0)

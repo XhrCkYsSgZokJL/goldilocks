@@ -86,10 +86,140 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
 
     func connectionManager(callbackURLScheme: String) -> any ConnectionManagerProtocol
     func connectionRepository() -> any ConnectionRepositoryProtocol
+
+    // MARK: Goldilocks identity registration
+
+    /// Run the SIWE handshake against the Goldilocks backend, binding the
+    /// caller's deviceId to their XMTP inbox and returning the assigned
+    /// `clientNumber` plus the admin flag. Idempotent.
+    ///
+    /// `claimAdminRole` lets the device assert "I'm an admin build" so
+    /// the backend can promote the inbox in the same call as the client
+    /// row creation. That ordering ensures `admin_changed` arrives at
+    /// the agent before `client_registered`, and reports-agent skips
+    /// creating Reports for admins entirely. Production ignores the
+    /// flag (gated by `GOLDILOCKS_ALLOW_SELF_PROMOTE`).
+    func registerWithGoldilocks(claimAdminRole: Bool) async throws -> GoldilocksAuth.Identity
+
+    /// Re-fetch the caller's identity (clientNumber + isAdmin) without
+    /// re-doing SIWE. Useful after admin promotion.
+    func refreshGoldilocksIdentity() async throws -> GoldilocksAuth.Identity
+
+    /// DEV-ONLY. Calls /v2/admin/promote-self to add the caller's inbox to
+    /// admin_inboxes. Backend rejects unless GOLDILOCKS_ALLOW_SELF_PROMOTE=true.
+    func promoteSelfToAdminDev() async throws
+
+    /// Fetch the inbox IDs of all admins (Goldilocks team). Used by the
+    /// client app as the recipient list when creating Advisory/Reports.
+    func fetchGoldilocksAdminInboxIds() async throws -> [String]
+
+    /// Fetch the inbox IDs of the long-lived server agents (admins-agent,
+    /// reports-agent). The iOS layer registers these with
+    /// `GoldilocksAgentTrust` so welcomes from those inboxes auto-allow
+    /// past the consent gate.
+    func fetchGoldilocksAgentInboxIds() async throws -> [String]
+
+    /// Fetch the cross-admin "Admins" group's xmtpGroupId. Returns nil
+    /// when the admins-agent hasn't created the group yet. Used by the
+    /// admin iOS app to add the Admins group to its
+    /// `GoldilocksOwnedChannels` set so it passes the staleness filter.
+    func fetchGoldilocksAdminsGroupId() async throws -> String?
+
+    /// Fetch the cross-admin "Alerts" group's xmtpGroupId. Returns nil
+    /// until the admins-agent creates it (after the first admin is
+    /// promoted). Like Admins, this is included in the admin's owned
+    /// channels set so it passes the staleness filter.
+    func fetchGoldilocksAlertsGroupId() async throws -> String?
+
+    /// Admin-only. Fetch every client's channels with their `clientNumber`
+    /// so the admin home screen can render "Advisory #55", "Reports #56" etc.
+    func fetchAdminChannels() async throws -> [ConvosAPI.GoldilocksAdminChannel]
+
+    // MARK: Goldilocks channel lifecycle
+
+    /// Register a freshly-created XMTP group as the (role, this client)
+    /// canonical channel on the Goldilocks backend. role is one of
+    /// `"advisory"` or `"reports"`.
+    func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws
+
+    /// Mark a channel exploded on the backend. The row stays in the DB
+    /// (so admins still see it greyed-out) but flips to `status='exploded'`.
+    func markGoldilocksChannelExploded(role: String) async throws
+
+    /// Replace the xmtp_group_id of a previously-exploded channel with a
+    /// freshly-created XMTP group, flipping status back to `'active'`.
+    func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws
+
+    /// Fetch the calling client's channel rows from the backend. Used
+    /// by the auto-recover path to compare expected count against the
+    /// number of Goldilocks-managed conversations in local storage.
+    func listGoldilocksChannels() async throws -> [ConvosAPI.GoldilocksChannel]
+
+    /// Ask the backend to fire `channels_recover` NOTIFY for this
+    /// client. The agent removes + re-adds us to each Advisory/Reports
+    /// group, regenerating fresh MLS welcomes that iOS picks up on
+    /// the next sync.
+    func recoverGoldilocksChannels() async throws
+
+    /// Count of conversations whose creator inbox is in
+    /// `GoldilocksAgentTrust`. Cheap GRDB query against DBConversation.
+    func goldilocksManagedConversationCount() async throws -> Int
+
+    /// Filter `xmtpGroupIds` to those NOT present in local GRDB. Used
+    /// by the auto-recover path to ask: "of the channels the backend
+    /// says I own, which ones haven't landed locally yet?" If empty,
+    /// don't fire recover — count-based heuristics race with the
+    /// welcome stream during launch and produce false positives.
+    func missingGoldilocksConversationIds(_ xmtpGroupIds: [String]) async throws -> [String]
 }
 
 extension SessionManagerProtocol {
     public func requestAgentJoin(slug: String, instructions: String) async throws -> ConvosAPI.AgentJoinResponse {
         try await requestAgentJoin(slug: slug, instructions: instructions, forceErrorCode: nil)
     }
+
+    /// Default no-op for mocks/tests so they don't need to provide an
+    /// implementation. The production `SessionManager` overrides this with
+    /// the real SIWE flow.
+    public func registerWithGoldilocks(claimAdminRole: Bool) async throws -> GoldilocksAuth.Identity {
+        throw GoldilocksAuth.AuthError.missingPrivateKey
+    }
+
+    public func refreshGoldilocksIdentity() async throws -> GoldilocksAuth.Identity {
+        throw GoldilocksAuth.AuthError.missingPrivateKey
+    }
+
+    public func promoteSelfToAdminDev() async throws {
+        // No-op for mocks
+    }
+
+    public func fetchGoldilocksAdminInboxIds() async throws -> [String] {
+        []
+    }
+
+    public func fetchGoldilocksAgentInboxIds() async throws -> [String] {
+        []
+    }
+
+    public func fetchGoldilocksAdminsGroupId() async throws -> String? {
+        nil
+    }
+
+    public func fetchGoldilocksAlertsGroupId() async throws -> String? {
+        nil
+    }
+
+    public func fetchAdminChannels() async throws -> [ConvosAPI.GoldilocksAdminChannel] {
+        []
+    }
+
+    // Default channel-lifecycle no-ops for mocks/tests.
+    public func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws {}
+    public func markGoldilocksChannelExploded(role: String) async throws {}
+    public func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws {}
+
+    public func listGoldilocksChannels() async throws -> [ConvosAPI.GoldilocksChannel] { [] }
+    public func recoverGoldilocksChannels() async throws {}
+    public func goldilocksManagedConversationCount() async throws -> Int { 0 }
+    public func missingGoldilocksConversationIds(_ xmtpGroupIds: [String]) async throws -> [String] { [] }
 }

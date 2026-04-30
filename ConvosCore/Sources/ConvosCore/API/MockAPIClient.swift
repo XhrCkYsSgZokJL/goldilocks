@@ -114,4 +114,66 @@ final class MockAPIClient: ConvosAPIClientProtocol, Sendable {
     }
 
     func revokeConnection(connectionId: String) async throws {}
+
+    // MARK: - Goldilocks identity registration (mock)
+
+    func fetchGoldilocksChallenge(inboxId: String, ethAddress: String) async throws -> ConvosAPI.GoldilocksChallengeResponse {
+        let nowIso = ISO8601DateFormatter().string(from: Date())
+        let expiresIso = ISO8601DateFormatter().string(from: Date().addingTimeInterval(300))
+        let siweMessage = """
+        mock.local wants you to sign in with your Ethereum account:
+        \(ethAddress)
+
+        I am the owner of XMTP inbox \(inboxId).
+
+        URI: http://mock
+        Version: 1
+        Chain ID: 1
+        Nonce: mocknonce
+        Issued At: \(nowIso)
+        """
+        return .init(
+            siweMessage: siweMessage,
+            nonce: "mocknonce",
+            expiresAt: expiresIso
+        )
+    }
+
+    func registerWithGoldilocks(inboxId: String, siweMessage: String, signature: String, claimAdminRole: Bool) async throws -> ConvosAPI.GoldilocksMeResponse {
+        .init(clientNumber: 42, isAdmin: false, inboxId: inboxId)
+    }
+
+    func fetchGoldilocksMe() async throws -> ConvosAPI.GoldilocksMeResponse {
+        .init(clientNumber: 42, isAdmin: false, inboxId: "mock-inbox")
+    }
+
+    func promoteSelfToAdminDev() async throws {}
+
+    func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse {
+        .init(inboxes: [])
+    }
+
+    func fetchGoldilocksAgents() async throws -> ConvosAPI.GoldilocksAgentsResponse {
+        .init(agents: [], adminsGroupId: nil, alertsGroupId: nil)
+    }
+
+    func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse {
+        .init(channels: [])
+    }
+
+    func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse {
+        .init(role: role, xmtpGroupId: xmtpGroupId, status: "active")
+    }
+
+    func markGoldilocksChannelExploded(role: String) async throws {}
+
+    func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse {
+        .init(role: role, xmtpGroupId: xmtpGroupId, status: "active")
+    }
+
+    func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse {
+        .init(clientNumber: 42, channels: [])
+    }
+
+    func recoverGoldilocksChannels() async throws {}
 }

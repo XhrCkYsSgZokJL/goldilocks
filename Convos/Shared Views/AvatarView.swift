@@ -84,7 +84,9 @@ struct ConversationAvatarView: View {
 
     var body: some View {
         Group {
-            if let conversationImage {
+            if conversation.isGoldilocksGroup {
+                goldilocksAvatar
+            } else if let conversationImage {
                 Image(uiImage: conversationImage)
                     .resizable()
                     .scaledToFill()
@@ -99,6 +101,19 @@ struct ConversationAvatarView: View {
         .aspectRatio(1.0, contentMode: .fit)
         .clipShape(Circle())
         .cachedImage(for: conversation, into: $cachedImage)
+    }
+
+    private var goldilocksAvatar: some View {
+        let symbol = GoldilocksConfig.iconSymbolName(for: conversation.name ?? "")
+        return ZStack {
+            Circle()
+                .fill(Color.colorFillPrimary)
+            Image(systemName: symbol)
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(.white)
+                .padding(12)
+        }
     }
 
     @ViewBuilder

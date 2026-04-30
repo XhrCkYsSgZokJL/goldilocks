@@ -182,7 +182,7 @@ struct ConversationInfoView: View {
             )
 
             VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
-                Text("Convo code")
+                Text("Gold code")
                     .font(.body)
                     .foregroundStyle(.colorTextPrimary)
                 Text(subtitle)

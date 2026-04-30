@@ -98,7 +98,7 @@ struct MessageInviteView: View {
         if let name = invite.conversationName, !name.isEmpty {
             return name
         }
-        return "New Convo"
+        return "New Channel"
     }
 
     private var isExpired: Bool {
@@ -136,7 +136,7 @@ struct MessageInviteView: View {
                         Text(emoji)
                             .font(.system(size: 160))
                     } else {
-                        Image("convosOrangeIcon")
+                        Image("goldilocksLogo")
                             .resizable()
                             .tint(.colorTextPrimaryInverted)
                             .foregroundStyle(.colorTextPrimaryInverted)

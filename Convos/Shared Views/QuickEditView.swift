@@ -117,7 +117,7 @@ struct QuickEditView: View {
     @Previewable @State var isImagePickerPresented: Bool = false
     @Previewable @FocusState var focusState: MessagesViewInputFocus?
     QuickEditView(
-        placeholderText: "New convo",
+        placeholderText: "New channel",
         text: $text,
         image: $image,
         isImagePickerPresented: $isImagePickerPresented,

@@ -46,6 +46,31 @@ struct ConversationConsentWriterDeleteTests {
         #expect(stored == nil)
     }
 
+    @Test("delete(conversation:) is a no-op when creator is a trusted Goldilocks agent")
+    func deleteSkipsManagedGoldilocksConversation() async throws {
+        let dbManager = MockDatabaseManager.makeTestDatabase()
+        let conversationId = "conv-managed"
+        let trustedAgentInbox = "goldilocks-agent-inbox"
+        try seedAllowedConversation(in: dbManager.dbWriter, conversationId: conversationId, creatorId: trustedAgentInbox)
+
+        GoldilocksAgentTrust.setTrustedInboxIds([trustedAgentInbox])
+        defer { GoldilocksAgentTrust.setTrustedInboxIds([]) }
+
+        let writer = ConversationConsentWriter(
+            sessionStateManager: MockSessionStateManager(),
+            databaseWriter: dbManager.dbWriter
+        )
+        try await writer.delete(conversation: .mock(id: conversationId))
+
+        let stored = try await dbManager.dbReader.read { db in
+            try DBConversation.fetchOne(db, id: conversationId)
+        }
+        // Consent stays .allowed — the writer must not flip a Goldilocks-
+        // managed channel to .denied, since the agent's reconcile would
+        // bring it right back and the row would just flicker.
+        #expect(stored?.consent == .allowed)
+    }
+
     @Test("After delete, a fetch filtered on [.allowed] no longer returns the row")
     func repositoryFilterExcludesDeniedRow() async throws {
         let dbManager = MockDatabaseManager.makeTestDatabase()
@@ -80,14 +105,15 @@ struct ConversationConsentWriterDeleteTests {
 
 private func seedAllowedConversation(
     in writer: any DatabaseWriter,
-    conversationId: String
+    conversationId: String,
+    creatorId: String = "inbox-1"
 ) throws {
     try writer.write { db in
         try DBConversation(
             id: conversationId,
             clientConversationId: "client-\(conversationId)",
             inviteTag: "invite-\(conversationId)",
-            creatorId: "inbox-1",
+            creatorId: creatorId,
             kind: .group,
             consent: .allowed,
             createdAt: Date(),

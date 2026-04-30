@@ -233,7 +233,7 @@ public extension ConversationUpdate {
     var summary: String {
         let creatorDisplayName = creator.isCurrentUser ? "You" : creator.profile.displayName
         if !addedMembers.isEmpty && !removedMembers.isEmpty {
-            return "\(creatorDisplayName) added and removed members from the convo"
+            return "\(creatorDisplayName) added and removed members"
         } else if !addedMembers.isEmpty {
             if addedMembers.count == 1, let member = addedMembers.first,
                member.isCurrentUser {
@@ -248,31 +248,31 @@ public extension ConversationUpdate {
                   metadataChange.field == .name,
                   let updatedName = metadataChange.newValue {
             if updatedName.isEmpty {
-                return "\(creatorDisplayName) removed the convo name"
+                return "\(creatorDisplayName) removed the name"
             }
-            return "\(creatorDisplayName) changed the convo name to \"\(updatedName)\""
+            return "\(creatorDisplayName) changed the name to \"\(updatedName)\""
         } else if let metadataChange = metadataChanges.first,
                   metadataChange.field == .image,
                   metadataChange.newValue != nil {
-            return "\(creatorDisplayName) changed the convo photo"
+            return "\(creatorDisplayName) changed the photo"
         } else if let metadataChange = metadataChanges.first,
                   metadataChange.field == .description,
                   let newValue = metadataChange.newValue {
             if newValue.isEmpty {
-                return "\(creatorDisplayName) removed the convo description"
+                return "\(creatorDisplayName) removed the description"
             }
-            return "\(creatorDisplayName) changed the convo description to \"\(newValue)\""
+            return "\(creatorDisplayName) changed the description to \"\(newValue)\""
         } else if let metadataChange = metadataChanges.first,
                   metadataChange.field == .expiresAt,
                   metadataChange.newValue != nil {
             if let duration = metadataChange.oldValue {
-                return "\(creatorDisplayName) set this convo to explode in \(duration)"
+                return "\(creatorDisplayName) set this channel to explode in \(duration)"
             }
-            return "\(creatorDisplayName) set this convo to explode"
+            return "\(creatorDisplayName) set this channel to explode"
         } else if !removedMembers.isEmpty {
             if removedMembers.count == 1, let member = removedMembers.first {
                 if member.isCurrentUser {
-                    return "You left the convo"
+                    return "You left the channel"
                 }
                 if member.isAgent {
                     return "\(member.profile.displayName) left · Removed by \(creatorDisplayName)"

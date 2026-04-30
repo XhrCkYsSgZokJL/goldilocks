@@ -36,7 +36,7 @@ struct AddToConversationMenu: View {
             .accessibilityIdentifier("context-menu-copy-link")
 
             Button(action: onConvoCode) {
-                Text("Convo code")
+                Text("Gold code")
                 Text("Show, share or AirDrop it")
                 Image(systemName: "qrcode")
             }

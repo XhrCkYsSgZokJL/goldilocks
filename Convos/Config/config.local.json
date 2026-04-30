@@ -4,10 +4,10 @@
   "xmtpNetwork": "local",
   "bundleId": "org.convos.ios-local",
   "appGroupIdentifier": "group.org.convos.ios-local",
-  "relyingPartyIdentifier": "local.convos.org",
+  "relyingPartyIdentifier": "local.goldilocksdigital.xyz",
   "associatedDomains": [
-    "local.convos.org",
-    "app-local.convos.org"
+    "local.goldilocksdigital.xyz",
+    "app-local.goldilocksdigital.xyz"
   ],
-  "appUrlScheme": "convos-local"
+  "appUrlScheme": "goldilocks-local"
 }

@@ -19,8 +19,13 @@ elif [ -d "/usr/local/bin" ]; then
     export PATH="/usr/local/bin:$PATH"
 fi
 
-# Get staged Swift files (excluding deleted files and build directories)
-mapfile -t STAGED_SWIFT_FILES < <(
+# Get staged Swift files (excluding deleted files and build directories).
+# `mapfile` is bash 4+ only — macOS ships bash 3.2, so use a portable
+# while-read loop instead.
+STAGED_SWIFT_FILES=()
+while IFS= read -r line; do
+    [ -n "$line" ] && STAGED_SWIFT_FILES+=("$line")
+done < <(
     git diff --cached --name-only --diff-filter=d |
         grep '\.swift$' |
         grep -v -E '^\.derivedData/|^\.build/|/\.build/' || true

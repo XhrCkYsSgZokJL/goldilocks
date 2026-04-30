@@ -15,13 +15,18 @@ final class ConversationListItemCell: UICollectionViewListCell {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(with conversation: Conversation, isSelected: Bool) {
+    func configure(with conversation: Conversation, isSelected: Bool, showsPinnedDivider: Bool = false) {
         if let wrapper = hostingWrapper {
-            wrapper.update(conversation: conversation, isSelected: isSelected)
+            wrapper.update(
+                conversation: conversation,
+                isSelected: isSelected,
+                showsPinnedDivider: showsPinnedDivider
+            )
         } else {
             let wrapper = ConversationListItemWrapper(
                 conversation: conversation,
-                isSelected: isSelected
+                isSelected: isSelected,
+                showsPinnedDivider: showsPinnedDivider
             )
             hostingWrapper = wrapper
             contentConfiguration = UIHostingConfiguration {
@@ -60,15 +65,21 @@ final class ConversationListItemWrapper {
     var isSelected: Bool
     var isSwiped: Bool = false
     var isHighlighted: Bool = false
+    /// True only for the *last* Goldilocks group in the list — used so the
+    /// "Pinned" divider renders once after the whole Goldilocks block,
+    /// not after every Goldilocks row.
+    var showsPinnedDivider: Bool
 
-    init(conversation: Conversation, isSelected: Bool) {
+    init(conversation: Conversation, isSelected: Bool, showsPinnedDivider: Bool = false) {
         self.conversation = conversation
         self.isSelected = isSelected
+        self.showsPinnedDivider = showsPinnedDivider
     }
 
-    func update(conversation: Conversation, isSelected: Bool) {
+    func update(conversation: Conversation, isSelected: Bool, showsPinnedDivider: Bool) {
         self.conversation = conversation
         self.isSelected = isSelected
+        self.showsPinnedDivider = showsPinnedDivider
     }
 }
 
@@ -86,7 +97,8 @@ struct ConversationListItemWrapperView: View {
         return wrapper.isSwiped || wrapper.isSelected
     }
 
-    var body: some View {
+    @ViewBuilder
+    private var conversationRow: some View {
         ConversationsListItem(conversation: wrapper.conversation)
             .background {
                 if shouldHighlight {
@@ -101,5 +113,39 @@ struct ConversationListItemWrapperView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.2), value: wrapper.isSwiped)
+    }
+
+    /// Thin divider with a centered "Pinned" label, shown above the Goldilocks
+    /// group cell to mark it as the canonical chat. Sits inside the same cell
+    /// so cell sizing stays correct.
+    private var pinnedDivider: some View {
+        HStack(spacing: DesignConstants.Spacing.step2x) {
+            Rectangle()
+                .fill(Color.colorBorderSubtle)
+                .frame(height: 0.5)
+            Text("Pinned")
+                .font(.caption2)
+                .fontWeight(.medium)
+                .foregroundStyle(.colorTextTertiary)
+                .textCase(.uppercase)
+                .tracking(0.5)
+            Rectangle()
+                .fill(Color.colorBorderSubtle)
+                .frame(height: 0.5)
+        }
+        .padding(.horizontal, isPhone ? DesignConstants.Spacing.step4x : DesignConstants.Spacing.step6x)
+        .padding(.top, DesignConstants.Spacing.stepX)
+        .padding(.bottom, DesignConstants.Spacing.step2x)
+    }
+
+    var body: some View {
+        if wrapper.showsPinnedDivider {
+            VStack(alignment: .leading, spacing: 0) {
+                conversationRow
+                pinnedDivider
+            }
+        } else {
+            conversationRow
+        }
     }
 }

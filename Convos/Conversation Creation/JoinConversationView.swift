@@ -62,7 +62,7 @@ struct JoinConversationView: View {
                         HStack(spacing: DesignConstants.Spacing.step2x) {
                             Image(systemName: "qrcode")
                                 .foregroundStyle(.white)
-                            Text("Scan a convo code")
+                            Text("Scan a Gold code")
                                 .font(.callout)
                                 .multilineTextAlignment(.center)
                                 .foregroundStyle(.white)

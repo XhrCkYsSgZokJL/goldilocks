@@ -127,9 +127,16 @@ final class ConversationsViewModel {
     var activeFilter: ConversationFilter = .all
 
     var pinnedConversations: [Conversation] {
+        // The Goldilocks group is rendered as a standard row at the top of
+        // the unpinned list — not as a "pinned tile" — so we exclude it here
+        // even if the DB happens to flag it pinned (e.g. carryover from
+        // earlier dev iterations).
         let baseConversations = conversations
+            .filter(\.isVisibleInCurrentRole)
             .filter { $0.isPinned }
             .filter { $0.kind == .group }
+            .filter { !$0.isGoldilocksGroup }
+            .filter { !$0.isStaleGoldilocksChannel }
             .sorted { ($0.pinnedOrder ?? Int.max) < ($1.pinnedOrder ?? Int.max) }
 
         switch activeFilter {
@@ -143,7 +150,46 @@ final class ConversationsViewModel {
     }
 
     var unpinnedConversations: [Conversation] {
-        let baseConversations = conversations.filter { !$0.isPinned }.filter { $0.kind == .group }
+        // Include unpinned groups + the Goldilocks groups (regardless of
+        // their pin flag), with Goldilocks always sorted to the front in
+        // the order declared in `GoldilocksConfig.groupNames`.
+        // [Goldilocks debug] log per-stage filter counts so we can see
+        // why the spinner is showing when MLS welcomes have actually been
+        // received by libxmtp. Remove once stable.
+        let total = conversations.count
+        let visible = conversations.filter(\.isVisibleInCurrentRole).count
+        let group = conversations.filter(\.isVisibleInCurrentRole).filter { $0.kind == .group }.count
+        let nameSummary = conversations.map { "\($0.name ?? "nil"):\($0.kind)" }.joined(separator: ",")
+        Log.info("[Goldilocks-debug] conversations total=\(total) visibleInRole=\(visible) afterKindGroup=\(group) names=\(nameSummary)")
+        let baseConversations = conversations
+            .filter(\.isVisibleInCurrentRole)
+            .filter { $0.kind == .group }
+            // `isPinnedGoldilocksGroup` is what overrides the stored
+            // `isPinned` for sort-to-top — for admins, only Admins
+            // qualifies; for clients, Advisory + Reports do. Their own
+            // Advisory/Reports rows for admins flow with the regular
+            // recency order, alongside non-Goldilocks chats.
+            .filter { !$0.isPinned || $0.isPinnedGoldilocksGroup }
+            .filter { !$0.isStaleGoldilocksChannel }
+            .sorted { lhs, rhs in
+                switch (lhs.isPinnedGoldilocksGroup, rhs.isPinnedGoldilocksGroup) {
+                case (true, false):
+                    return true
+                case (false, true):
+                    return false
+                case (true, true):
+                    // Both pinned-Goldilocks. Match each name against the
+                    // role's `groupNames` prefixes (since Advisory/Reports
+                    // are now suffixed with `#N`) to preserve the
+                    // declared ordering.
+                    let lIdx = GoldilocksConfig.groupNames.firstIndex(where: { (lhs.name ?? "").hasPrefix($0) }) ?? Int.max
+                    let rIdx = GoldilocksConfig.groupNames.firstIndex(where: { (rhs.name ?? "").hasPrefix($0) }) ?? Int.max
+                    return lIdx < rIdx
+                case (false, false):
+                    // Preserve existing order (sort is stable).
+                    return false
+                }
+            }
         switch activeFilter {
         case .all:
             return baseConversations
@@ -155,7 +201,7 @@ final class ConversationsViewModel {
     }
 
     var hasUnpinnedConversations: Bool {
-        conversations.contains { !$0.isPinned && $0.kind == .group }
+        conversations.contains { !$0.isPinned && $0.kind == .group && $0.isVisibleInCurrentRole }
     }
 
     var isFilteredResultEmpty: Bool {
@@ -229,6 +275,12 @@ final class ConversationsViewModel {
     func onAppear() {
         isVisible = true
         updateListVisibility()
+        // Kick off the SIWE handshake against the Goldilocks backend on
+        // first appearance. Idempotent — GoldilocksSession bails if it's
+        // already registered or already in flight.
+        Task { [session] in
+            await GoldilocksSession.shared.registerIfNeeded(session: session)
+        }
     }
 
     func onDisappear() {
@@ -281,11 +333,151 @@ final class ConversationsViewModel {
         }
     }
 
+    /// True only when the Goldilocks group has successfully landed in the
+    /// conversations list. The bottom-bar Compose and Scan buttons are
+    /// disabled until this flips. We derive it from the observable
+    /// `conversations` array so SwiftUI auto-updates when the group lands
+    /// (or disappears, if the user later deletes it).
+    /// If we have no recipients available at all (empty backend admin list
+    /// AND empty static config), we don't gate.
+    var canStartNewConversation: Bool {
+        // In admin mode the Admins group excludes self, so we gate against
+        // the post-filter recipient count, not the raw admin list.
+        let backendAdmins = GoldilocksSession.shared.adminInboxIds
+        let allAdmins = backendAdmins.isEmpty
+            ? GoldilocksConfig.hardcodedRecipientInboxIds
+            : backendAdmins
+        let selfInboxId = GoldilocksSession.shared.identity?.inboxId
+        let usableRecipients: [String]
+        if GoldilocksConfig.role == .admin, let selfInboxId {
+            usableRecipients = allAdmins.filter { $0 != selfInboxId }
+        } else {
+            usableRecipients = allAdmins
+        }
+        // No usable recipients → don't gate. Lets a solo admin still compose.
+        guard !usableRecipients.isEmpty else { return true }
+        return conversations.contains { $0.isGoldilocksGroup && $0.isVisibleInCurrentRole }
+    }
+
+    /// Standard new-conversation flow. Used by the bottom-bar Compose button.
+    /// Opens the contact-picker sheet so the user can choose recipients
+    /// themselves; nothing Goldilocks-specific happens here.
     func onStartConvo() {
         newConversationViewModel = NewConversationViewModel(
             session: session,
             mode: .newConversation
         )
+    }
+
+    /// Legacy hook for the empty-state CTA. The button is now a
+    /// non-interactive "Setting up your channels…" spinner — server-side
+    /// agents (admins-agent, reports-agent) provision everything on
+    /// behalf of the user when they register, and the groups arrive via
+    /// XMTP welcomes. Kept as a no-op so callers (and the Debug View
+    /// "manual provision" trigger, if added later) don't break.
+    func onOpenGoldilocksGroup() {
+        Log.info("[Goldilocks] onOpenGoldilocksGroup is a no-op — server agents own provisioning.")
+    }
+
+    /// Creates one Goldilocks support group: name it, add Morgan + Tillie,
+    /// promote them to super-admin, and demote ourselves to a regular member.
+    /// Each step is best-effort; we log and continue on partial failure so
+    /// the named group still lands in the conversation list.
+    private func createGoldilocksGroup(named name: String, recipients: [String]) async {
+        do {
+            let messagingService = self.session.messagingService()
+            let stateManager = messagingService.conversationStateManager()
+
+            try await stateManager.createConversation()
+
+            // Wait for the state machine to reach .ready before touching the
+            // conversation — createConversation() is async and the row
+            // doesn't exist in the DB yet at this point.
+            var conversationId: String?
+            for await state in stateManager.stateSequence {
+                switch state {
+                case .ready(let result):
+                    conversationId = result.conversationId
+                case .error(let error):
+                    throw error
+                default:
+                    continue
+                }
+                if conversationId != nil { break }
+            }
+
+            guard let conversationId else {
+                Log.error("State machine ended without reaching .ready for \(name)")
+                return
+            }
+
+            let metadataWriter = stateManager.conversationMetadataWriter
+
+            // Name first — even if addMembers/promote fails later, the group
+            // is still correctly labeled.
+            try await metadataWriter.updateName(name, for: conversationId)
+
+            // Add members. May fail in local-network dev because the
+            // hardcoded recipient inbox_ids only exist on the dev/prod XMTP
+            // network. Don't bail — the named, locally-existing group is
+            // still useful and we still want backend registration to happen.
+            var membersAdded = false
+            do {
+                try await metadataWriter.addMembers(recipients, to: conversationId)
+                membersAdded = true
+            } catch {
+                Log.warning("Couldn't add recipients to \(name) (continuing): \(error.localizedDescription)")
+            }
+
+            // Admin shuffle (only meaningful if member-add succeeded).
+            // Promote each recipient to super-admin and then demote ourselves
+            // — only if at least one other person ended up as super-admin so
+            // the group isn't left adminless.
+            var promoted: [String] = []
+            if membersAdded {
+                for inboxId in recipients {
+                    do {
+                        try await metadataWriter.promoteToSuperAdmin(inboxId, in: conversationId)
+                        promoted.append(inboxId)
+                    } catch {
+                        Log.warning("Couldn't promote \(inboxId) in \(name): \(error.localizedDescription)")
+                    }
+                }
+                if !promoted.isEmpty, let myInboxId = self.currentInboxId() {
+                    do {
+                        try await metadataWriter.demoteFromSuperAdmin(myInboxId, in: conversationId)
+                    } catch {
+                        Log.warning("Couldn't demote self from \(name): \(error.localizedDescription)")
+                    }
+                }
+            }
+
+            // Register the channel with the Goldilocks backend so admins
+            // can see it labelled as "<Role> #<clientNumber>". Best-effort:
+            // failure here doesn't unwind the XMTP-side group creation.
+            do {
+                try await session.registerGoldilocksChannel(
+                    role: name.lowercased(),
+                    xmtpGroupId: conversationId
+                )
+            } catch {
+                Log.warning("Backend failed to register channel '\(name)': \(error.localizedDescription)")
+            }
+
+            Log.info("Created Goldilocks group '\(name)' with \(promoted.count) admin(s)")
+        } catch {
+            Log.error("Failed to create Goldilocks group '\(name)': \(error.localizedDescription)")
+        }
+    }
+
+    /// The current XMTP inbox ID for this user, if the messaging service is
+    /// authorized. Used so we can demote ourselves from super-admin after
+    /// creating a Goldilocks group.
+    private func currentInboxId() -> String? {
+        if case .authorized(let inboxId) = session.messagingService().state {
+            return inboxId
+        }
+        return nil
     }
 
     func onJoinConvo() {
@@ -308,6 +500,17 @@ final class ConversationsViewModel {
     }
 
     func leave(conversation: Conversation) {
+        // Goldilocks-managed system channels (Advisory, Reports) are owned
+        // by trusted server agents — they auto-restore via the agent's
+        // periodic reconcile, so optimistically hiding the row would just
+        // leave it gone in the UI until the next data refresh. Bail before
+        // touching local state. The explode path is the only way to reset
+        // these channels.
+        if conversation.isGoldilocksManaged {
+            Log.info("Ignoring leave() on Goldilocks-managed conversation \(conversation.id)")
+            return
+        }
+
         // Optimistic hide while the consent write lands. Once the DB row's
         // consent flips to .denied, ConversationsRepository filters it out
         // unconditionally, so the hiddenConversationIds fallback is only
@@ -388,9 +591,16 @@ final class ConversationsViewModel {
                     ? conversations
                     : conversations.filter { !hiddenConversationIds.contains($0.id) }
 
-                if let selectedId = _selectedConversationId,
-                   !conversations.contains(where: { $0.id == selectedId }) {
-                    selectedConversationId = nil
+                if let selectedId = _selectedConversationId {
+                    if !conversations.contains(where: { $0.id == selectedId }) {
+                        // Conversation went away — clear selection.
+                        selectedConversationId = nil
+                    } else if selectedConversationViewModel?.conversation.id != selectedId {
+                        // Conversation just appeared in the list (e.g. just-created
+                        // Goldilocks group). Re-resolve the selection so the detail
+                        // pane navigates into it.
+                        updateSelectionState()
+                    }
                 }
 
                 if !conversations.contains(where: { !$0.isPinned && $0.kind == .group }) {
@@ -503,6 +713,16 @@ final class ConversationsViewModel {
     func explodeConversation(_ conversation: Conversation) {
         let conversationId = conversation.id
         let memberInboxIds = conversation.members.map { $0.profile.inboxId }
+        // Backend ROLE schema is `z.enum(['advisory', 'reports'])`. Pull
+        // just the role token from the per-client name (e.g. "Advisory #5"
+        // → "advisory"). Returns nil for "Admins" since admin coordination
+        // isn't a per-client `client_channels` row.
+        let goldilocksRole: String? = {
+            guard conversation.isGoldilocksGroup, let name = conversation.name else { return nil }
+            if name.hasPrefix("Advisory") { return "advisory" }
+            if name.hasPrefix("Reports") { return "reports" }
+            return nil
+        }()
 
         hiddenConversationIds.insert(conversationId)
         if selectedConversation == conversation {
@@ -519,6 +739,16 @@ final class ConversationsViewModel {
                     conversationId: conversationId,
                     memberInboxIds: memberInboxIds
                 )
+
+                // If this was a canonical Goldilocks channel, mark it
+                // exploded on the backend so admins can see the lifecycle.
+                if let role = goldilocksRole {
+                    do {
+                        try await self.session.markGoldilocksChannelExploded(role: role)
+                    } catch {
+                        Log.warning("Backend failed to mark \(role) exploded: \(error.localizedDescription)")
+                    }
+                }
 
                 await UNUserNotificationCenter.current().addExplosionNotification(
                     conversationId: conversationId,

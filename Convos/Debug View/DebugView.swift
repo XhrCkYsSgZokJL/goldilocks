@@ -45,6 +45,16 @@ struct DebugViewSection: View {
 
     var body: some View {
         Group {
+            Section("Goldilocks") {
+                HStack {
+                    Text("Role")
+                    Spacer()
+                    Text(GoldilocksConfig.role.displayName)
+                        .foregroundStyle(GoldilocksConfig.role == .admin ? .orange : .secondary)
+                        .fontWeight(.semibold)
+                }
+            }
+
             Section("Features") {
                 Toggle("Assistant enabled", isOn: Bindable(FeatureFlags.shared).isAssistantEnabled)
 

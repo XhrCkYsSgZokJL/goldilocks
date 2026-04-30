@@ -181,8 +181,22 @@ public final actor KeychainIdentityStore: KeychainIdentityStoreProtocol {
 
     static let defaultService: String = "org.convos.ios.KeychainIdentityStore.v3"
 
-    /// Fixed account key for the stored identity.
-    static let identityAccount: String = "convos-identity"
+    /// Optional suffix appended to the keychain account name. Set by the
+    /// main app at launch (before any SessionManager is constructed) to
+    /// pick which "slot" identities are read from / written to. The dual-
+    /// identity Goldilocks dev model uses this to keep an admin key and a
+    /// client key persisted side-by-side, and toggle which is active.
+    /// Set once per process lifetime; changing requires a relaunch.
+    nonisolated(unsafe) public static var slotSuffix: String?
+
+    /// Account name for the active slot. With no suffix, "convos-identity".
+    /// With suffix "admin", "convos-identity.admin", and so on.
+    static var identityAccount: String {
+        if let suffix = slotSuffix, !suffix.isEmpty {
+            return "convos-identity.\(suffix)"
+        }
+        return "convos-identity"
+    }
 
     // MARK: - Initialization
 

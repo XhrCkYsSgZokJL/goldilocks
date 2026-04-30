@@ -15,6 +15,11 @@ struct ConvosApp: App {
     init() {
         FileDescriptorDiagnostics.raiseSoftLimit(to: 512)
 
+        // Goldilocks dual-identity: pin the keychain slot to the active
+        // role's suffix BEFORE anything reads keys. Must be the first
+        // thing in init().
+        GoldilocksRolePrefs.applyToKeychain()
+
         ConfigManager.configure(overrides: ConvosSecretOverrides(
             apiBaseURL: Secrets.CONVOS_API_BASE_URL,
             xmtpCustomHost: Secrets.XMTP_CUSTOM_HOST,

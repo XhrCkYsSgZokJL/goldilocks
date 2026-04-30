@@ -10,15 +10,15 @@ struct ConvosToolbarButton: View {
             action()
         } label: {
             HStack(spacing: DesignConstants.Spacing.stepX) {
-                Image("convosOrangeIcon")
+                Image("goldilocksLogo")
                     .resizable()
                     .renderingMode(.template)
+                    .aspectRatio(contentMode: .fit)
                     .foregroundStyle(.colorFillPrimary)
-                    .frame(width: 16.0, height: 20.0)
                     .frame(width: 24.0, height: 24.0)
                     .accessibilityHidden(true)
 
-                Text("Convos")
+                Text("Goldilocks Digital")
                     .font(.body)
                     .foregroundStyle(.colorFillPrimary)
                     .padding(.trailing, DesignConstants.Spacing.stepX)
@@ -60,11 +60,14 @@ struct AppSettingsView: View {
             List {
                 Section {
                     VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepX) {
-                        Text("Convos")
-                            .font(.convosTitle)
+                        Text("Goldilocks Digital")
+                            .font(.title)
+                            .fontWeight(.bold)
                             .tracking(Font.convosTitleTracking)
                             .foregroundStyle(.colorTextPrimary)
-                        Text("Private chat for the AI world")
+                            .minimumScaleFactor(0.7)
+                            .lineLimit(1)
+                        Text("Digital asset security tailored to the way you live.")
                             .font(.subheadline)
                             .foregroundStyle(.colorTextPrimary)
                     }
@@ -192,11 +195,19 @@ struct AppSettingsView: View {
                         .foregroundStyle(.colorTextPrimary)
                     }
                 } footer: {
-                    HStack {
-                        Text("Made in the open by XMTP Labs")
-                        Spacer()
-                        Text("V\(Bundle.appVersion)")
-                            .foregroundStyle(.colorTextTertiary)
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack {
+                            Text("Made in the open by XMTP Labs")
+                            Spacer()
+                            Text("V\(Bundle.appVersion)")
+                                .foregroundStyle(.colorTextTertiary)
+                        }
+                        HStack {
+                            Text("Modified in private by Goldilocks Digital")
+                            Spacer()
+                            Text("V1.0.0")
+                                .foregroundStyle(.colorTextTertiary)
+                        }
                     }
                     .foregroundStyle(.colorTextSecondary)
                 }

@@ -11,6 +11,13 @@ import UIKit
 public final class IOSDeviceInfo: DeviceInfoProviding, @unchecked Sendable {
     private let _identifierForVendor: String?
 
+    /// Optional suffix appended to `deviceIdentifier` (e.g. "admin", "client").
+    /// The Goldilocks role-toggle dev model uses this to keep separate
+    /// device rows per role when running both roles on the same simulator,
+    /// so the backend's per-device inbox lock doesn't collide. Set once
+    /// at app launch before any registration call.
+    nonisolated(unsafe) public static var deviceIdSuffix: String?
+
     public init() {
         _identifierForVendor = UIDevice.current.identifierForVendor?.uuidString
     }
@@ -38,8 +45,14 @@ public final class IOSDeviceInfo: DeviceInfoProviding, @unchecked Sendable {
 
     /// Returns the most appropriate device identifier.
     /// Prefers IDFV but falls back to a persistent UUID if needed.
+    /// If `deviceIdSuffix` is set, it's appended as `<id>.<suffix>` so
+    /// dev role-toggling produces distinct device rows on the backend.
     public nonisolated var deviceIdentifier: String {
-        identifierForVendor ?? fallbackIdentifier
+        let base = identifierForVendor ?? fallbackIdentifier
+        if let suffix = Self.deviceIdSuffix, !suffix.isEmpty {
+            return "\(base).\(suffix)"
+        }
+        return base
     }
 
     /// Returns the current OS string.
