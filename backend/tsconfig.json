@@ -15,7 +15,7 @@
     "sourceMap": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
-    "isolatedModules": true,
+    "isolatedModules": false,
     "verbatimModuleSyntax": false
   },
   "include": ["src/**/*"],

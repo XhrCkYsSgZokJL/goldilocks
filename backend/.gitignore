@@ -1,9 +1,42 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+*.tsbuildinfo
+
+# Environment / secrets — anything matching .env* except the template
 .env
-.env.local
+.env.*
+!.env.example
+
+# Agent local state — SQLCipher DBs with admins-agent / reports-agent
+# private keys. NEVER commit. Wipe via `goldilocks-off` (rm -rf .agent-data/).
+.agent-data/
+
+# Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test / coverage output
+coverage/
+.nyc_output/
+
+# Editor / OS
 .DS_Store
 .idea/
 .vscode/
-coverage/
+*.swp
+*.swo
+
+# Caches
+.cache/
+.npm
+.pnpm-store/
+.yarn/cache
+.yarn/install-state.gz
+tmp/
+temp/

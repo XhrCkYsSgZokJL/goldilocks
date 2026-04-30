@@ -92,5 +92,42 @@ services:
     ports:
       - "4000:4000"
 
+  # Server-side XMTP agents (admins-agent + reports-agent). Maintains the
+  # cross-admin Admins group, every client's Advisory group, and owns
+  # every client's Reports group. Reacts to LISTEN/NOTIFY on the same DB
+  # the API writes to, so /v2/me + /v2/admin/promote-self automatically
+  # trigger group provisioning + membership reconciliation.
+  #
+  # Run locally for dev (faster iteration; @xmtp/node-sdk's native Rust
+  # bindings need glibc which the alpine base above doesn't ship):
+  #
+  #   cd goldilocks-backend
+  #   AGENT_DB_DIR=./.agent-data npm run agent:dev
+  #
+  # The local run reaches Postgres via the published 25433 port and the
+  # XMTP node via localhost:5555 (convos-ios `./dev/up`). To dockerize
+  # later, switch the runtime base to node:20-bookworm-slim and uncomment
+  # this service.
+  #
+  # agent:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.agent
+  #   command: ["npm", "run", "agent:dev"]
+  #   depends_on:
+  #     goldilocks-db:
+  #       condition: service_healthy
+  #   environment:
+  #     DATABASE_URL: postgres://goldilocks:goldilocks@goldilocks-db:5432/goldilocks
+  #     XMTP_NETWORK: ${XMTP_NETWORK:-local}
+  #     XMTP_API_URL: ${XMTP_API_URL:-http://host.docker.internal:5555}
+  #     AGENT_DB_DIR: /var/lib/goldilocks-agent
+  #     AGENT_DB_ENCRYPTION_KEY: ${AGENT_DB_ENCRYPTION_KEY:-}
+  #   extra_hosts:
+  #     - "host.docker.internal:host-gateway"
+  #   volumes:
+  #     - goldilocks-agent-data:/var/lib/goldilocks-agent
+
 volumes:
   goldilocks-pgdata:
+  # goldilocks-agent-data:
