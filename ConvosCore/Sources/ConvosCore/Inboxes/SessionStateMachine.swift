@@ -26,42 +26,6 @@ public struct InboxReadyResult: @unchecked Sendable {
 typealias AnySyncingManager = (any SyncingManagerProtocol)
 typealias AnyInviteJoinRequestsManager = (any InviteJoinRequestsManagerProtocol)
 
-/// `.onDisk` routes through libxmtp's persistent SQLCipher path (production
-/// behavior). `.inMemory` routes through `Client.createInMemory`, where
-/// `dropLocalDatabaseConnection` and friends are no-ops — so the lifecycle-
-/// notification broadcast can't wedge a parallel test's pool.
-struct XMTPClientFactory: Sendable {
-    typealias Create = @Sendable (SigningKey, ClientOptions) async throws -> any XMTPClientProvider
-    typealias Build = @Sendable (String, PublicIdentity, SigningKey, ClientOptions) async throws -> any XMTPClientProvider
-
-    let create: Create
-    let build: Build
-
-    static let onDisk: XMTPClientFactory = XMTPClientFactory(
-        create: { signingKey, options in
-            try await Client.create(account: signingKey, options: options)
-        },
-        build: { inboxId, identity, _, options in
-            try await Client.build(publicIdentity: identity, options: options, inboxId: inboxId)
-        }
-    )
-
-    /// `build` reuses `createInMemory`: tests carry no on-disk history; inboxId
-    /// derives from signing key, preserving the `client.inboxId == identity.inboxId`
-    /// invariant in `authorize`.
-    static let inMemory: XMTPClientFactory = {
-        let createInMemory: Create = { signingKey, options in
-            try await Client.createInMemory(account: signingKey, options: options)
-        }
-        return XMTPClientFactory(
-            create: createInMemory,
-            build: { _, _, signingKey, options in
-                try await createInMemory(signingKey, options)
-            }
-        )
-    }()
-}
-
 // swiftlint:disable type_body_length
 
 /// Drives the XMTP inbox lifecycle: creating or loading a client,
@@ -106,7 +70,6 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
     private let apiClient: any ConvosAPIClientProtocol
     private let networkMonitor: any NetworkMonitorProtocol
     private let appLifecycle: any AppLifecycleProviding
-    private let xmtpClientFactory: XMTPClientFactory
 
     private var currentTask: Task<Void, Never>?
     private var actionQueue: [Action] = []
@@ -260,8 +223,7 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
         overrideJWTToken: String? = nil,
         environment: AppEnvironment,
         appLifecycle: any AppLifecycleProviding,
-        apiClient: (any ConvosAPIClientProtocol)? = nil,
-        xmtpClientFactory: XMTPClientFactory = .onDisk
+        apiClient: (any ConvosAPIClientProtocol)? = nil
     ) {
         let initialState: State = .idle
         self.initialClientId = clientId
@@ -275,7 +237,6 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
         self.overrideJWTToken = overrideJWTToken ?? environment.defaultOverrideJWTToken
         self.environment = environment
         self.appLifecycle = appLifecycle
-        self.xmtpClientFactory = xmtpClientFactory
 
         // Use provided API client or create a new one
         if let apiClient {
@@ -526,7 +487,6 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
             client = try await buildXmtpClient(
                 inboxId: identity.inboxId,
                 identity: keys.signingKey.identity,
-                signingKey: keys.signingKey,
                 options: clientOptions
             )
         } catch {
@@ -993,7 +953,8 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
             dbEncryptionKey: keys.databaseKey,
             dbDirectory: environment.defaultDatabasesDirectory,
             deviceSyncEnabled: true,
-            dbPoolOptions: DbPoolOptions(maxPoolSize: 10, minPoolSize: 3)
+            maxDbPoolSize: 10,
+            minDbPoolSize: 3
         )
     }
 
@@ -1012,17 +973,20 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
     private func createXmtpClient(signingKey: SigningKey,
                                   options: ClientOptions) async throws -> any XMTPClientProvider {
         Log.info("Creating XMTP client...")
-        let client = try await xmtpClientFactory.create(signingKey, options)
+        let client = try await Client.create(account: signingKey, options: options)
         Log.info("XMTP Client created with app version: convos/\(Bundle.appVersion)")
         return client
     }
 
     private func buildXmtpClient(inboxId: String,
                                  identity: PublicIdentity,
-                                 signingKey: SigningKey,
                                  options: ClientOptions) async throws -> any XMTPClientProvider {
         Log.debug("Building XMTP client for \(inboxId)...")
-        let client = try await xmtpClientFactory.build(inboxId, identity, signingKey, options)
+        let client = try await Client.build(
+            publicIdentity: identity,
+            options: options,
+            inboxId: inboxId
+        )
         Log.debug("XMTP Client built.")
         return client
     }
