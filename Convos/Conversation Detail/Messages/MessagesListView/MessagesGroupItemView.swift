@@ -672,7 +672,7 @@ private struct AttachmentPlaceholder: View {
             inlinePlayer?.pause()
             isPlaying = false
         }
-        .task {
+        .task(id: attachment.key) {
             await loadAttachment()
         }
     }
@@ -754,6 +754,15 @@ private struct AttachmentPlaceholder: View {
     }
 
     private func loadAttachment() async {
+        // Reset all per-attachment state so a re-fire from .task(id:) on a
+        // changed key (e.g. file:// → https:// once the upload publishes)
+        // doesn't show stale visuals or hold onto the previous AVPlayer.
+        inlinePlayer?.pause()
+        inlinePlayer = nil
+        isPlaying = false
+        loadedImage = nil
+        isLoadingVideo = false
+        videoLoadFailed = false
         isLoading = true
         loadError = nil
 
@@ -762,6 +771,28 @@ private struct AttachmentPlaceholder: View {
         } else {
             await loadPhotoAttachment()
         }
+    }
+
+    private enum LocalVideoWaitResult {
+        case ready
+        case timedOut
+        case cancelled
+    }
+
+    private func waitForLocalVideoFileIfNeeded() async -> LocalVideoWaitResult {
+        guard attachment.key.hasPrefix("file://") else { return .ready }
+        let path = String(attachment.key.dropFirst("file://".count))
+        if FileManager.default.fileExists(atPath: path) { return .ready }
+        isLoadingVideo = true
+        let deadline = Date().addingTimeInterval(60)
+        while !FileManager.default.fileExists(atPath: path),
+              !Task.isCancelled,
+              Date() < deadline {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        if FileManager.default.fileExists(atPath: path) { return .ready }
+        if Task.isCancelled { return .cancelled }
+        return .timedOut
     }
 
     private func loadVideoAttachment() async {
@@ -775,6 +806,31 @@ private struct AttachmentPlaceholder: View {
             if attachment.width == nil {
                 onDimensionsLoaded(Int(thumb.size.width), Int(thumb.size.height))
             }
+        } else if let cachedThumb = await ImageCache.shared.imageAsync(for: cacheKey) {
+            // Thumbnail was cached at staging time by the eager video pipeline.
+            // Render it so the bubble has content while compression / upload
+            // run in the background.
+            loadedImage = cachedThumb
+            isLoading = false
+            isLoadingVideo = true
+            videoLoadFailed = false
+            if attachment.width == nil {
+                onDimensionsLoaded(Int(cachedThumb.size.width), Int(cachedThumb.size.height))
+            }
+        }
+
+        switch await waitForLocalVideoFileIfNeeded() {
+        case .ready:
+            break
+        case .cancelled:
+            isLoadingVideo = false
+            return
+        case .timedOut:
+            isLoading = false
+            isLoadingVideo = false
+            videoLoadFailed = true
+            Log.error("Timed out waiting for local video file: \(attachment.key)")
+            return
         }
 
         do {
@@ -900,6 +956,10 @@ private struct AttachmentPlaceholder: View {
                 .appendingPathComponent("video_\(UUID().uuidString).mp4")
             try data.write(to: tempURL)
             return tempURL
+        }
+        if let local = await OutgoingMediaLocalCache.shared.url(for: key),
+           FileManager.default.fileExists(atPath: local.path) {
+            return local
         }
         if let cached = await VideoURLCache.shared.url(for: key) {
             return cached
