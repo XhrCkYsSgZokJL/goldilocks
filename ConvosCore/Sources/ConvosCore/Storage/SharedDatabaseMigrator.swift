@@ -574,16 +574,4 @@ extension SharedDatabaseMigrator {
             t.column("contactsSyncedAt", .datetime).notNull()
         }
     }
-
-    /// Conversations restored from an iCloud backup come back inactive because
-    /// the restored installation has to be re-admitted to each MLS group by a
-    /// peer before it can participate. The `isActive` flag drives the post-
-    /// restore UI (muted composer, "History restored" banner) and is flipped
-    /// back to true by `StreamProcessor` when a real reactivation signal
-    /// arrives. Default is true so existing rows are unaffected.
-    private static func addInactiveConversationsColumn(_ db: Database) throws {
-        try db.alter(table: "conversationLocalState") { t in
-            t.add(column: "isActive", .boolean).notNull().defaults(to: true)
-        }
-    }
 }
