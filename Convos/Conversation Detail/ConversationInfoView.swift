@@ -120,16 +120,7 @@ struct ConversationInfoView: View {
                 repository: viewModel.makeAssistantFilesLinksRepository(),
                 members: viewModel.conversation.members,
                 profileSheetContent: { member in
-                    AnyView(
-                        NavigationStack {
-                            ConversationMemberView(viewModel: viewModel, member: member)
-                                .toolbar {
-                                    ToolbarItem(placement: .cancellationAction) {
-                                        AttachmentProfileSheetCloseButton()
-                                    }
-                                }
-                        }
-                    )
+                    AnyView(MemberContactCardSheetContent(viewModel: viewModel, member: member))
                 }
             )
         } label: {

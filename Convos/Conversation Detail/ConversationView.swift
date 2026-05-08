@@ -268,51 +268,7 @@ struct ConversationView<MessagesBottomBar: View>: View {
 
     @ViewBuilder
     private func memberContactCardSheet(for member: ConversationMember) -> some View {
-        let messagingService = viewModel.messagingService
-        let contactsRepository = messagingService.contactsRepository()
-        let contactsWriter = messagingService.contactsWriter()
-        let resolvedContact: Contact = {
-            if let stored = try? contactsRepository.fetchContact(inboxId: member.profile.inboxId) {
-                return stored
-            }
-            return Contact.synthetic(
-                inboxId: member.profile.inboxId,
-                displayName: member.profile.displayName,
-                avatarURL: member.profile.avatar,
-                addedViaConversationId: viewModel.conversation.id,
-                agentVerification: member.agentVerification
-            )
-        }()
-        let onRemove: () -> Void = {
-            viewModel.remove(member: member)
-            viewModel.presentingProfileForMember = nil
-        }
-        let onBlockAndLeave: () -> Void = {
-            viewModel.blockAndLeaveConvo(inboxId: member.profile.inboxId)
-            viewModel.presentingProfileForMember = nil
-        }
-        NavigationStack {
-            ContactCardView(
-                contact: resolvedContact,
-                mode: .scopedToConversation(
-                    conversationId: viewModel.conversation.id,
-                    canRemoveMembers: viewModel.canRemoveMembers,
-                    isCurrentUser: member.isCurrentUser
-                ),
-                contactsWriter: contactsWriter,
-                contactsRepository: contactsRepository,
-                session: viewModel.session,
-                onRemove: onRemove,
-                onBlockAndLeave: onBlockAndLeave
-            )
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(role: .cancel) {
-                        viewModel.presentingProfileForMember = nil
-                    }
-                }
-            }
-        }
+        MemberContactCardSheetContent(viewModel: viewModel, member: member)
     }
 
     private var scanInviteButton: some View {
@@ -348,16 +304,7 @@ struct ConversationView<MessagesBottomBar: View>: View {
     }
 
     private func profileSheetForMember(_ member: ConversationMember) -> AnyView {
-        AnyView(
-            NavigationStack {
-                ConversationMemberView(viewModel: viewModel, member: member)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            AttachmentProfileSheetCloseButton()
-                        }
-                    }
-            }
-        )
+        AnyView(MemberContactCardSheetContent(viewModel: viewModel, member: member))
     }
 
     private var pagerDotsInset: CGFloat {
@@ -517,6 +464,58 @@ struct AttachmentProfileSheetCloseButton: View {
     var body: some View {
         let action = { dismiss() }
         Button(role: .cancel, action: action)
+    }
+}
+
+struct MemberContactCardSheetContent: View {
+    let viewModel: ConversationViewModel
+    let member: ConversationMember
+    @Environment(\.dismiss) private var dismiss: DismissAction
+
+    var body: some View {
+        let messagingService = viewModel.messagingService
+        let contactsRepository = messagingService.contactsRepository()
+        let contactsWriter = messagingService.contactsWriter()
+        let resolvedContact: Contact = {
+            if let stored = try? contactsRepository.fetchContact(inboxId: member.profile.inboxId) {
+                return stored
+            }
+            return Contact.synthetic(
+                inboxId: member.profile.inboxId,
+                displayName: member.profile.displayName,
+                avatarURL: member.profile.avatar,
+                addedViaConversationId: viewModel.conversation.id,
+                agentVerification: member.agentVerification
+            )
+        }()
+        let onRemove: () -> Void = {
+            viewModel.remove(member: member)
+            dismiss()
+        }
+        let onBlockAndLeave: () -> Void = {
+            viewModel.blockAndLeaveConvo(inboxId: member.profile.inboxId)
+            dismiss()
+        }
+        NavigationStack {
+            ContactCardView(
+                contact: resolvedContact,
+                mode: .scopedToConversation(
+                    conversationId: viewModel.conversation.id,
+                    canRemoveMembers: viewModel.canRemoveMembers,
+                    isCurrentUser: member.isCurrentUser
+                ),
+                contactsWriter: contactsWriter,
+                contactsRepository: contactsRepository,
+                session: viewModel.session,
+                onRemove: onRemove,
+                onBlockAndLeave: onBlockAndLeave
+            )
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    AttachmentProfileSheetCloseButton()
+                }
+            }
+        }
     }
 }
 
