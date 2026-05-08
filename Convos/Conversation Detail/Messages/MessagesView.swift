@@ -45,6 +45,7 @@ struct MessagesView<BottomBarContent: View>: View {
     let onReaction: (String, String) -> Void
     let onToggleReaction: (String, String) -> Void
     let onTapReactions: (AnyMessage) -> Void
+    let onTapReadReceipts: (MessagesGroup) -> Void
     let onReply: (AnyMessage) -> Void
     let replyingToMessage: AnyMessage?
     var replyingToAudioTranscriptText: String?
@@ -69,6 +70,7 @@ struct MessagesView<BottomBarContent: View>: View {
     let onConvoCode: () -> Void
     let onInviteAssistant: () -> Void
     let onRetryTranscript: (VoiceMemoTranscriptListItem) -> Void
+    let profileSheetForMember: (ConversationMember) -> AnyView
     let hasAssistant: Bool
     let isAssistantJoinPending: Bool
     let isAssistantEnabled: Bool
@@ -78,6 +80,7 @@ struct MessagesView<BottomBarContent: View>: View {
     @Bindable var voiceMemoRecorder: VoiceMemoRecorder
     let onSendVoiceMemo: () -> Void
     let onConvosAction: () -> Void
+    var extraBottomInset: CGFloat = 0.0
     @ViewBuilder let bottomBarContent: () -> BottomBarContent
 
     @State private var bottomBarHeight: CGFloat = 0.0
@@ -100,6 +103,7 @@ struct MessagesView<BottomBarContent: View>: View {
             onReaction: onReaction,
             onToggleReaction: onToggleReaction,
             onTapReactions: onTapReactions,
+            onTapReadReceipts: onTapReadReceipts,
             onReply: onReply,
             contextMenuState: contextMenuState,
             onPhotoRevealed: onPhotoRevealed,
@@ -114,10 +118,11 @@ struct MessagesView<BottomBarContent: View>: View {
             onConvoCode: onConvoCode,
             onInviteAssistant: onInviteAssistant,
             onRetryTranscript: onRetryTranscript,
+            profileSheetForMember: profileSheetForMember,
             hasAssistant: hasAssistant,
             isAssistantJoinPending: isAssistantJoinPending,
             isAssistantEnabled: isAssistantEnabled,
-            bottomBarHeight: bottomBarHeight,
+            bottomBarHeight: bottomBarHeight + extraBottomInset,
             onBottomOverscrollChanged: onBottomOverscrollChanged,
             onBottomOverscrollReleased: onBottomOverscrollReleased,
             scrollToBottomTrigger: { scrollFn in
