@@ -19,6 +19,16 @@ struct ContactsPickerRow: View {
 
                 Spacer(minLength: 0.0)
 
+                if let roleLabel = row.contact.agentVerification?.roleLabel {
+                    Text(roleLabel)
+                        .font(.footnote)
+                        .foregroundStyle(.colorTextSecondary)
+                        .padding(.horizontal, DesignConstants.Spacing.step2x)
+                        .padding(.vertical, DesignConstants.Spacing.stepX)
+                        .background(.colorTextSecondary.opacity(0.1), in: .capsule)
+                        .accessibilityIdentifier("contacts-picker-role-label-\(row.contact.inboxId)")
+                }
+
                 ContactsPickerRowAccessory(
                     isAlreadyInChat: row.isAlreadyInChat,
                     isSelected: isSelected
@@ -101,6 +111,10 @@ private struct ContactsPickerRowAccessory: View {
     let alice = Contact.mock(displayName: "Alice")
     let bob = Contact.mock(displayName: "Bob")
     let carol = Contact.mock(displayName: "Carol")
+    let assistant = Contact.mock(
+        displayName: "Convo Assistant",
+        agentVerification: .verified(.convos)
+    )
     return VStack(alignment: .leading, spacing: 12.0) {
         ContactsPickerRow(
             row: .init(id: alice.inboxId, contact: alice, isAlreadyInChat: false),
@@ -114,6 +128,11 @@ private struct ContactsPickerRowAccessory: View {
         )
         ContactsPickerRow(
             row: .init(id: carol.inboxId, contact: carol, isAlreadyInChat: true),
+            isSelected: false,
+            onTap: {}
+        )
+        ContactsPickerRow(
+            row: .init(id: assistant.inboxId, contact: assistant, isAlreadyInChat: false),
             isSelected: false,
             onTap: {}
         )

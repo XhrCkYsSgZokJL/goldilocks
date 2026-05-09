@@ -21,6 +21,16 @@ struct ContactRowView: View {
                     .lineLimit(1)
             }
             Spacer()
+
+            if let roleLabel = contact.agentVerification?.roleLabel {
+                Text(roleLabel)
+                    .font(.footnote)
+                    .foregroundStyle(.colorTextSecondary)
+                    .padding(.horizontal, DesignConstants.Spacing.step2x)
+                    .padding(.vertical, DesignConstants.Spacing.stepX)
+                    .background(.colorTextSecondary.opacity(0.1), in: .capsule)
+                    .accessibilityIdentifier("contact-role-label-\(contact.inboxId)")
+            }
         }
         .padding(.vertical, 2.0)
         .accessibilityIdentifier("contact-row-\(contact.inboxId)")
@@ -63,6 +73,14 @@ struct ContactAvatarPlaceholder: View {
         ContactRowView(contact: .mock(displayName: "Alice"))
         ContactRowView(contact: .mock(displayName: "Bob"))
         ContactRowView(contact: .mock(displayName: nil))
+        ContactRowView(contact: .mock(
+            displayName: "Convo Assistant",
+            agentVerification: .verified(.convos)
+        ))
+        ContactRowView(contact: .mock(
+            displayName: "Calendar Bot",
+            agentVerification: .verified(.userOAuth)
+        ))
     }
     .padding()
 }

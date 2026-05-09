@@ -290,6 +290,16 @@ private struct ContactCardHeader: View {
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(.colorTextPrimary)
 
+            if let roleLabel = contact.agentVerification?.roleLabel {
+                Text(roleLabel)
+                    .font(.footnote)
+                    .foregroundStyle(.colorTextSecondary)
+                    .padding(.horizontal, DesignConstants.Spacing.step2x)
+                    .padding(.vertical, DesignConstants.Spacing.stepX)
+                    .background(.colorTextSecondary.opacity(0.1), in: .capsule)
+                    .accessibilityIdentifier("contact-card-role-label-\(contact.inboxId)")
+            }
+
             if let bio = contact.bio, !bio.isEmpty {
                 Text(bio)
                     .font(.body)
