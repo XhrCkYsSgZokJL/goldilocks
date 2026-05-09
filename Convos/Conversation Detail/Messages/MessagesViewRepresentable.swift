@@ -37,9 +37,11 @@ struct MessagesViewRepresentable: UIViewControllerRepresentable {
     let onBottomOverscrollChanged: (CGFloat) -> Void
     let onBottomOverscrollReleased: (CGFloat) -> Void
     let scrollToBottomTrigger: (@escaping () -> Void) -> Void
+    let messageInputFocusTrigger: (@escaping () -> Void) -> Void
 
     class Coordinator {
         var scrollToBottomFunction: (() -> Void)?
+        var messageInputFocusFunction: (() -> Void)?
     }
 
     func makeCoordinator() -> Coordinator {
@@ -52,7 +54,11 @@ struct MessagesViewRepresentable: UIViewControllerRepresentable {
         context.coordinator.scrollToBottomFunction = { [weak viewController] in
             viewController?.scrollToBottomForSend()
         }
+        context.coordinator.messageInputFocusFunction = { [weak viewController] in
+            viewController?.messageInputDidBecomeFocused()
+        }
         scrollToBottomTrigger { context.coordinator.scrollToBottomFunction?() }
+        messageInputFocusTrigger { context.coordinator.messageInputFocusFunction?() }
         return viewController
     }
 
@@ -159,7 +165,8 @@ struct MessagesViewRepresentable: UIViewControllerRepresentable {
         bottomBarHeight: bottomBarHeight,
         onBottomOverscrollChanged: { _ in },
         onBottomOverscrollReleased: { _ in },
-        scrollToBottomTrigger: { _ in }
+        scrollToBottomTrigger: { _ in },
+        messageInputFocusTrigger: { _ in }
     )
     .ignoresSafeArea()
 }
