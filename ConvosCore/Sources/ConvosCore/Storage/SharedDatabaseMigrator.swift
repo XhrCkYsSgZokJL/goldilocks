@@ -172,6 +172,18 @@ extension SharedDatabaseMigrator {
 
         migrator.registerMigration("scopeGrantsToAgentInboxId", migrate: Self.scopeGrantsToAgentInboxId)
 
+        Self.registerContactsMVPMigrations(on: &migrator)
+
+        return migrator
+    }
+
+    /// Contacts-MVP-era migrations: the contacts table and follow-up columns
+    /// landed across several PRs and would otherwise push `createMigrator()`
+    /// over SwiftLint's `function_body_length` ceiling. Order matters —
+    /// `createContactTable` must run before any `addContact*` alteration, and
+    /// `addConversationQuarantineFields` lands on the existing `conversation`
+    /// table from the single-inbox baseline.
+    private static func registerContactsMVPMigrations(on migrator: inout DatabaseMigrator) {
         migrator.registerMigration("createContactTable") { db in
             try SharedDatabaseMigrator.createContactSchema(db)
         }
@@ -194,7 +206,6 @@ extension SharedDatabaseMigrator {
                 t.add(column: "agentVerification", .jsonText)
             }
         }
-        return migrator
     }
 
     /// Tighten capabilityResolution + connectionEnablement + connectionGrant so a grant
