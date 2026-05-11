@@ -48,7 +48,7 @@ struct ContactCardView: View {
     init(
         contact: Contact,
         mode: ContactCardMode = .standalone,
-        contactsWriter: any ContactsWriterProtocol = MockContactsWriter(),
+        contactsWriter: any ContactsWriterProtocol,
         contactsRepository: any ContactsRepositoryProtocol,
         session: (any SessionManagerProtocol)? = nil,
         onRemove: (() -> Void)? = nil,
@@ -601,6 +601,7 @@ extension Contact {
     NavigationStack {
         ContactCardView(
             contact: .mock(displayName: "Alice"),
+            contactsWriter: MockContactsWriter(),
             contactsRepository: MockContactsRepository()
         )
     }
@@ -610,6 +611,7 @@ extension Contact {
     NavigationStack {
         ContactCardView(
             contact: .mock(displayName: "Alice", isBlocked: true),
+            contactsWriter: MockContactsWriter(),
             contactsRepository: MockContactsRepository()
         )
     }
@@ -622,6 +624,7 @@ extension Contact {
                 displayName: "Convos Assistant",
                 agentVerification: .verified(.convos)
             ),
+            contactsWriter: MockContactsWriter(),
             contactsRepository: MockContactsRepository()
         )
     }
@@ -636,6 +639,7 @@ extension Contact {
                 canRemoveMembers: true,
                 isCurrentUser: false
             ),
+            contactsWriter: MockContactsWriter(),
             contactsRepository: MockContactsRepository(),
             onRemove: {},
             onBlockAndLeave: {}
