@@ -397,8 +397,9 @@ We replace the original at-query-time heuristic with a denormalized profile snap
   - `DBMemberProfile` writes (existing per-conversation profile delivery).
   - Profile snapshots received via the existing profile-snapshot codec on conversation join.
   - Profile updates received in-band (e.g., `ProfileUpdate` codec messages).
-- For each event, the writer compares the source event's timestamp against `DBContact.profileUpdatedAt`. If the event is newer, it overwrites `displayName`, `avatarURL`, `bio`, and `profileUpdatedAt` on the contact row. If older, the event is dropped from the contact-update path (the `member_profile` table still stores it for in-conversation rendering).
-- "Newer" is decided by the source event's authoring timestamp. If the source has no timestamp, fall back to local receive time.
+- The writer treats each timestamped snapshot as one authoritative unit. If the snapshot's timestamp is greater-than-or-equal to `DBContact.profileUpdatedAt`, the writer wholesale-replaces every profile field on the row (`displayName`, `avatarURL`, `agentVerification`, `profileUpdatedAt`) with the snapshot's values, including `nil`s. There is no per-field merging: a newer snapshot with `avatarURL: nil` clears the stored avatar. This matches the `ProfileUpdate` wire-format contract, where a message without a name or encrypted image clears the sender's profile.
+- Older snapshots are dropped from the contact-update path (the `member_profile` table still stores them for in-conversation rendering).
+- "Newer" is decided by the source event's authoring timestamp. If the source has no timestamp, the snapshot is "fill-defaults" data from a local hydration site; it only seeds new contact rows and leaves existing rows untouched.
 
 This keeps `DBContact` thin, eliminates the at-query-time heuristic, and makes the contact list render on a single primary-key-indexed read with no joins. The contact card (Step 2) and picker render the contact's `DBContact` snapshot; in-conversation rendering continues to use `DBMemberProfile` per ADR-005.
 
@@ -760,10 +761,10 @@ Retires the standalone `ConversationMemberView` in favor of `ContactCardView` re
 - [ ] `addContactAgentVerification` migration: adds nullable `agentVerification` column (jsonText) to `contact`. Existing rows get `NULL` (= "unknown / not yet observed").
 - [ ] Add `agentVerification: AgentVerification?` to `DBContact` (with `nil` default in the explicit init) + `Columns` entry. Persisted as JSON via Codable.
 - [ ] Add `agentVerification: AgentVerification?` to `Contact` (presentation model), hydrated from `DBContact`.
-- [ ] Extend `ContactProfileSnapshot` with `agentVerification: AgentVerification? = nil`. When non-nil, the writer applies it during upsert / profile sync; nil leaves the stored value untouched (most-recent-wins semantics consistent with display name — "absence of signal" preserves the last-known state).
+- [ ] Extend `ContactProfileSnapshot` with `agentVerification: AgentVerification? = nil`. The writer treats each timestamped snapshot as one authoritative unit: when applied, every profile field on the stored row, including `agentVerification`, is wholesale-replaced by the snapshot's value. A newer snapshot with `agentVerification: nil` clears the stored verification (consistent with the `ProfileUpdate` wire-format contract, where a profile without a signal carries none). Untimestamped snapshots from local hydration sites (e.g. `ContactSyncCoordinator`) leave existing rows untouched and only seed new contacts.
 - [ ] Update `ContactSyncCoordinator` to populate `agentVerification` during its per-member upsert by reading `DBMemberProfile.memberKind` (and any verification metadata) for the source conversation.
 - [ ] Update `ContactsProfileSyncWriter` to update `agentVerification` on member-profile-snapshot events.
-- [ ] Unit tests: migration applies; `Contact.agentVerification` defaults to `nil` on pre-migration rows; setting it via the writer persists; profile sync from a verified-agent member promotes the contact's verification; sync from a non-agent profile event does not unset the verification (preserve last-known agent state until an authoritative non-agent signal arrives).
+- [ ] Unit tests: migration applies; `Contact.agentVerification` defaults to `nil` on pre-migration rows; setting it via the writer persists; profile sync from a verified-agent member promotes the contact's verification; a newer profile event without an agent signal wholesale-clears the stored verification.
 
 **2.8.b — Unified card view**
 

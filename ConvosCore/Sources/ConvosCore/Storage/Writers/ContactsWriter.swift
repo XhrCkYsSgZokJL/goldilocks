@@ -102,7 +102,9 @@ final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
                 // gated and we never auto-add from a profile event alone).
                 return
             }
-            let merged = Self.mergeProfile(into: existing, with: profile)
+            guard let merged = Self.replacingProfile(of: existing, with: profile) else {
+                return
+            }
             try merged.save(db)
         }
     }
@@ -176,8 +178,13 @@ final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
     ) throws {
         if let existing = try DBContact.fetchOne(db, key: inboxId) {
             // Identity columns (addedAt, addedViaConversationId) are
-            // intentionally preserved on re-upsert.
-            let merged = mergeProfile(into: existing, with: profile)
+            // intentionally preserved on re-upsert. The profile snapshot is
+            // applied only if it carries a `profileUpdatedAt` newer than
+            // the stored one (see `replacingProfile`); untimestamped
+            // re-upserts leave the existing row untouched.
+            guard let merged = replacingProfile(of: existing, with: profile) else {
+                return
+            }
             try merged.save(db)
             return
         }
@@ -196,61 +203,42 @@ final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
         Log.debug("Inserted new contact for inboxId=\(inboxId) via=\(addedViaConversationId ?? "nil")")
     }
 
-    private static func mergeProfile(
-        into existing: DBContact,
+    /// Returns `existing` with its profile fields replaced by `profile` if
+    /// the snapshot should be applied; returns `nil` if the caller should
+    /// leave the stored row untouched.
+    ///
+    /// The snapshot is treated as one authoritative unit: when applied,
+    /// every profile field on the stored row is replaced by the snapshot's
+    /// value (including `nil`s, which clear the stored field). There is no
+    /// per-field merging. This matches the wire-format contract for
+    /// `ProfileUpdate`, where a message with no name and no encrypted
+    /// image clears the sender's profile.
+    ///
+    /// Application rules:
+    /// - Untimestamped snapshots (`profile.profileUpdatedAt == nil`) never
+    ///   update an existing row. The caller is in a fill-defaults context
+    ///   (e.g. `ContactSyncCoordinator` reading per-conversation member
+    ///   profiles) and the stored row is authoritative.
+    /// - Timestamped snapshots older than the stored `profileUpdatedAt`
+    ///   are dropped (most-recent-wins).
+    /// - Timestamped snapshots greater-than-or-equal to the stored
+    ///   timestamp wholesale-replace the four profile fields.
+    private static func replacingProfile(
+        of existing: DBContact,
         with profile: ContactProfileSnapshot
-    ) -> DBContact {
-        // A snapshot without a `profileUpdatedAt` is "fill in defaults" data,
-        // typically from `ContactSyncCoordinator`, which reads a per-
-        // conversation `DBMemberProfile` that itself isn't timestamped. The
-        // per-conversation profile may be stale relative to the contact's
-        // most-recent-wins state (e.g., the local user knows the contact as
-        // "Bob" from a recent ProfileUpdate in conversation A, but conv B's
-        // older snapshot still says "Robert"). For untimestamped snapshots
-        // we only populate fields the existing contact has nil/empty for;
-        // we never overwrite known data with snapshots of unknown freshness.
+    ) -> DBContact? {
         guard let incomingTimestamp = profile.profileUpdatedAt else {
-            return existing.with(
-                displayName: nonEmpty(existing.displayName) ?? profile.displayName,
-                avatarURL: nonEmpty(existing.avatarURL) ?? profile.avatarURL,
-                profileUpdatedAt: existing.profileUpdatedAt,
-                agentVerification: existing.agentVerification ?? profile.agentVerification
-            )
+            return nil
         }
-
-        // Timestamped snapshot: most-recent-wins.
-        let storedTimestamp: Date? = existing.profileUpdatedAt
-        let shouldApply: Bool
-        if let storedTimestamp {
-            shouldApply = incomingTimestamp >= storedTimestamp
-        } else {
-            shouldApply = true
+        if let stored = existing.profileUpdatedAt, incomingTimestamp < stored {
+            return nil
         }
-        guard shouldApply else { return existing }
-
-        // We only overwrite a stored field if the incoming value is non-nil.
-        // This lets profile snapshots that carry only some fields (e.g. just
-        // an avatar update) merge cleanly without clobbering the others.
-        // For agentVerification, the same rule preserves "last-known agent
-        // state": an incoming non-agent profile event (nil agentVerification)
-        // does not clear a previously observed verification.
-        let mergedName = profile.displayName ?? existing.displayName
-        let mergedAvatar = profile.avatarURL ?? existing.avatarURL
-        let mergedAgent = profile.agentVerification ?? existing.agentVerification
         return existing.with(
-            displayName: mergedName,
-            avatarURL: mergedAvatar,
+            displayName: profile.displayName,
+            avatarURL: profile.avatarURL,
             profileUpdatedAt: incomingTimestamp,
-            agentVerification: mergedAgent
+            agentVerification: profile.agentVerification
         )
-    }
-
-    /// Helper for the fill-defaults branch of `mergeProfile`. Returns the
-    /// string only when it's non-nil and non-empty, so callers can express
-    /// "use stored if present, else fall back to incoming" with `??`.
-    private static func nonEmpty(_ value: String?) -> String? {
-        guard let value, !value.isEmpty else { return nil }
-        return value
     }
 }
 
@@ -272,16 +260,16 @@ extension ContactsWriter {
         )
     }
 
-    /// Copies member-profile display fields onto the matching contact row inside an
-    /// existing transaction (most-recent-wins via `mergeProfile`). No-ops when there is
-    /// no contact for `inboxId` — profile events never auto-add contacts; only the
-    /// action-gated coordinator does. An incoming `receivedAt` older than stored
-    /// `profileUpdatedAt` is dropped.
-    /// - Parameter agentVerification: pass when the calling site already
-    ///   knows the verification state (e.g. it just resolved an attestation).
-    ///   Pass `nil` to leave any previously stored verification untouched —
-    ///   profile events from non-agent contexts should not clear a contact's
-    ///   prior verified-agent flag.
+    /// Copies member-profile display fields onto the matching contact row
+    /// inside an existing transaction. No-ops when there is no contact for
+    /// `inboxId` (profile events never auto-add contacts; only the
+    /// action-gated coordinator does), or when `receivedAt` is older than
+    /// the stored `profileUpdatedAt`.
+    ///
+    /// When the snapshot applies, all four profile fields are replaced
+    /// wholesale: a `nil` `agentVerification` argument clears any
+    /// previously stored verification, matching the `ProfileUpdate`
+    /// wire-format contract.
     static func mirrorMemberProfileToContactInTransaction(
         db: Database,
         inboxId: String,
@@ -299,7 +287,9 @@ extension ContactsWriter {
             profileUpdatedAt: receivedAt,
             agentVerification: agentVerification
         )
-        let merged = mergeProfile(into: existing, with: snapshot)
+        guard let merged = replacingProfile(of: existing, with: snapshot) else {
+            return
+        }
         try merged.save(db)
     }
 

@@ -419,8 +419,12 @@ struct ContactsWriterTests {
         #expect(stored?.agentVerification == .verified(.userOAuth))
     }
 
-    @Test("Profile update without agentVerification preserves the existing verification")
-    func testAgentVerificationPreservedOnNilSignal() async throws {
+    @Test("A newer profile snapshot wholesale-replaces stored fields, including clearing agentVerification")
+    func testNewerSnapshotClearsAgentVerificationWholesale() async throws {
+        // The writer treats each timestamped snapshot as one authoritative
+        // unit. A newer snapshot with `agentVerification: nil` clears the
+        // stored verification; the wire-format contract for `ProfileUpdate`
+        // says a profile without an agent signal does not carry one.
         let dbManager = MockDatabaseManager.makeTestDatabase()
         let writer = ContactsWriter(databaseWriter: dbManager.dbWriter)
         let inboxId = "inbox-1"
@@ -435,7 +439,6 @@ struct ContactsWriterTests {
             )
         )
 
-        // Newer profile event from a non-agent context (nil agentVerification).
         try await writer.updateProfileIfNewer(
             inboxId: inboxId,
             profile: ContactProfileSnapshot(
@@ -449,7 +452,7 @@ struct ContactsWriterTests {
             try DBContact.fetchOne(db, key: inboxId)
         }
         #expect(stored?.displayName == "Renamed")
-        #expect(stored?.agentVerification == .verified(.convos))
+        #expect(stored?.agentVerification == nil)
     }
 
     @Test("mirrorMemberProfileToContactInTransaction promotes a contact's verification when passed in")
@@ -539,13 +542,17 @@ struct ContactsWriterTests {
         #expect(afterCoordinator?.profileUpdatedAt == bobTimestamp)
     }
 
-    @Test("Untimestamped snapshot fills nil/empty fields on existing contact")
-    func testUntimestampedSnapshotFillsNilFieldsOnly() async throws {
+    @Test("Untimestamped upsert leaves an existing contact untouched")
+    func testUntimestampedUpsertNoOpsOnExistingContact() async throws {
+        // An untimestamped snapshot is a "fill-defaults" payload from a
+        // local hydration site (e.g. `ContactSyncCoordinator` reading per-
+        // conversation member profiles). The stored row is authoritative,
+        // so the writer does not touch any of its profile fields. Only
+        // timestamped snapshots can update an existing contact.
         let dbManager = MockDatabaseManager.makeTestDatabase()
         let writer = ContactsWriter(databaseWriter: dbManager.dbWriter)
         let inboxId = "inbox-1"
 
-        // Seed contact with only a display name.
         try await writer.upsertContact(
             inboxId: inboxId,
             addedViaConversationId: nil,
@@ -555,7 +562,6 @@ struct ContactsWriterTests {
             )
         )
 
-        // Coordinator-style untimestamped snapshot with both name and avatar.
         try await writer.upsertContact(
             inboxId: inboxId,
             addedViaConversationId: nil,
@@ -569,14 +575,17 @@ struct ContactsWriterTests {
         let stored = try await dbManager.dbReader.read { db in
             try DBContact.fetchOne(db, key: inboxId)
         }
-        // Name preserved (already set by timestamped path).
         #expect(stored?.displayName == "Alice")
-        // Avatar filled in (was nil, no risk of overwriting "known" data).
-        #expect(stored?.avatarURL == "https://example.com/a.jpg")
+        #expect(stored?.avatarURL == nil)
+        #expect(stored?.profileUpdatedAt == Date(timeIntervalSince1970: 100))
     }
 
-    @Test("upsertContact merges partial profile snapshots")
-    func testPartialProfileMerge() async throws {
+    @Test("A newer timestamped snapshot wholesale-replaces all profile fields")
+    func testNewerSnapshotWholesaleReplacesProfileFields() async throws {
+        // The snapshot is one authoritative unit. A newer event with only a
+        // name clears the stored avatar; the sender is asserting "this is
+        // the profile now," not "patch only the name." Senders that want
+        // to keep their avatar must re-emit it in the same snapshot.
         let dbManager = MockDatabaseManager.makeTestDatabase()
         let writer = ContactsWriter(databaseWriter: dbManager.dbWriter)
         let inboxId = "inbox-1"
@@ -591,7 +600,6 @@ struct ContactsWriterTests {
             )
         )
 
-        // Newer partial event with only a name — must not clobber avatarURL.
         try await writer.updateProfileIfNewer(
             inboxId: inboxId,
             profile: ContactProfileSnapshot(displayName: "Renamed", profileUpdatedAt: Date(timeIntervalSince1970: 200))
@@ -601,7 +609,8 @@ struct ContactsWriterTests {
             try DBContact.fetchOne(db, key: inboxId)
         }
         #expect(contact?.displayName == "Renamed")
-        #expect(contact?.avatarURL == "https://example.com/a.jpg")
+        #expect(contact?.avatarURL == nil)
+        #expect(contact?.profileUpdatedAt == Date(timeIntervalSince1970: 200))
     }
 }
 
