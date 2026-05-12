@@ -126,11 +126,11 @@ final class ContactSyncCoordinator: ContactSyncCoordinatorProtocol, @unchecked S
                 let snapshot = ContactProfileSnapshot(
                     displayName: profile?.name,
                     avatarURL: profile?.avatar,
-                    bio: nil,
                     profileUpdatedAt: nil,
-                    // Derived from the stored memberKind. nil → no agent
+                    // Derived from the stored memberKind. nil means no agent
                     // signal (preserve existing); .agent / .verifiedConvos /
-                    // .verifiedUserOAuth → the corresponding AgentVerification.
+                    // .verifiedUserOAuth map to the corresponding
+                    // AgentVerification.
                     agentVerification: profile?.memberKind?.agentVerification
                 )
                 try ContactsWriter.upsertContactInTransaction(

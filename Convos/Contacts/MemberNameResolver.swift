@@ -4,18 +4,14 @@ import SwiftUI
 
 /// Authoritative name source for any inbox the user has added as a
 /// contact. When a render site is given this resolver, the contact's
-/// stored display name **wins** over the per-conversation profile name
-/// — the contact name is the user's deliberate naming choice and should
+/// stored display name wins over the per-conversation profile name.
+/// The contact name is the user's deliberate naming choice and should
 /// appear consistently across every surface that shows that member
-/// (system messages, member rows, chat header, conversation list titles).
+/// (system messages, member rows, chat header, conversation list titles)
+/// so the same person doesn't appear under different names across two
+/// conversations they're in.
 ///
-/// Started as a Phase 2.9 stopgap that only filled in for "Somebody"
-/// when the per-conversation profile snapshot hadn't landed yet; now
-/// promoted to override semantics so the same person doesn't appear
-/// under different names across two conversations they're in. See PRD
-/// §Phase 2.9 + §Phase 2.9.1.
-///
-/// Read-only — looking up a contact for rendering does not auto-add or
+/// Read-only: looking up a contact for rendering does not auto-add or
 /// modify any contact rows.
 ///
 /// `Sendable` so that `resolver.contactName(for:)` produces a `@Sendable

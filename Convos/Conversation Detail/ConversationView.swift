@@ -26,11 +26,11 @@ struct ConversationView<MessagesBottomBar: View>: View {
     @State private var presentingAddFromContactsPicker: Bool = false
     @Environment(\.dismiss) private var dismiss: DismissAction
 
-    /// Phase 2.9 stopgap: substitutes contact-list display names when a
-    /// member's per-conversation profile name is missing (system messages,
-    /// "Somebody joined" → "Alice joined" when Alice is a contact). Built
-    /// once per `ConversationView` lifetime; reads through the messaging
-    /// service's contacts repository.
+    /// Substitutes contact-list display names when a member's
+    /// per-conversation profile name is missing (system messages,
+    /// "Somebody joined" becomes "Alice joined" when Alice is a contact).
+    /// Built once per `ConversationView` lifetime; reads through the
+    /// messaging service's contacts repository.
     private var memberNameResolver: MemberNameResolver {
         MemberNameResolver(contactsRepository: viewModel.messagingService.contactsRepository())
     }

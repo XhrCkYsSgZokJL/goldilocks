@@ -18,7 +18,6 @@ struct DBContact: Codable, FetchableRecord, PersistableRecord, Hashable, Identif
         static let addedViaConversationId: Column = Column(CodingKeys.addedViaConversationId)
         static let displayName: Column = Column(CodingKeys.displayName)
         static let avatarURL: Column = Column(CodingKeys.avatarURL)
-        static let bio: Column = Column(CodingKeys.bio)
         static let profileUpdatedAt: Column = Column(CodingKeys.profileUpdatedAt)
         static let blockedAt: Column = Column(CodingKeys.blockedAt)
         static let agentVerification: Column = Column(CodingKeys.agentVerification)
@@ -32,7 +31,6 @@ struct DBContact: Codable, FetchableRecord, PersistableRecord, Hashable, Identif
 
     var displayName: String?
     var avatarURL: String?
-    var bio: String?
     var profileUpdatedAt: Date?
     var blockedAt: Date?
     /// Agent verification snapshot for this contact. `nil` means we have not
@@ -49,7 +47,6 @@ struct DBContact: Codable, FetchableRecord, PersistableRecord, Hashable, Identif
         addedViaConversationId: String?,
         displayName: String? = nil,
         avatarURL: String? = nil,
-        bio: String? = nil,
         profileUpdatedAt: Date? = nil,
         blockedAt: Date? = nil,
         agentVerification: AgentVerification? = nil
@@ -59,7 +56,6 @@ struct DBContact: Codable, FetchableRecord, PersistableRecord, Hashable, Identif
         self.addedViaConversationId = addedViaConversationId
         self.displayName = displayName
         self.avatarURL = avatarURL
-        self.bio = bio
         self.profileUpdatedAt = profileUpdatedAt
         self.blockedAt = blockedAt
         self.agentVerification = agentVerification
@@ -70,7 +66,6 @@ extension DBContact {
     func with(
         displayName: String?,
         avatarURL: String?,
-        bio: String?,
         profileUpdatedAt: Date?,
         agentVerification: AgentVerification?
     ) -> DBContact {
@@ -80,7 +75,6 @@ extension DBContact {
             addedViaConversationId: addedViaConversationId,
             displayName: displayName,
             avatarURL: avatarURL,
-            bio: bio,
             profileUpdatedAt: profileUpdatedAt,
             blockedAt: blockedAt,
             agentVerification: agentVerification
@@ -94,7 +88,6 @@ extension DBContact {
             addedViaConversationId: addedViaConversationId,
             displayName: displayName,
             avatarURL: avatarURL,
-            bio: bio,
             profileUpdatedAt: profileUpdatedAt,
             blockedAt: blockedAt,
             agentVerification: agentVerification

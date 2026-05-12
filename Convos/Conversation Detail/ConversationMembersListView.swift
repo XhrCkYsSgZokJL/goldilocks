@@ -6,9 +6,9 @@ struct ConversationMembersListView: View {
 
     @State private var presentingAddFromContactsPicker: Bool = false
 
-    /// Phase 2.9 stopgap — same resolver pattern as `ConversationView`.
-    /// Used to substitute contact-list display names for members whose
-    /// per-conversation profile name is empty.
+    /// Same resolver pattern as `ConversationView`. Substitutes
+    /// contact-list display names for members whose per-conversation
+    /// profile name is empty.
     private var memberNameResolver: MemberNameResolver {
         MemberNameResolver(contactsRepository: viewModel.messagingService.contactsRepository())
     }

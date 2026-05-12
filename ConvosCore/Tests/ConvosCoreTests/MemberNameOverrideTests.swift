@@ -2,7 +2,7 @@
 import Foundation
 import Testing
 
-@Suite("Member-name override precedence (Phase 2.9 / 2.9.1)")
+@Suite("Member-name override precedence")
 struct MemberNameOverrideTests {
     private static func profile(
         inboxId: String,
@@ -185,7 +185,7 @@ struct MemberNameOverrideTests {
             metadataChanges: []
         )
         // The unparameterized `summary` getter should still produce
-        // "Somebody joined …" — Phase 2.9 is opt-in per call site.
+        // "Somebody joined" - the override is opt-in per call site.
         #expect(update.summary == "Somebody joined · Invited by Inviter")
     }
 

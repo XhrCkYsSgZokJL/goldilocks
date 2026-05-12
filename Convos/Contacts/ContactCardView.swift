@@ -13,13 +13,13 @@ import SwiftUI
 //
 // Section visibility is driven by the mode plus the contact's stored state:
 //
-//   - Header (avatar / name / bio) — always
+//   - Header (avatar / name) — always
 //   - Agent rows (Get skills / Learn about assistants) — both modes, when
 //     `contact.agentVerification?.isVerified == true`
 //   - Send a message — both modes, calls `contactsWriter.upsertContact(...)`
 //     before opening the picker so a synthetic / non-yet-stored contact is
 //     promoted to a real one (the narrow per-person upsert documented in
-//     the contacts PRD §"Send-message on a non-contact")
+//     the contacts PRD, "Send-message on a non-contact" section)
 //   - Block / Unblock — both modes
 //   - Group actions (Remove, Block-and-leave) — scoped mode only
 //
@@ -187,14 +187,13 @@ struct ContactCardView: View {
             // and merges only the profile snapshot. For a synthetic contact
             // (passed in from a chat member-tap on a non-contact), this
             // promotes them to a real contact attributed to the source
-            // conversation. See PRD §"Send-message on a non-contact".
+            // conversation. See PRD, "Send-message on a non-contact" section.
             try? await contactsWriter.upsertContact(
                 inboxId: contact.inboxId,
                 addedViaConversationId: contact.addedViaConversationId ?? mode.conversationId,
                 profile: ContactProfileSnapshot(
                     displayName: contact.displayName,
                     avatarURL: contact.avatarURL,
-                    bio: contact.bio,
                     profileUpdatedAt: nil,
                     agentVerification: contact.agentVerification
                 )
@@ -298,14 +297,6 @@ private struct ContactCardHeader: View {
                     .padding(.vertical, DesignConstants.Spacing.stepX)
                     .background(.colorTextSecondary.opacity(0.1), in: .capsule)
                     .accessibilityIdentifier("contact-card-role-label-\(contact.inboxId)")
-            }
-
-            if let bio = contact.bio, !bio.isEmpty {
-                Text(bio)
-                    .font(.body)
-                    .foregroundStyle(.colorTextSecondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, DesignConstants.Spacing.step4x)
             }
         }
     }
@@ -588,7 +579,6 @@ extension Contact {
             inboxId: inboxId,
             displayName: displayName,
             avatarURL: avatarURL,
-            bio: nil,
             addedAt: Date(),
             addedViaConversationId: addedViaConversationId,
             isBlocked: false,

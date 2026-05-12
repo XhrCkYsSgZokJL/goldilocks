@@ -43,9 +43,9 @@ public struct InboundConversationFilter: Sendable {
         hasOutgoingJoinRequest: Bool
     ) -> InboundConversationDecision {
         // Already-accepted conversations bypass every other check. Blocking
-        // does not retroactively quarantine an existing accepted convo —
-        // see PRD §"Blocking" effects list. The user can still post in
-        // groups they shared before the block; only NEW inbound from a
+        // does not retroactively quarantine an existing accepted convo;
+        // see PRD, "Blocking" effects list. The user can still post in
+        // groups they shared before the block; only new inbound from a
         // blocked sender is held.
         if consentState == .allowed { return .deliver }
 

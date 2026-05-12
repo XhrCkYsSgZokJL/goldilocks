@@ -583,7 +583,6 @@ extension SharedDatabaseMigrator {
                 .references("conversation", onDelete: .setNull)
             t.column("displayName", .text)
             t.column("avatarURL", .text)
-            t.column("bio", .text)
             t.column("profileUpdatedAt", .datetime)
         }
 

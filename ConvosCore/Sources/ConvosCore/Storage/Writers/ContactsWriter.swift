@@ -24,20 +24,17 @@ public extension Notification.Name {
 public struct ContactProfileSnapshot: Sendable, Hashable {
     public let displayName: String?
     public let avatarURL: String?
-    public let bio: String?
     public let profileUpdatedAt: Date?
     public let agentVerification: AgentVerification?
 
     public init(
         displayName: String? = nil,
         avatarURL: String? = nil,
-        bio: String? = nil,
         profileUpdatedAt: Date? = nil,
         agentVerification: AgentVerification? = nil
     ) {
         self.displayName = displayName
         self.avatarURL = avatarURL
-        self.bio = bio
         self.profileUpdatedAt = profileUpdatedAt
         self.agentVerification = agentVerification
     }
@@ -192,7 +189,6 @@ final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
             addedViaConversationId: addedViaConversationId,
             displayName: profile.displayName,
             avatarURL: profile.avatarURL,
-            bio: profile.bio,
             profileUpdatedAt: profile.profileUpdatedAt ?? now,
             agentVerification: profile.agentVerification
         )
@@ -204,26 +200,25 @@ final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
         into existing: DBContact,
         with profile: ContactProfileSnapshot
     ) -> DBContact {
-        // A snapshot without a `profileUpdatedAt` is "fill in defaults" data
-        // — typically from `ContactSyncCoordinator`, which reads a per-
+        // A snapshot without a `profileUpdatedAt` is "fill in defaults" data,
+        // typically from `ContactSyncCoordinator`, which reads a per-
         // conversation `DBMemberProfile` that itself isn't timestamped. The
         // per-conversation profile may be stale relative to the contact's
         // most-recent-wins state (e.g., the local user knows the contact as
         // "Bob" from a recent ProfileUpdate in conversation A, but conv B's
         // older snapshot still says "Robert"). For untimestamped snapshots
-        // we only populate fields the existing contact has nil/empty for —
+        // we only populate fields the existing contact has nil/empty for;
         // we never overwrite known data with snapshots of unknown freshness.
         guard let incomingTimestamp = profile.profileUpdatedAt else {
             return existing.with(
                 displayName: nonEmpty(existing.displayName) ?? profile.displayName,
                 avatarURL: nonEmpty(existing.avatarURL) ?? profile.avatarURL,
-                bio: nonEmpty(existing.bio) ?? profile.bio,
                 profileUpdatedAt: existing.profileUpdatedAt,
                 agentVerification: existing.agentVerification ?? profile.agentVerification
             )
         }
 
-        // Timestamped snapshot — most-recent-wins.
+        // Timestamped snapshot: most-recent-wins.
         let storedTimestamp: Date? = existing.profileUpdatedAt
         let shouldApply: Bool
         if let storedTimestamp {
@@ -237,16 +232,14 @@ final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
         // This lets profile snapshots that carry only some fields (e.g. just
         // an avatar update) merge cleanly without clobbering the others.
         // For agentVerification, the same rule preserves "last-known agent
-        // state" — an incoming non-agent profile event (nil agentVerification)
+        // state": an incoming non-agent profile event (nil agentVerification)
         // does not clear a previously observed verification.
         let mergedName = profile.displayName ?? existing.displayName
         let mergedAvatar = profile.avatarURL ?? existing.avatarURL
-        let mergedBio = profile.bio ?? existing.bio
         let mergedAgent = profile.agentVerification ?? existing.agentVerification
         return existing.with(
             displayName: mergedName,
             avatarURL: mergedAvatar,
-            bio: mergedBio,
             profileUpdatedAt: incomingTimestamp,
             agentVerification: mergedAgent
         )
@@ -303,7 +296,6 @@ extension ContactsWriter {
         let snapshot = ContactProfileSnapshot(
             displayName: name,
             avatarURL: avatarURL,
-            bio: nil,
             profileUpdatedAt: receivedAt,
             agentVerification: agentVerification
         )

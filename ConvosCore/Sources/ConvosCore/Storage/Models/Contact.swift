@@ -11,7 +11,6 @@ public struct Contact: Hashable, Identifiable, Sendable {
     public let inboxId: String
     public let displayName: String?
     public let avatarURL: String?
-    public let bio: String?
     public let addedAt: Date
     public let addedViaConversationId: String?
     public let isBlocked: Bool
@@ -25,7 +24,6 @@ public struct Contact: Hashable, Identifiable, Sendable {
         inboxId: String,
         displayName: String?,
         avatarURL: String?,
-        bio: String?,
         addedAt: Date,
         addedViaConversationId: String?,
         isBlocked: Bool = false,
@@ -34,7 +32,6 @@ public struct Contact: Hashable, Identifiable, Sendable {
         self.inboxId = inboxId
         self.displayName = displayName
         self.avatarURL = avatarURL
-        self.bio = bio
         self.addedAt = addedAt
         self.addedViaConversationId = addedViaConversationId
         self.isBlocked = isBlocked
@@ -72,7 +69,6 @@ extension Contact {
             inboxId: dbContact.inboxId,
             displayName: dbContact.displayName,
             avatarURL: dbContact.avatarURL,
-            bio: dbContact.bio,
             addedAt: dbContact.addedAt,
             addedViaConversationId: dbContact.addedViaConversationId,
             isBlocked: dbContact.blockedAt != nil,
@@ -86,7 +82,6 @@ extension Contact {
         inboxId: String = UUID().uuidString,
         displayName: String? = "Sample Contact",
         avatarURL: String? = nil,
-        bio: String? = nil,
         addedViaConversationId: String? = nil,
         isBlocked: Bool = false,
         agentVerification: AgentVerification? = nil
@@ -95,7 +90,6 @@ extension Contact {
             inboxId: inboxId,
             displayName: displayName,
             avatarURL: avatarURL,
-            bio: bio,
             addedAt: Date(),
             addedViaConversationId: addedViaConversationId,
             isBlocked: isBlocked,

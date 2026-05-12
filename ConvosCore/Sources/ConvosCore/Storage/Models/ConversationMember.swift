@@ -90,7 +90,7 @@ public extension Array where Element == ConversationMember {
         map { $0.profile }.formattedNamesString
     }
 
-    /// Phase 2.9 stopgap variant — see
+    /// Variant that takes a contact-name override. See
     /// `Array<Profile>.formattedNamesString(memberNameOverride:)` for the
     /// precedence rules.
     func formattedNamesString(

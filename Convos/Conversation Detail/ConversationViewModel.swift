@@ -258,13 +258,11 @@ class ConversationViewModel { // swiftlint:disable:this type_body_length
         conversation.computedDisplayName(memberNameOverride: contactNameLookup)
     }
 
-    /// Inbox → contact-name lookup used for auto-generated unnamed-group
+    /// Inbox-to-contact-name lookup used for auto-generated unnamed-group
     /// titles in the chat header. Mirrors the resolver injected into the
     /// conversation list. Returns the contact's stored display name when
     /// the inbox is a known contact, else `nil` so the legacy precedence
-    /// (per-conversation profile name → "Somebody") applies. Underscore
-    /// label keeps the bare method reference usable as a `(String) -> String?`
-    /// closure at call sites (`memberNameOverride: contactNameLookup`).
+    /// (per-conversation profile name, then "Somebody") applies.
     private func contactNameLookup(_ inboxId: String) -> String? {
         guard let contact = try? messagingService.contactsRepository().fetchContact(inboxId: inboxId) else {
             return nil
@@ -2206,7 +2204,7 @@ extension ConversationViewModel {
 
     /// Adds the given inboxIds as members of this conversation via the
     /// existing `addMembers` flow. Used by the "Add from Contacts" entry on
-    /// the chat plus-menu (Phase 2.5).
+    /// the chat plus-menu.
     func addMembersFromContacts(_ inboxIds: [String]) async throws {
         guard !inboxIds.isEmpty else { return }
         try await metadataWriter.addMembers(inboxIds, to: conversation.id)

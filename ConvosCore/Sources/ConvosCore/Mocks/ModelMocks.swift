@@ -228,8 +228,8 @@ public extension ConversationUpdate {
     }
 }
 
-/// Resolves a member's rendered display name with the Phase 2.9 stopgap
-/// precedence: per-conversation profile name → contact-list override →
+/// Resolves a member's rendered display name with the precedence:
+/// contact-list override, then per-conversation profile name, then
 /// "Somebody". `isCurrentUser` always renders as "You" for system messages.
 ///
 /// Hoisted to file scope so its branches don't count against
@@ -240,8 +240,8 @@ private func resolvedMemberDisplayName(
     memberNameOverride: (String) -> String?
 ) -> String {
     if member.isCurrentUser { return "You" }
-    // Contact-name override wins over per-conversation profile name —
-    // contact list is the user's deliberate naming choice and should
+    // Contact-name override wins over per-conversation profile name.
+    // Contact list is the user's deliberate naming choice and should
     // appear consistently across every member-name surface.
     if let overridden = memberNameOverride(member.profile.inboxId), !overridden.isEmpty {
         return overridden

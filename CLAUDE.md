@@ -258,6 +258,8 @@ return nil
 - **Only add comments when necessary** to explain something confusing or not apparent from the code
 - **Never use step counts** in comments (e.g., "Step 1:", "Step 2:") - they get out of date when code changes
 - **Never use all caps for emphasis** in comments (e.g., "BEFORE", "IMPORTANT") - use normal sentence case
+- **Never reference temporary planning artifacts in comments** - phase numbers (e.g., "Phase 2.5", "Phase 2.10"), ticket IDs, or PR numbers go stale once shipped. Comments should describe current behavior only. If historical context matters, put it in commit history or an ADR.
+- **Use ASCII characters in comments.** Avoid the section sign (`§`), em dashes (`—`), arrows (`→`), smart quotes, and other non-ASCII punctuation - they are inconsistent with the rest of the codebase and harder to grep. Use plain text equivalents (`-` for dashes, `->` for arrows, `"..."` for quotes, plain references like "see contacts PRD" instead of `§`).
 - Prefer self-documenting code with clear variable and function names over comments
 - If you find yourself writing many comments, consider refactoring the code to be clearer
 
