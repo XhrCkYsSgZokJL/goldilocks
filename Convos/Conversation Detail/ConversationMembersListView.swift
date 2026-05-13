@@ -6,11 +6,11 @@ struct ConversationMembersListView: View {
 
     @State private var presentingAddFromContactsPicker: Bool = false
 
-    /// Same resolver pattern as `ConversationView`. Substitutes
-    /// contact-list display names for members whose per-conversation
-    /// profile name is empty.
-    private var memberNameResolver: MemberNameResolver {
-        MemberNameResolver(contactsRepository: viewModel.messagingService.contactsRepository())
+    /// Same pattern as `ConversationView`. Substitutes contact-list
+    /// display names for members whose per-conversation profile name is
+    /// empty.
+    private var contactNameOverride: @Sendable (String) -> String? {
+        viewModel.messagingService.contactsRepository().contactName(for:)
     }
 
     var body: some View {
@@ -30,7 +30,7 @@ struct ConversationMembersListView: View {
                     } label: {
                         MemberRow(
                             member: member,
-                            displayName: member.displayName(memberNameOverride: memberNameResolver.contactName(for:))
+                            displayName: member.displayName(memberNameOverride: contactNameOverride)
                         )
                     }
                 }

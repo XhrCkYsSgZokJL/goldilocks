@@ -18,13 +18,14 @@ struct ConversationsView: View {
         viewModel.focusCoordinator
     }
 
-    /// Inbox → contact-name override applied across the whole conversation
-    /// list view tree (cells, pinned tiles, accessibility labels). Built
-    /// once per `ConversationsView` body recompute so cells share the same
-    /// closure. Reads through the messaging service's contacts repository;
-    /// uses `messagingServiceSync()` because cell rendering is synchronous.
-    private var memberNameResolver: MemberNameResolver {
-        MemberNameResolver(contactsRepository: viewModel.session.messagingServiceSync().contactsRepository())
+    /// Inbox-to-contact-name override applied across the whole
+    /// conversation list view tree (cells, pinned tiles, accessibility
+    /// labels). Built once per `ConversationsView` body recompute so
+    /// cells share the same closure. Reads through the messaging
+    /// service's contacts repository; uses `messagingServiceSync()`
+    /// because cell rendering is synchronous.
+    private var contactNameOverride: @Sendable (String) -> String? {
+        viewModel.session.messagingServiceSync().contactsRepository().contactName(for:)
     }
 
     var emptyConversationsViewScrollable: some View {
@@ -184,7 +185,7 @@ struct ConversationsView: View {
     }
 
     var body: some View {
-        let resolver = memberNameResolver
+        let nameOverride = contactNameOverride
         return ConversationPresenter(
             viewModel: viewModel.selectedConversationViewModel,
             focusCoordinator: focusCoordinator,
@@ -247,7 +248,7 @@ struct ConversationsView: View {
         }
         .focusable(false)
         .focusEffectDisabled()
-        .memberNameOverride(resolver.contactName(for:))
+        .memberNameOverride(nameOverride)
         .modifier(ConversationsSheetModifier(
             presentingAppSettings: $presentingAppSettings,
             viewModel: viewModel,

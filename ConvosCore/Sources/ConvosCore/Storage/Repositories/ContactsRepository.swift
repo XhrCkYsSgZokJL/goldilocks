@@ -25,6 +25,30 @@ public protocol ContactsRepositoryProtocol: Sendable {
     func fetchContact(inboxId: String) throws -> Contact?
 }
 
+extension ContactsRepositoryProtocol {
+    /// Authoritative inbox-to-display-name lookup for the UI's "contact
+    /// name overrides per-conversation profile name" rule. Returns the
+    /// contact's stored display name when the inbox is a known contact
+    /// with a non-empty name, otherwise `nil` so the caller's fallback
+    /// (per-conversation profile name, then "Somebody") applies.
+    ///
+    /// Suitable as the `@Sendable (String) -> String?` override passed
+    /// to ConvosCore's `Conversation.computedDisplayName(memberNameOverride:)`,
+    /// `ConversationMember.displayName(memberNameOverride:)`, and the
+    /// SwiftUI `.memberNameOverride(_:)` environment modifier. Storage
+    /// errors are swallowed as `nil` since the render-site callers
+    /// cannot usefully handle a thrown error mid-paint.
+    public func contactName(for inboxId: String) -> String? {
+        guard let contact = try? fetchContact(inboxId: inboxId) else {
+            return nil
+        }
+        guard let stored = contact.displayName, !stored.isEmpty else {
+            return nil
+        }
+        return stored
+    }
+}
+
 final class ContactsRepository: ContactsRepositoryProtocol, @unchecked Sendable {
     private let databaseReader: any DatabaseReader
 

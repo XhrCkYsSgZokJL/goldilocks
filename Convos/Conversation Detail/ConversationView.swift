@@ -31,8 +31,8 @@ struct ConversationView<MessagesBottomBar: View>: View {
     /// "Somebody joined" becomes "Alice joined" when Alice is a contact).
     /// Built once per `ConversationView` lifetime; reads through the
     /// messaging service's contacts repository.
-    private var memberNameResolver: MemberNameResolver {
-        MemberNameResolver(contactsRepository: viewModel.messagingService.contactsRepository())
+    private var contactNameOverride: @Sendable (String) -> String? {
+        viewModel.messagingService.contactsRepository().contactName(for:)
     }
 
     private var showPullToAddAssistant: Bool {
@@ -132,7 +132,7 @@ struct ConversationView<MessagesBottomBar: View>: View {
                 viewModel.retryTranscript(for: item)
             },
             profileSheetForMember: profileSheetForMember,
-            memberNameOverride: memberNameResolver.contactName(for:),
+            memberNameOverride: contactNameOverride,
             hasAssistant: viewModel.conversation.hasAgent,
             isAssistantJoinPending: viewModel.isAssistantJoinPending,
             isAssistantEnabled: FeatureFlags.shared.isAssistantEnabled && GlobalConvoDefaults.shared.assistantsEnabled,
