@@ -582,6 +582,31 @@ extension Contact {
             agentVerification: agentVerification
         )
     }
+
+    /// Resolves the contact for `member.profile.inboxId`: returns the
+    /// stored `Contact` if the inbox is a known contact, otherwise a
+    /// synthetic one built from the member's profile snapshot.
+    ///
+    /// Used by the chat-side `ContactCardView` entry points (member-avatar
+    /// tap, members list) so the card renders uniformly for contact
+    /// members and non-contact members. The synthetic fallback is
+    /// promoted to a real contact when the user taps "Send a message".
+    public static func resolved(
+        member: ConversationMember,
+        in conversationId: String,
+        contactsRepository: any ContactsRepositoryProtocol
+    ) -> Contact {
+        if let stored = try? contactsRepository.fetchContact(inboxId: member.profile.inboxId) {
+            return stored
+        }
+        return .synthetic(
+            inboxId: member.profile.inboxId,
+            displayName: member.profile.displayName,
+            avatarURL: member.profile.avatar,
+            addedViaConversationId: conversationId,
+            agentVerification: member.agentVerification
+        )
+    }
 }
 
 #Preview("Default") {

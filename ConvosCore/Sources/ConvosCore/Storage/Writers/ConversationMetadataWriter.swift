@@ -444,7 +444,7 @@ final class ConversationMetadataWriter: ConversationMetadataWriterProtocol, @unc
             // action-gated semantic.
             Task.detached {
                 do {
-                    try await coordinator.syncContacts(for: conversationId, force: true)
+                    try await coordinator.syncContactsAfterMembershipChange(for: conversationId)
                 } catch {
                     Log.error("Contact sync after addMembers failed for \(conversationId): \(error)")
                 }

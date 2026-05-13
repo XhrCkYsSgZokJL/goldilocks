@@ -222,7 +222,7 @@ actor OutgoingMessageWriter: OutgoingMessageWriterProtocol {
         let conversationId = self.conversationId
         Task.detached {
             do {
-                try await coordinator.syncContacts(for: conversationId, force: false)
+                try await coordinator.syncContactsOnFirstMessage(for: conversationId)
             } catch {
                 Log.error("Contact sync failed for \(conversationId): \(error)")
             }

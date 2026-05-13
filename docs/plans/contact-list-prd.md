@@ -411,8 +411,15 @@ This keeps `DBContact` thin, eliminates the at-query-time heuristic, and makes t
 
 ```swift
 public protocol ContactSyncCoordinatorProtocol: Sendable {
-    /// Idempotent. Safe to call repeatedly. Skips if the conversation is already synced unless `force: true`.
-    func syncContacts(for conversationId: String, force: Bool) async throws
+    /// First-message hook. Idempotent; skips if the conversation already
+    /// has a `conversation_contacts_sync` marker.
+    func syncContactsOnFirstMessage(for conversationId: String) async throws
+
+    /// Membership-change hook. Forces a re-sync even on an already-synced
+    /// conversation so newly arrived members are pulled into contacts.
+    /// Still honors the action-gated rule: short-circuits on a never-
+    /// synced conversation unless the local user is the creator.
+    func syncContactsAfterMembershipChange(for conversationId: String) async throws
 }
 
 final class ContactSyncCoordinator: ContactSyncCoordinatorProtocol, @unchecked Sendable {
@@ -420,14 +427,11 @@ final class ContactSyncCoordinator: ContactSyncCoordinatorProtocol, @unchecked S
     private let contactsWriter: ContactsWriterProtocol
     private let selfInboxIdProvider: () -> String?
 
-    public func syncContacts(for conversationId: String, force: Bool = false) async throws {
-        // In a single GRDB transaction:
-        // - If !force and `conversation_contacts_sync` already has a row, return.
-        // - Read all `conversation_members` rows for conversationId, excluding self.
-        // - For each non-self inboxId, contactsWriter.upsertContact(inboxId:addedVia:profileSnapshot:)
-        //   passing the most recent member-profile data we currently have.
-        // - Save `conversation_contacts_sync(conversationId, now)`.
-    }
+    // Both public methods route to a shared private impl:
+    // - On a never-synced conversation, both hooks run the upsert loop
+    //   (subject to the action-gated rule for the membership-change hook).
+    // - On an already-synced conversation, the first-message hook no-ops
+    //   while the membership-change hook re-runs to pull in new members.
 }
 ```
 
@@ -439,23 +443,21 @@ final class ContactSyncCoordinator: ContactSyncCoordinatorProtocol, @unchecked S
 
 ### Hook Integration (Step 1)
 
-Two hook sites in Step 1, both calling `coordinator.syncContacts(for:)` fire-and-forget:
+Two hook sites in Step 1, both fire-and-forget:
 
 ```swift
 // 1. First outbound message persisted in a conversation
-//    (in MessagesWriter.persistOutgoing, or equivalent — confirm during implementation)
-//    Trigger: BEFORE returning success to the caller, check if `conversation_contacts_sync`
-//    has a row for conversationId. If not, enqueue:
-Task.detached { try? await contactSyncCoordinator.syncContacts(for: conversationId, force: false) }
+//    (in MessagesWriter.persistOutgoing, or equivalent - confirm during implementation)
+Task.detached { try? await contactSyncCoordinator.syncContactsOnFirstMessage(for: conversationId) }
 
 // 2. New members added to an existing group
 //    (in ConversationMetadataWriter.addMembers, after DBConversationMember writes)
-Task.detached { try? await contactSyncCoordinator.syncContacts(for: conversationId, force: true) }
+Task.detached { try? await contactSyncCoordinator.syncContactsAfterMembershipChange(for: conversationId) }
 ```
 
 The first hook replaces the old `StreamProcessor.processConversation` and `InviteJoinRequestsManager.processJoinRequest` hooks. We no longer auto-add on conversation-arrival; the local user must take an explicit action (send a message). This matches the review-feedback requirement: *"all other members of the group are added to your Contact List as soon as you send a message in the group."*
 
-The second hook is unchanged in spirit but now should only run for conversations the local user has already acted in — i.e., conversations that already have a `conversation_contacts_sync` row. The coordinator can short-circuit `force: true` calls for conversations that have not been synced before (the local user has not acted in them yet, so we do not pull their members into our contacts).
+The second hook is unchanged in spirit but now should only run for conversations the local user has already acted in, i.e. conversations that already have a `conversation_contacts_sync` row. The coordinator short-circuits the membership-change hook on never-synced conversations (the local user has not acted in them yet, so we do not pull their members into our contacts).
 
 Errors are caught locally and logged; auto-add is a best-effort enrichment.
 

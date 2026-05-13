@@ -420,7 +420,7 @@ actor StreamProcessor: StreamProcessorProtocol {
             Log.warning("Failed to decode ProfileUpdate from message \(message.id)")
             return
         }
-        let receivedAt = Date(timeIntervalSince1970: TimeInterval(message.sentAtNs) / 1_000_000_000)
+        let receivedAt = message.sentAt
 
         let senderInboxId = message.senderInboxId
         guard !senderInboxId.isEmpty else {
@@ -493,9 +493,9 @@ actor StreamProcessor: StreamProcessorProtocol {
             Log.warning("Failed to decode ProfileSnapshot from message \(message.id)")
             return
         }
-        // Derived from `message.sentAtNs`, not wall-clock `Date()`.
-        // Mirrors `processProfileUpdate`
-        let receivedAt = Date(timeIntervalSince1970: TimeInterval(message.sentAtNs) / 1_000_000_000)
+        // Derived from `message.sentAt`, not wall-clock `Date()`.
+        // Mirrors `processProfileUpdate`.
+        let receivedAt = message.sentAt
 
         do {
             try await databaseWriter.write { db in

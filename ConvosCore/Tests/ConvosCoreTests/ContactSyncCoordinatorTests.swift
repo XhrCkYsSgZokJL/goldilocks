@@ -87,7 +87,7 @@ struct ContactSyncCoordinatorTests {
             databaseWriter: dbManager.dbWriter,
             databaseReader: dbManager.dbReader
         )
-        try await coordinator.syncContacts(for: conversationId, force: false)
+        try await coordinator.syncContactsOnFirstMessage(for: conversationId)
 
         let contacts: [DBContact] = try await dbManager.dbReader.read { db in
             try DBContact.fetchAll(db)
@@ -124,7 +124,7 @@ struct ContactSyncCoordinatorTests {
             databaseWriter: dbManager.dbWriter,
             databaseReader: dbManager.dbReader
         )
-        try await coordinator.syncContacts(for: conversationId, force: false)
+        try await coordinator.syncContactsOnFirstMessage(for: conversationId)
 
         let firstAddedAt = try await dbManager.dbReader.read { db in
             try DBContact.fetchOne(db, key: "alice")?.addedAt
@@ -132,7 +132,7 @@ struct ContactSyncCoordinatorTests {
 
         try await Task.sleep(nanoseconds: 5_000_000)
 
-        try await coordinator.syncContacts(for: conversationId, force: false)
+        try await coordinator.syncContactsOnFirstMessage(for: conversationId)
 
         let secondAddedAt = try await dbManager.dbReader.read { db in
             try DBContact.fetchOne(db, key: "alice")?.addedAt
@@ -161,7 +161,7 @@ struct ContactSyncCoordinatorTests {
             databaseWriter: dbManager.dbWriter,
             databaseReader: dbManager.dbReader
         )
-        try await coordinator.syncContacts(for: conversationId, force: true)
+        try await coordinator.syncContactsAfterMembershipChange(for: conversationId)
 
         let contacts: [DBContact] = try await dbManager.dbReader.read { db in
             try DBContact.fetchAll(db)
@@ -190,7 +190,7 @@ struct ContactSyncCoordinatorTests {
             databaseWriter: dbManager.dbWriter,
             databaseReader: dbManager.dbReader
         )
-        try await coordinator.syncContacts(for: conversationId, force: true)
+        try await coordinator.syncContactsAfterMembershipChange(for: conversationId)
 
         let contactIds: Set<String> = try await dbManager.dbReader.read { db in
             Set(try DBContact.fetchAll(db).map(\.inboxId))
@@ -222,7 +222,7 @@ struct ContactSyncCoordinatorTests {
             databaseWriter: dbManager.dbWriter,
             databaseReader: dbManager.dbReader
         )
-        try await coordinator.syncContacts(for: conversationId, force: false)
+        try await coordinator.syncContactsOnFirstMessage(for: conversationId)
 
         // Add a new member after the initial sync.
         try await dbManager.dbWriter.write { db in
@@ -237,7 +237,7 @@ struct ContactSyncCoordinatorTests {
             ).save(db)
         }
 
-        try await coordinator.syncContacts(for: conversationId, force: true)
+        try await coordinator.syncContactsAfterMembershipChange(for: conversationId)
 
         let contactIds: Set<String> = try await dbManager.dbReader.read { db in
             Set(try DBContact.fetchAll(db).map(\.inboxId))
@@ -265,7 +265,7 @@ struct ContactSyncCoordinatorTests {
             databaseWriter: dbManager.dbWriter,
             databaseReader: dbManager.dbReader
         )
-        try await coordinator.syncContacts(for: conversationId, force: false)
+        try await coordinator.syncContactsOnFirstMessage(for: conversationId)
 
         let inboxIds: [String] = try await dbManager.dbReader.read { db in
             try DBContact.fetchAll(db).map(\.inboxId)
@@ -301,7 +301,7 @@ struct ContactSyncCoordinatorTests {
         // this fell through both short-circuits and upserted every member,
         // including the local user, because the per-iteration self-skip guard
         // can't fire when self is nil.
-        try await coordinator.syncContacts(for: conversationId, force: false)
+        try await coordinator.syncContactsOnFirstMessage(for: conversationId)
 
         var contactIds: Set<String> = try await dbManager.dbReader.read { db in
             Set(try DBContact.fetchAll(db).map(\.inboxId))
@@ -320,7 +320,7 @@ struct ContactSyncCoordinatorTests {
 
         // Quadrant 2: member-added hook on already-synced. Pre-fix this fell
         // through both short-circuits the same way.
-        try await coordinator.syncContacts(for: conversationId, force: true)
+        try await coordinator.syncContactsAfterMembershipChange(for: conversationId)
 
         contactIds = try await dbManager.dbReader.read { db in
             Set(try DBContact.fetchAll(db).map(\.inboxId))
@@ -349,7 +349,7 @@ struct ContactSyncCoordinatorTests {
             databaseReader: dbManager.dbReader
         )
         #expect(try coordinator.hasSyncedContacts(for: conversationId) == false)
-        try await coordinator.syncContacts(for: conversationId, force: false)
+        try await coordinator.syncContactsOnFirstMessage(for: conversationId)
         #expect(try coordinator.hasSyncedContacts(for: conversationId) == true)
     }
 
@@ -377,7 +377,7 @@ struct ContactSyncCoordinatorTests {
             databaseWriter: dbManager.dbWriter,
             databaseReader: dbManager.dbReader
         )
-        try await coordinator.syncContacts(for: conversationId, force: false)
+        try await coordinator.syncContactsOnFirstMessage(for: conversationId)
 
         // No contacts and no marker — we deliberately deferred so the next
         // outbound message gets another chance.
@@ -402,7 +402,7 @@ struct ContactSyncCoordinatorTests {
 
         // Next sync (e.g. from the next outbound message) lands the contact
         // and writes the marker.
-        try await coordinator.syncContacts(for: conversationId, force: false)
+        try await coordinator.syncContactsOnFirstMessage(for: conversationId)
         #expect(try coordinator.hasSyncedContacts(for: conversationId) == true)
         let inboxIds: Set<String> = try await dbManager.dbReader.read { db in
             Set(try DBContact.fetchAll(db).map(\.inboxId))

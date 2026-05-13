@@ -117,7 +117,7 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
         guard let coordinator = contactSyncCoordinator else { return }
         Task.detached {
             do {
-                try await coordinator.syncContacts(for: conversationId, force: true)
+                try await coordinator.syncContactsAfterMembershipChange(for: conversationId)
             } catch {
                 Log.error("Contact sync after network member change failed for \(conversationId): \(error)")
             }

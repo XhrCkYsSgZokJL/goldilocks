@@ -2,27 +2,26 @@ import Foundation
 import GRDB
 
 public protocol ContactSyncCoordinatorProtocol: Sendable {
-    /// Idempotent. For the supplied conversation, ensures every non-self
-    /// member has a row in the `contact` table and that the conversation has
-    /// a `conversation_contacts_sync` marker.
-    ///
-    /// - Parameters:
-    ///   - conversationId: the conversation to sync.
-    ///   - force: when true, the coordinator runs even if the conversation
-    ///     already has a sync marker (used for the member-added hook so a
-    ///     newly added member is pulled into contacts on top of an
-    ///     already-acted-in conversation).
-    func syncContacts(for conversationId: String, force: Bool) async throws
+    /// First-message hook: idempotent sync that skips if the conversation
+    /// already has a `conversation_contacts_sync` marker. Used by
+    /// `OutgoingMessageWriter` when the local user sends a message; the
+    /// no-op-if-synced semantic means subsequent messages in the same
+    /// conversation are cheap.
+    func syncContactsOnFirstMessage(for conversationId: String) async throws
 
-    /// Returns true when the supplied conversation already has a sync marker
-    /// — i.e. the local user has acted in this conversation in the past.
+    /// Membership-change hook: forced sync that runs even on an already-
+    /// synced conversation, so newly arrived members are pulled into
+    /// contacts. Used by `ConversationWriter` (after a network-driven
+    /// member commit) and `ConversationMetadataWriter.addMembers`. The
+    /// coordinator still honors the action-gated rule by short-circuiting
+    /// when the conversation has never been synced (i.e. the local user
+    /// has not acted there), unless the local user is the creator.
+    func syncContactsAfterMembershipChange(for conversationId: String) async throws
+
+    /// Returns true when the supplied conversation already has a sync
+    /// marker, i.e. the local user has acted in this conversation in the
+    /// past.
     func hasSyncedContacts(for conversationId: String) throws -> Bool
-}
-
-extension ContactSyncCoordinatorProtocol {
-    public func syncContacts(for conversationId: String) async throws {
-        try await syncContacts(for: conversationId, force: false)
-    }
 }
 
 /// Single entry point for the auto-add work described in the contact list PRD.
@@ -61,7 +60,15 @@ final class ContactSyncCoordinator: ContactSyncCoordinatorProtocol, @unchecked S
         }
     }
 
-    func syncContacts(for conversationId: String, force: Bool) async throws {
+    func syncContactsOnFirstMessage(for conversationId: String) async throws {
+        try await sync(conversationId: conversationId, force: false)
+    }
+
+    func syncContactsAfterMembershipChange(for conversationId: String) async throws {
+        try await sync(conversationId: conversationId, force: true)
+    }
+
+    private func sync(conversationId: String, force: Bool) async throws {
         try await databaseWriter.write { [selfInboxIdProvider] db in
             // Without the local inbox singleton we cannot identify "self" and
             // therefore cannot exclude the local user from the upsert loop.

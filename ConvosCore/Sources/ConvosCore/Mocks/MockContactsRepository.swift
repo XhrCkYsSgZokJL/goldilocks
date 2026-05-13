@@ -63,7 +63,9 @@ public final class MockContactsWriter: ContactsWriterProtocol, @unchecked Sendab
 public final class MockContactSyncCoordinator: ContactSyncCoordinatorProtocol, @unchecked Sendable {
     public init() {}
 
-    public func syncContacts(for conversationId: String, force: Bool) async throws {}
+    public func syncContactsOnFirstMessage(for conversationId: String) async throws {}
+
+    public func syncContactsAfterMembershipChange(for conversationId: String) async throws {}
 
     public func hasSyncedContacts(for conversationId: String) throws -> Bool {
         false

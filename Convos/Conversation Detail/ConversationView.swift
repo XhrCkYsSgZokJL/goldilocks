@@ -486,18 +486,11 @@ struct MemberContactCardSheetContent: View {
         let messagingService = viewModel.messagingService
         let contactsRepository = messagingService.contactsRepository()
         let contactsWriter = messagingService.contactsWriter()
-        let resolvedContact: Contact = {
-            if let stored = try? contactsRepository.fetchContact(inboxId: member.profile.inboxId) {
-                return stored
-            }
-            return Contact.synthetic(
-                inboxId: member.profile.inboxId,
-                displayName: member.profile.displayName,
-                avatarURL: member.profile.avatar,
-                addedViaConversationId: viewModel.conversation.id,
-                agentVerification: member.agentVerification
-            )
-        }()
+        let resolvedContact = Contact.resolved(
+            member: member,
+            in: viewModel.conversation.id,
+            contactsRepository: contactsRepository
+        )
         let onRemove: () -> Void = {
             viewModel.remove(member: member)
             dismiss()
