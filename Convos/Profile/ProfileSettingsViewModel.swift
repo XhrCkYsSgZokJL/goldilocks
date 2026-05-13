@@ -79,14 +79,20 @@ class ProfileSettingsViewModel {
         let resolvedName: String? = trimmedName.isEmpty ? nil : trimmedName
         let imageData = profileImage?.jpegData(compressionQuality: 1.0)
         let assetIdentifier = imageData == nil ? nil : profileImageAssetIdentifier
-        let isDefault = profileSettings.isDefault
         try await writer.save(
             name: resolvedName,
             imageData: imageData,
             imageAssetIdentifier: assetIdentifier,
             metadata: nil
         )
-        if !isDefault {
+        // Record that the user has actually set a non-default profile.
+        // `ConversationOnboardingCoordinator.startProfileSetupFlow` reads
+        // this flag to decide whether to prompt for "Add your name and
+        // pic" on the first chat; without it set, a user who configures
+        // their profile up front in Settings still gets the onboarding
+        // prompt and sees "Chat as Somebody" in the input bar.
+        let didSetSomething = resolvedName != nil || imageData != nil
+        if didSetSomething {
             ConversationOnboardingCoordinator.markProfileEditorShown()
         }
     }
