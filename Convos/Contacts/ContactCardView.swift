@@ -41,6 +41,8 @@ struct ContactCardView: View {
     @State private var presentingBlockConfirmation: Bool = false
     @State private var presentingBlockAndLeaveConfirmation: Bool = false
     @State private var presentingPicker: Bool = false
+    @State private var presentingSendMessageError: Bool = false
+    @State private var sendMessageErrorMessage: String?
 
     init(
         contact: Contact,
@@ -71,6 +73,8 @@ struct ContactCardView: View {
                 presentingBlockConfirmation: $presentingBlockConfirmation,
                 presentingBlockAndLeaveConfirmation: $presentingBlockAndLeaveConfirmation,
                 presentingPicker: $presentingPicker,
+                presentingSendMessageError: $presentingSendMessageError,
+                sendMessageErrorMessage: sendMessageErrorMessage,
                 blockAlertTitle: blockAlertTitle,
                 blockAlertMessage: blockAlertMessage,
                 blockAlertActions: { blockAlertActions },
@@ -170,22 +174,31 @@ struct ContactCardView: View {
 
     private func handleSendMessage() {
         Task {
-            // Idempotent. For a contact already in the DB, the writer
-            // preserves the original `addedAt` and `addedViaConversationId`
-            // and merges only the profile snapshot. For a synthetic contact
-            // (passed in from a chat member-tap on a non-contact), this
-            // promotes them to a real contact attributed to the source
-            // conversation. See PRD, "Send-message on a non-contact" section.
-            try? await contactsWriter.upsertContact(
-                inboxId: contact.inboxId,
-                addedViaConversationId: contact.addedViaConversationId ?? mode.conversationId,
-                profile: ContactProfileSnapshot(
-                    displayName: contact.displayName,
-                    avatarURL: contact.avatarURL,
-                    profileUpdatedAt: nil,
-                    agentVerification: contact.agentVerification
+            do {
+                // Idempotent. For a contact already in the DB, the writer
+                // preserves the original `addedAt` and `addedViaConversationId`
+                // and merges only the profile snapshot. For a synthetic contact
+                // (passed in from a chat member-tap on a non-contact), this
+                // promotes them to a real contact attributed to the source
+                // conversation. See PRD, "Send-message on a non-contact" section.
+                try await contactsWriter.upsertContact(
+                    inboxId: contact.inboxId,
+                    addedViaConversationId: contact.addedViaConversationId ?? mode.conversationId,
+                    profile: ContactProfileSnapshot(
+                        displayName: contact.displayName,
+                        avatarURL: contact.avatarURL,
+                        profileUpdatedAt: nil,
+                        agentVerification: contact.agentVerification
+                    )
                 )
-            )
+            } catch {
+                Log.error("Failed to upsert contact \(contact.inboxId): \(error.localizedDescription)")
+                await MainActor.run {
+                    sendMessageErrorMessage = "We couldn't open the message picker. Please try again."
+                    presentingSendMessageError = true
+                }
+                return
+            }
             await MainActor.run {
                 presentingPicker = true
             }
@@ -507,6 +520,8 @@ private struct ContactCardModalsModifier<
     @Binding var presentingBlockConfirmation: Bool
     @Binding var presentingBlockAndLeaveConfirmation: Bool
     @Binding var presentingPicker: Bool
+    @Binding var presentingSendMessageError: Bool
+    let sendMessageErrorMessage: String?
     let blockAlertTitle: String
     let blockAlertMessage: String
     let blockAlertActions: () -> BlockActions
@@ -526,6 +541,15 @@ private struct ContactCardModalsModifier<
                 blockAndLeaveAlertActions()
             } message: {
                 Text(blockAndLeaveAlertMessage)
+            }
+            .alert(
+                "Couldn't open message picker",
+                isPresented: $presentingSendMessageError,
+                presenting: sendMessageErrorMessage
+            ) { _ in
+                Button("OK", role: .cancel) {}
+            } message: { message in
+                Text(message)
             }
             .sheet(isPresented: $presentingPicker) {
                 pickerSheet()
