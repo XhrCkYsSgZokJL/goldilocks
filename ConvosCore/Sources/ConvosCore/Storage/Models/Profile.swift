@@ -74,7 +74,12 @@ public struct Profile: Codable, Identifiable, Hashable, Sendable {
     }
 
     public var isAvatarEncrypted: Bool {
-        avatarSalt?.count == 32 && avatarNonce?.count == 12
+        // All three of salt (32), nonce (12), and key (32) must be present
+        // for the cache's encrypted-fetch branch to actually decrypt the
+        // avatar. `ImageCache.fetchEncryptedImageInline` silently returns
+        // `nil` when the key is missing, so a partial state here would
+        // surface as a vanished avatar.
+        avatarSalt?.count == 32 && avatarNonce?.count == 12 && avatarKey?.count == 32
     }
 
     public var displayName: String {

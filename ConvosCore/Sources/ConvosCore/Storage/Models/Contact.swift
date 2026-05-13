@@ -53,9 +53,14 @@ public struct Contact: Hashable, Identifiable, Sendable {
     }
 
     /// True when this contact has the full set of AES-256-GCM material
-    /// needed to decrypt its avatar. Mirrors `Profile.isAvatarEncrypted`.
+    /// needed to decrypt its avatar (32-byte salt, 12-byte nonce,
+    /// 32-byte key). Mirrors `Profile.isAvatarEncrypted`. All three are
+    /// required: the `ImageCacheable` conformance below sends `self` down
+    /// the encrypted-fetch branch when this returns true, and
+    /// `ImageCache.fetchEncryptedImageInline` silently returns `nil` if
+    /// the key is missing.
     public var isAvatarEncrypted: Bool {
-        avatarSalt?.count == 32 && avatarNonce?.count == 12
+        avatarSalt?.count == 32 && avatarNonce?.count == 12 && avatarKey?.count == 32
     }
 
     /// Display label that always returns something printable. Falls back to a
