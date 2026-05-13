@@ -25,14 +25,7 @@ struct ConversationMembersListView: View {
         ScrollView {
             LazyVStack(spacing: 0) {
                 ForEach(viewModel.conversation.members.sortedByRole(), id: \.id) { member in
-                    NavigationLink {
-                        memberContactCardDestination(for: member)
-                    } label: {
-                        MemberRow(
-                            member: member,
-                            displayName: member.displayName(memberNameOverride: contactNameOverride)
-                        )
-                    }
+                    memberRowDestination(for: member)
                 }
             }
             .padding(.horizontal, DesignConstants.Spacing.step6x)
@@ -69,6 +62,32 @@ struct ConversationMembersListView: View {
                         presentingAddFromContactsPicker = true
                     }
                 )
+            }
+        }
+    }
+
+    /// Routes a member-row tap based on whether the row is for the local
+    /// user. Tapping your own row opens "My info" via
+    /// `viewModel.onProfileSettings()`; tapping someone else's pushes the
+    /// contact card. Wrapping each branch as a separate view keeps the
+    /// `ForEach` body small enough to stay clear of the type-checker
+    /// timeout, and centralises the "no contact card for self" rule.
+    @ViewBuilder
+    private func memberRowDestination(for member: ConversationMember) -> some View {
+        let row = MemberRow(
+            member: member,
+            displayName: member.displayName(memberNameOverride: contactNameOverride)
+        )
+        if member.isCurrentUser {
+            Button(action: viewModel.onProfileSettings) {
+                row
+            }
+            .buttonStyle(.plain)
+        } else {
+            NavigationLink {
+                memberContactCardDestination(for: member)
+            } label: {
+                row
             }
         }
     }

@@ -2108,6 +2108,14 @@ extension ConversationViewModel {
     }
 
     func onTapAvatar(_ member: ConversationMember) {
+        // Tapping your own avatar in the messages view routes to "My info"
+        // instead of the contact card. Showing the contact card for self
+        // exposes Send-a-message and Block affordances against yourself,
+        // which is meaningless and would leak self into the contact list.
+        if member.isCurrentUser {
+            presentingProfileSettings = true
+            return
+        }
         presentingProfileForMember = member
     }
 
