@@ -16,7 +16,7 @@ struct SessionManagerDeleteAllDataTests {
             platformProviders: .mock
         )
 
-        try databaseManager.dbWriter.write { db in
+        try await databaseManager.dbWriter.write { db in
             try DBContact(
                 inboxId: "contact-1",
                 addedAt: Date(),
@@ -32,11 +32,21 @@ struct SessionManagerDeleteAllDataTests {
 
         for try await _ in session.deleteAllInboxesWithProgress() {}
 
-        try databaseManager.dbReader.read { db in
-            #expect(try DBContact.fetchCount(db) == 0)
-            #expect(try DBMyProfile.fetchCount(db) == 0)
-            #expect(try DBConversation.fetchCount(db) == 0)
-            #expect(try DBInbox.fetchCount(db) == 0)
+        let contactCount = try await databaseManager.dbReader.read { db in
+            try DBContact.fetchCount(db)
         }
+        let myProfileCount = try await databaseManager.dbReader.read { db in
+            try DBMyProfile.fetchCount(db)
+        }
+        let conversationCount = try await databaseManager.dbReader.read { db in
+            try DBConversation.fetchCount(db)
+        }
+        let inboxCount = try await databaseManager.dbReader.read { db in
+            try DBInbox.fetchCount(db)
+        }
+        #expect(contactCount == 0)
+        #expect(myProfileCount == 0)
+        #expect(conversationCount == 0)
+        #expect(inboxCount == 0)
     }
 }
