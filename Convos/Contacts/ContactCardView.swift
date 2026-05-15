@@ -115,7 +115,7 @@ struct ContactCardView: View {
     // MARK: - Derived
 
     private var isVerifiedAgent: Bool {
-        contact.agentVerification?.isVerified == true
+        contact.isVerifiedAgent
     }
 
     // MARK: - Picker sheet

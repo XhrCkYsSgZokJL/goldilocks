@@ -171,8 +171,11 @@ final class ContactsPickerViewModel {
     }
 
     private func rebuildSections() {
-        let unblocked = allContacts.filter { !$0.isBlocked }
-        let filtered = filterByQuery(unblocked)
+        // Verified agents are kept in `DBContact` so chat-side surfaces can
+        // resolve them, but are hidden from the picker so users only see
+        // human candidates when starting / adding to a conversation.
+        let visible = allContacts.filter { !$0.isBlocked && !$0.isVerifiedAgent }
+        let filtered = filterByQuery(visible)
         let grouped: [String: [Contact]] = Dictionary(
             grouping: filtered,
             by: { $0.alphabeticalSectionKey }

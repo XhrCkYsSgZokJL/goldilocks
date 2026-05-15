@@ -29,6 +29,40 @@ final class ContactsPickerViewModelTests: XCTestCase {
         XCTAssertEqual(allRowIds.sorted(), [alice.inboxId, carl.inboxId].sorted())
     }
 
+    /// Verified-agent contacts (Convos / OAuth-attested assistants) live in
+    /// `DBContact` so chat-side surfaces can resolve them, but the picker
+    /// browses humans only. Regression guard: if the predicate ever stops
+    /// filtering them, agents would surface in every "Start a convo" /
+    /// "Add to convo" flow.
+    func testSectionsExcludeVerifiedAgents() {
+        let alice = Contact.mock(displayName: "Alice")
+        let assistant = Contact.mock(
+            displayName: "Convos Assistant",
+            agentVerification: .verified(.convos)
+        )
+        let oauthAgent = Contact.mock(
+            displayName: "OAuth Bot",
+            agentVerification: .verified(.userOAuth)
+        )
+        let unverifiedAgent = Contact.mock(
+            displayName: "Unverified Bot",
+            agentVerification: .unverified
+        )
+        let repo = MockContactsRepository(contacts: [alice, assistant, oauthAgent, unverifiedAgent])
+
+        let viewModel = ContactsPickerViewModel(
+            mode: .newConversation,
+            contactsRepository: repo
+        )
+
+        let allRowIds: [String] = viewModel.sections.flatMap { $0.rows.map(\.id) }
+        // Alice and the unverified agent pass through; both verified agents
+        // are filtered out. Unverified agents intentionally remain visible
+        // because they're not yet attested - the user may still want to act
+        // on them like any unknown contact.
+        XCTAssertEqual(allRowIds.sorted(), [alice.inboxId, unverifiedAgent.inboxId].sorted())
+    }
+
     func testHashBucketSortsLastForNonAlphaNames() {
         let alpha = Contact.mock(displayName: "Alpha")
         let pound = Contact.mock(displayName: "1Number")

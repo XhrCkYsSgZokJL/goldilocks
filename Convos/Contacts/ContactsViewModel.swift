@@ -44,7 +44,11 @@ final class ContactsViewModel {
 
     private func applyContacts(_ contacts: [Contact]) {
         allContacts = contacts
-        contactCount = contacts.count
+        // `contactCount` drives the empty-state vs list-state branch and
+        // the compose button's enabled flag. Use the human-visible count
+        // (verified agents are hidden from this view) so a user whose
+        // contacts are all agents sees the empty state correctly.
+        contactCount = contacts.filter { !$0.isVerifiedAgent }.count
         rebuildSections()
         isLoading = false
     }
@@ -52,8 +56,14 @@ final class ContactsViewModel {
     /// Recomputes `sections` from `allContacts` honoring the current
     /// `searchQuery`. Mirrors the picker's filter/group pipeline so both
     /// surfaces sort and bucket identically.
+    ///
+    /// Verified agents are kept in `DBContact` so chat-side surfaces (member
+    /// rows, system messages, the contact card opened from a member tap) can
+    /// still resolve their profile; they are excluded here so the human
+    /// contact browser stays focused on real people.
     private func rebuildSections() {
-        let filtered = filterByQuery(allContacts)
+        let visibleContacts = allContacts.filter { !$0.isVerifiedAgent }
+        let filtered = filterByQuery(visibleContacts)
         let grouped: [String: [Contact]] = Dictionary(grouping: filtered) { $0.alphabeticalSectionKey }
         let sortedKeys = grouped.keys.sorted { lhs, rhs in
             // "#" sorts last so non-alpha names land after Z.

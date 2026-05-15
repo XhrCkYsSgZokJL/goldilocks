@@ -63,6 +63,15 @@ public struct Contact: Hashable, Identifiable, Sendable {
         avatarSalt?.count == 32 && avatarNonce?.count == 12 && avatarKey?.count == 32
     }
 
+    /// True when this contact's last-known agent verification is a verified
+    /// agent (Convos / OAuth attestation). Mirrors
+    /// `ConversationMember.isVerifiedAgent` so both surfaces can hide
+    /// verified-agent rows from human-facing contact browse / picker UI
+    /// while keeping the DBContact row intact for chat-side rendering.
+    public var isVerifiedAgent: Bool {
+        agentVerification?.isVerified == true
+    }
+
     /// Display label that always returns something printable. Falls back to a
     /// truncated inboxId so the alphabetical browse list never renders an
     /// empty cell.
