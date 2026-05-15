@@ -53,7 +53,6 @@ struct ContactsPickerView: View {
         NavigationStack {
             content
                 .background(.colorBackgroundRaisedSecondary)
-                .navigationTitle(viewModel.headerTitle)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { toolbarContent }
         }
@@ -62,7 +61,11 @@ struct ContactsPickerView: View {
     @ViewBuilder
     private var content: some View {
         VStack(spacing: 0.0) {
-            ContactsPickerSearchBar(query: $viewModel.searchQuery)
+            ContactsSearchBar(
+                query: $viewModel.searchQuery,
+                placeholder: "Contacts",
+                accessibilityIdentifier: "contacts-picker-search-field"
+            )
             ContactsPickerSelectedPills(
                 contacts: viewModel.selectedContacts,
                 onRemove: handleRemove
@@ -82,7 +85,13 @@ struct ContactsPickerView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) {
-            Button("Cancel", action: handleCancel)
+            Button(role: .cancel, action: handleCancel)
+        }
+        ToolbarItem(placement: .principal) {
+            ContactsPickerTitlePill(
+                title: viewModel.pillTitle,
+                subtitle: viewModel.pillSubtitle
+            )
         }
     }
 
@@ -108,40 +117,35 @@ struct ContactsPickerView: View {
     }
 }
 
-// MARK: - Search bar
+// MARK: - Title pill
 
-private struct ContactsPickerSearchBar: View {
-    @Binding var query: String
+/// Elevated capsule shown in the navigation bar's principal slot. Two-line
+/// layout: pill title on top ("New convo" / "Add to convo"), member-count
+/// subtitle below. Replaces the standard nav title to match the design.
+private struct ContactsPickerTitlePill: View {
+    let title: String
+    let subtitle: String
 
     var body: some View {
-        HStack(spacing: DesignConstants.Spacing.step2x) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.colorTextTertiary)
-            TextField("Search contacts", text: $query)
-                .textFieldStyle(.plain)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .accessibilityIdentifier("contacts-picker-search-field")
-            if !query.isEmpty {
-                Button(action: clearAction) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.colorTextTertiary)
-                }
-                .accessibilityLabel("Clear search")
-            }
+        VStack(spacing: 0.0) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.colorTextPrimary)
+            Text(subtitle)
+                .font(.caption2)
+                .foregroundStyle(.colorTextSecondary)
         }
         .padding(.horizontal, DesignConstants.Spacing.step3x)
-        .padding(.vertical, DesignConstants.Spacing.step2x)
+        .padding(.vertical, DesignConstants.Spacing.stepX)
         .background(
-            RoundedRectangle(cornerRadius: 16.0)
-                .fill(.colorFillMinimal)
+            Capsule().fill(.colorBackgroundRaisedSecondary)
         )
-        .padding(.horizontal, DesignConstants.Spacing.step3x)
-        .padding(.bottom, DesignConstants.Spacing.step2x)
-    }
-
-    private var clearAction: () -> Void {
-        { query = "" }
+        .overlay(
+            Capsule().stroke(.colorTextTertiary.opacity(0.15), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.08), radius: 6.0, x: 0.0, y: 2.0)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("contacts-picker-title-pill")
     }
 }
 
@@ -171,6 +175,7 @@ private struct ContactsPickerList: View {
                             onTap: rowTapAction(for: row)
                         )
                         .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                     }
                 }
             }
@@ -233,9 +238,9 @@ private struct ContactsPickerConfirmButton: View {
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.colorTextPrimaryInverted)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, DesignConstants.Spacing.step3x)
+                .padding(.vertical, DesignConstants.Spacing.step6x)
                 .background(
-                    RoundedRectangle(cornerRadius: 22.0)
+                    RoundedRectangle(cornerRadius: 32.0)
                         .fill(.colorTextPrimary.opacity(backgroundOpacity))
                 )
         }

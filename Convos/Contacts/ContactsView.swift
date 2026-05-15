@@ -25,7 +25,7 @@ struct ContactsView: View {
             if viewModel.contactCount == 0 {
                 emptyState
             } else {
-                contactList
+                contactsContent
             }
         }
         .navigationTitle("Contacts")
@@ -37,10 +37,23 @@ struct ContactsView: View {
     // MARK: - List
 
     @ViewBuilder
+    private var contactsContent: some View {
+        VStack(spacing: 0.0) {
+            ContactsSearchBar(
+                query: $viewModel.searchQuery,
+                placeholder: "Search",
+                accessibilityIdentifier: "contacts-search-field"
+            )
+            contactList
+        }
+        .background(.colorBackgroundRaisedSecondary)
+    }
+
+    @ViewBuilder
     private var contactList: some View {
         List {
             ForEach(viewModel.sections) { section in
-                Section(header: Text(section.title)) {
+                Section(header: ContactsListSectionHeader(title: section.title)) {
                     ForEach(section.contacts) { contact in
                         NavigationLink {
                             ContactCardView(
@@ -52,13 +65,19 @@ struct ContactsView: View {
                         } label: {
                             ContactRowView(contact: contact)
                         }
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                     }
                 }
             }
         }
-        .listStyle(.insetGrouped)
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .background(.colorBackgroundRaisedSecondary)
+        .background(
+            RoundedRectangle(cornerRadius: 16.0)
+                .fill(.colorFillMinimal)
+                .padding(.horizontal, DesignConstants.Spacing.step3x)
+        )
     }
 
     private var emptyState: some View {
@@ -127,6 +146,24 @@ struct ContactsView: View {
             object: nil,
             userInfo: ["inboxIds": ids]
         )
+    }
+}
+
+// MARK: - Section header
+
+/// Compact section header rendered inside the unified white card. Matches
+/// the picker's `ContactsPickerSectionHeader` styling so the two surfaces
+/// look the same.
+private struct ContactsListSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.caption)
+            .foregroundStyle(.colorTextSecondary)
+            .textCase(nil)
+            .padding(.leading, DesignConstants.Spacing.step2x)
+            .listRowBackground(Color.clear)
     }
 }
 

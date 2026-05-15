@@ -18,9 +18,13 @@ final class ContactsViewModel {
     var sections: [Section] = []
     var contactCount: Int = 0
     var isLoading: Bool = true
+    var searchQuery: String = "" {
+        didSet { rebuildSections() }
+    }
 
     private let contactsRepository: any ContactsRepositoryProtocol
     private var cancellable: AnyCancellable?
+    private var allContacts: [Contact] = []
 
     init(contactsRepository: any ContactsRepositoryProtocol) {
         self.contactsRepository = contactsRepository
@@ -39,7 +43,18 @@ final class ContactsViewModel {
     }
 
     private func applyContacts(_ contacts: [Contact]) {
-        let grouped: [String: [Contact]] = Dictionary(grouping: contacts) { $0.alphabeticalSectionKey }
+        allContacts = contacts
+        contactCount = contacts.count
+        rebuildSections()
+        isLoading = false
+    }
+
+    /// Recomputes `sections` from `allContacts` honoring the current
+    /// `searchQuery`. Mirrors the picker's filter/group pipeline so both
+    /// surfaces sort and bucket identically.
+    private func rebuildSections() {
+        let filtered = filterByQuery(allContacts)
+        let grouped: [String: [Contact]] = Dictionary(grouping: filtered) { $0.alphabeticalSectionKey }
         let sortedKeys = grouped.keys.sorted { lhs, rhs in
             // "#" sorts last so non-alpha names land after Z.
             switch (lhs, rhs) {
@@ -52,7 +67,13 @@ final class ContactsViewModel {
         sections = sortedKeys.map { key in
             Section(id: key, title: key, contacts: grouped[key] ?? [])
         }
-        contactCount = contacts.count
-        isLoading = false
+    }
+
+    private func filterByQuery(_ contacts: [Contact]) -> [Contact] {
+        let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return contacts }
+        return contacts.filter { contact in
+            contact.resolvedDisplayName.localizedCaseInsensitiveContains(trimmed)
+        }
     }
 }

@@ -57,11 +57,11 @@ final class ContactsPickerViewModelTests: XCTestCase {
 
         let firstId = MockContactsRepository.defaultMockContacts[0].inboxId
         viewModel.toggleSelection(for: firstId)
-        XCTAssertEqual(viewModel.confirmButtonTitle, "Start a convo")
+        XCTAssertEqual(viewModel.confirmButtonTitle, "Continue")
 
         let secondId = MockContactsRepository.defaultMockContacts[1].inboxId
         viewModel.toggleSelection(for: secondId)
-        XCTAssertEqual(viewModel.confirmButtonTitle, "Start a convo")
+        XCTAssertEqual(viewModel.confirmButtonTitle, "Continue")
     }
 
     func testHeaderTitleAndConfirmCopyForAddToConversationMode() {
@@ -74,11 +74,11 @@ final class ContactsPickerViewModelTests: XCTestCase {
 
         let firstId = MockContactsRepository.defaultMockContacts[0].inboxId
         viewModel.toggleSelection(for: firstId)
-        XCTAssertEqual(viewModel.confirmButtonTitle, "Add 1 to convo")
+        XCTAssertEqual(viewModel.confirmButtonTitle, "Continue")
 
         let secondId = MockContactsRepository.defaultMockContacts[1].inboxId
         viewModel.toggleSelection(for: secondId)
-        XCTAssertEqual(viewModel.confirmButtonTitle, "Add 2 to convo")
+        XCTAssertEqual(viewModel.confirmButtonTitle, "Continue")
     }
 
     func testHeaderTitleFallsBackWhenConversationTitleMissing() {

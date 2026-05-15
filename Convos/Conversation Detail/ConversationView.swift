@@ -495,10 +495,6 @@ struct MemberContactCardSheetContent: View {
             viewModel.remove(member: member)
             dismiss()
         }
-        let onBlockAndLeave: () -> Void = {
-            viewModel.blockAndLeaveConvo(inboxId: member.profile.inboxId)
-            dismiss()
-        }
         NavigationStack {
             ContactCardView(
                 contact: resolvedContact,
@@ -510,8 +506,7 @@ struct MemberContactCardSheetContent: View {
                 contactsWriter: contactsWriter,
                 contactsRepository: contactsRepository,
                 session: viewModel.session,
-                onRemove: onRemove,
-                onBlockAndLeave: onBlockAndLeave
+                onRemove: onRemove
             )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

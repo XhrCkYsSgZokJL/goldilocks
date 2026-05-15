@@ -103,9 +103,6 @@ struct ConversationMembersListView: View {
             contactsRepository: contactsRepository
         )
         let onRemove: () -> Void = { viewModel.remove(member: member) }
-        let onBlockAndLeave: () -> Void = {
-            viewModel.blockAndLeaveConvo(inboxId: member.profile.inboxId)
-        }
         ContactCardView(
             contact: resolvedContact,
             mode: .scopedToConversation(
@@ -116,8 +113,7 @@ struct ConversationMembersListView: View {
             contactsWriter: contactsWriter,
             contactsRepository: contactsRepository,
             session: viewModel.session,
-            onRemove: onRemove,
-            onBlockAndLeave: onBlockAndLeave
+            onRemove: onRemove
         )
     }
 }

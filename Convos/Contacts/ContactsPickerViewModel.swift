@@ -104,13 +104,36 @@ final class ContactsPickerViewModel {
         }
     }
 
-    var confirmButtonTitle: String {
+    /// Top-line text for the elevated pill in the picker toolbar. Mirrors the
+    /// "New convo" / "Add to convo" framing used in the existing UI copy.
+    var pillTitle: String {
         switch mode {
         case .newConversation:
-            return "Start a convo"
-        case .addToConversation:
-            return "Add \(selectionCount) to convo"
+            return "New convo"
+        case .addToConversation(_, let title):
+            if let title, !title.isEmpty {
+                return "Add to \(title)"
+            }
+            return "Add to convo"
         }
+    }
+
+    /// Subtitle inside the elevated pill. For new conversations the local user
+    /// is implicit, so the total membership count is `selectionCount + 1`. For
+    /// the add-to-conversation flow we only count members being added since the
+    /// existing chat membership is already known to the user.
+    var pillSubtitle: String {
+        switch mode {
+        case .newConversation:
+            let total = selectionCount + 1
+            return "\(total) \(total == 1 ? "member" : "members")"
+        case .addToConversation:
+            return "\(selectionCount) selected"
+        }
+    }
+
+    var confirmButtonTitle: String {
+        "Continue"
     }
 
     // MARK: - Mutations

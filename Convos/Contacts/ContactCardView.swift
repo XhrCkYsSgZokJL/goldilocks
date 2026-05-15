@@ -7,21 +7,22 @@ import SwiftUI
 // in the app. It is invoked from two entry points, parameterized by
 // `ContactCardMode`:
 //
-//   1. **Contacts list** (`ContactsView`) → `mode: .standalone`. Default.
-//   2. **Member-avatar tap inside a chat** (`ConversationView` → presenting
-//      `presentingProfileForMember`) → `mode: .scopedToConversation(...)`.
+//   1. Contacts list (`ContactsView`) -> `mode: .standalone`. Default.
+//   2. Member-avatar tap inside a chat (`ConversationView` presents
+//      `presentingProfileForMember`) -> `mode: .scopedToConversation(...)`.
 //
 // Section visibility is driven by the mode plus the contact's stored state:
 //
-//   - Header (avatar / name) — always
-//   - Agent rows (Get skills / Learn about assistants) — both modes, when
+//   - Header (avatar / name) - always
+//   - Agent rows (Get skills / Learn about assistants) - both modes, when
 //     `contact.agentVerification?.isVerified == true`
-//   - Send a message — both modes, calls `contactsWriter.upsertContact(...)`
+//   - Pop up a convo - both modes; calls `contactsWriter.upsertContact(...)`
 //     before opening the picker so a synthetic / non-yet-stored contact is
 //     promoted to a real one (the narrow per-person upsert documented in
 //     the contacts PRD, "Send-message on a non-contact" section)
-//   - Block / Unblock — both modes
-//   - Group actions (Remove, Block-and-leave) — scoped mode only
+//   - Block / Unblock - both modes
+//   - Remove from convo - scoped mode only, when the viewer is an admin
+//     (`canRemoveMembers`) and the tapped member is not the current user
 //
 // Mirrors `ContactsPickerMode`'s "one component, two entry points" pattern.
 
@@ -34,12 +35,10 @@ struct ContactCardView: View {
     private let contactsRepository: any ContactsRepositoryProtocol
     private let session: (any SessionManagerProtocol)?
     private let onRemove: (() -> Void)?
-    private let onBlockAndLeave: (() -> Void)?
 
     @State private var isBlocked: Bool
     @State private var isApplyingBlockChange: Bool = false
     @State private var presentingBlockConfirmation: Bool = false
-    @State private var presentingBlockAndLeaveConfirmation: Bool = false
     @State private var presentingPicker: Bool = false
     @State private var presentingSendMessageError: Bool = false
     @State private var sendMessageErrorMessage: String?
@@ -50,8 +49,7 @@ struct ContactCardView: View {
         contactsWriter: any ContactsWriterProtocol,
         contactsRepository: any ContactsRepositoryProtocol,
         session: (any SessionManagerProtocol)? = nil,
-        onRemove: (() -> Void)? = nil,
-        onBlockAndLeave: (() -> Void)? = nil
+        onRemove: (() -> Void)? = nil
     ) {
         self.contact = contact
         self.mode = mode
@@ -59,7 +57,6 @@ struct ContactCardView: View {
         self.contactsRepository = contactsRepository
         self.session = session
         self.onRemove = onRemove
-        self.onBlockAndLeave = onBlockAndLeave
         _isBlocked = State(initialValue: contact.isBlocked)
     }
 
@@ -67,20 +64,16 @@ struct ContactCardView: View {
         bodyContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(.colorBackgroundRaisedSecondary)
-            .navigationTitle("Contact")
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .modifier(ContactCardModalsModifier(
                 presentingBlockConfirmation: $presentingBlockConfirmation,
-                presentingBlockAndLeaveConfirmation: $presentingBlockAndLeaveConfirmation,
                 presentingPicker: $presentingPicker,
                 presentingSendMessageError: $presentingSendMessageError,
                 sendMessageErrorMessage: sendMessageErrorMessage,
                 blockAlertTitle: blockAlertTitle,
                 blockAlertMessage: blockAlertMessage,
                 blockAlertActions: { blockAlertActions },
-                blockAndLeaveAlertTitle: blockAndLeaveAlertTitle,
-                blockAndLeaveAlertMessage: blockAndLeaveAlertMessage,
-                blockAndLeaveAlertActions: { blockAndLeaveAlertActions },
                 pickerSheet: { pickerSheet }
             ))
             .task(id: contact.inboxId) { await syncBlockedState() }
@@ -89,8 +82,10 @@ struct ContactCardView: View {
     @ViewBuilder
     private var bodyContent: some View {
         VStack(spacing: DesignConstants.Spacing.step3x) {
-            ContactCardHeader(contact: contact)
-            ContactCardMetadata(addedAt: contact.addedAt, isBlocked: isBlocked)
+            VStack(spacing: DesignConstants.Spacing.stepX) {
+                ContactCardHeader(contact: contact)
+                ContactCardMetadata(addedAt: contact.addedAt, isBlocked: isBlocked)
+            }
             if isVerifiedAgent {
                 ContactCardAgentLinks()
             }
@@ -98,20 +93,19 @@ struct ContactCardView: View {
                 isBlocked: isBlocked,
                 isApplyingBlockChange: isApplyingBlockChange,
                 // Verified agents (Convos / OAuth-verified) don't accept
-                // 1:1 DMs today, so the Send-a-message CTA would open a
+                // 1:1 DMs today, so the Pop-up-a-convo CTA would open a
                 // conversation that goes nowhere. Disable until DM support
                 // for agents lands; the "Get skills" / "Learn about
                 // assistants" rows above remain the right way to interact.
                 canSendMessage: session != nil && !isVerifiedAgent,
+                contactDisplayName: contact.resolvedDisplayName,
                 onSendMessage: handleSendMessage,
                 onToggleBlock: handleBlockTap
             )
-            if mode.isScopedToConversation && !mode.isCurrentUser {
+            if mode.isScopedToConversation && !mode.isCurrentUser && mode.canRemoveMembers {
                 ContactCardGroupActions(
-                    canRemoveMembers: mode.canRemoveMembers,
                     contactDisplayName: contact.resolvedDisplayName,
-                    onRemove: handleRemoveTap,
-                    onBlockAndLeave: handleBlockAndLeaveTap
+                    onRemove: handleRemoveTap
                 )
             }
             Spacer()
@@ -157,22 +151,6 @@ struct ContactCardView: View {
         } else {
             Button("Block", role: .destructive, action: handleBlockConfirmed)
         }
-    }
-
-    // MARK: - Block-and-leave alert content
-
-    private var blockAndLeaveAlertTitle: String {
-        "Block \(contact.resolvedDisplayName) and leave convo?"
-    }
-
-    private var blockAndLeaveAlertMessage: String {
-        "They won't know they're blocked, and you'll leave this conversation so they can't reach you here."
-    }
-
-    @ViewBuilder
-    private var blockAndLeaveAlertActions: some View {
-        Button("Cancel", role: .cancel) {}
-        Button("Confirm", role: .destructive, action: handleBlockAndLeaveConfirmed)
     }
 
     // MARK: - Actions
@@ -229,14 +207,6 @@ struct ContactCardView: View {
         onRemove?()
     }
 
-    private func handleBlockAndLeaveTap() {
-        presentingBlockAndLeaveConfirmation = true
-    }
-
-    private func handleBlockAndLeaveConfirmed() {
-        onBlockAndLeave?()
-    }
-
     private func applyBlockChange(block: Bool) {
         guard !isApplyingBlockChange else { return }
         isApplyingBlockChange = true
@@ -287,11 +257,11 @@ private struct ContactCardHeader: View {
     var body: some View {
         VStack(spacing: DesignConstants.Spacing.step2x) {
             ContactAvatarView(contact: contact)
-                .frame(width: 96.0, height: 96.0)
+                .frame(width: 140.0, height: 140.0)
                 .padding(.top, DesignConstants.Spacing.step6x)
 
             Text(contact.resolvedDisplayName)
-                .font(.title2.weight(.semibold))
+                .font(.largeTitle.weight(.bold))
                 .foregroundStyle(.colorTextPrimary)
 
             if let roleLabel = contact.agentVerification?.roleLabel {
@@ -315,32 +285,32 @@ private struct ContactCardMetadata: View {
 
     var body: some View {
         VStack(spacing: DesignConstants.Spacing.stepX) {
-            HStack {
-                Text("Added")
-                    .foregroundStyle(.colorTextSecondary)
-                Spacer()
-                Text(addedAt.formatted(date: .abbreviated, time: .omitted))
-                    .foregroundStyle(.colorTextPrimary)
-            }
+            Text("Added \(relativeAddedAt)")
+                .foregroundStyle(.colorTextSecondary)
             if isBlocked {
                 blockedRow
             }
         }
         .font(.subheadline)
-        .padding(DesignConstants.Spacing.step3x)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, DesignConstants.Spacing.step3x)
+    }
+
+    /// Mirrors the `RelativeDateTimeFormatter(.abbreviated)` convention from
+    /// `ConversationMemberView`'s "Added X by Y" subtitle so the contact card
+    /// reads the same way ("Added 20m ago", "Added 3h ago", "Added 2w ago").
+    private var relativeAddedAt: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: addedAt, relativeTo: Date())
     }
 
     private var blockedRow: some View {
-        HStack {
-            Text("Status")
-                .foregroundStyle(.colorTextSecondary)
-            Spacer()
-            HStack(spacing: 4.0) {
-                Image(systemName: "nosign")
-                Text("Blocked")
-            }
-            .foregroundStyle(.colorCaution)
+        HStack(spacing: 4.0) {
+            Image(systemName: "nosign")
+            Text("Blocked")
         }
+        .foregroundStyle(.colorCaution)
     }
 }
 
@@ -404,104 +374,106 @@ private struct ContactCardActions: View {
     let isBlocked: Bool
     let isApplyingBlockChange: Bool
     let canSendMessage: Bool
+    let contactDisplayName: String
     let onSendMessage: () -> Void
     let onToggleBlock: () -> Void
 
     var body: some View {
-        VStack(spacing: DesignConstants.Spacing.step2x) {
-            sendMessageButton
-            blockButton
+        VStack(spacing: DesignConstants.Spacing.step4x) {
+            popUpConvoRow
+            blockRow
         }
         .padding(.horizontal, DesignConstants.Spacing.step4x)
+        .padding(.top, DesignConstants.Spacing.step4x)
     }
 
-    private var sendMessageButton: some View {
-        let foreground: Color = canSendMessage ? .colorTextPrimaryInverted : .colorTextTertiary
-        let background: Color = canSendMessage ? .colorTextPrimary : .colorFillMinimal
-        return Button(action: onSendMessage) {
-            Label("Send a message", systemImage: "paperplane.fill")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(foreground)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, DesignConstants.Spacing.step3x)
-                .background(
-                    RoundedRectangle(cornerRadius: 22.0)
-                        .fill(background)
-                )
-        }
-        .disabled(!canSendMessage)
-        .accessibilityIdentifier("contact-card-send-message")
+    private var popUpConvoRow: some View {
+        ContactCardActionRow(
+            label: "Pop up a convo",
+            footer: "Message \(contactDisplayName)",
+            color: .colorTextPrimary,
+            isDisabled: !canSendMessage,
+            accessibilityLabel: "Pop up a convo with \(contactDisplayName)",
+            accessibilityIdentifier: "contact-card-send-message",
+            action: onSendMessage
+        )
     }
 
-    private var blockButton: some View {
+    private var blockRow: some View {
         let label: String = isBlocked ? "Unblock" : "Block"
-        let foreground: Color = isBlocked ? .colorTextPrimary : .colorCaution
-        return Button(action: onToggleBlock) {
-            Text(label)
-                .font(.body.weight(.medium))
-                .foregroundStyle(foreground)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, DesignConstants.Spacing.step3x)
-                .background(
-                    RoundedRectangle(cornerRadius: 22.0)
-                        .stroke(foreground.opacity(0.4), lineWidth: 1.0)
-                )
-        }
-        .disabled(isApplyingBlockChange)
-        .accessibilityIdentifier(isBlocked ? "contact-card-unblock" : "contact-card-block")
+        let footer: String = isBlocked
+            ? "Start receiving convo invites from \(contactDisplayName) again"
+            : "Block all future convo invites from \(contactDisplayName)"
+        let identifier: String = isBlocked ? "contact-card-unblock" : "contact-card-block"
+        return ContactCardActionRow(
+            label: label,
+            footer: footer,
+            color: .colorCaution,
+            isDisabled: isApplyingBlockChange,
+            accessibilityLabel: "\(label) \(contactDisplayName)",
+            accessibilityIdentifier: identifier,
+            action: onToggleBlock
+        )
     }
 }
 
 // MARK: - Group actions (scoped mode only)
 
+/// Renders conversation-scoped actions on the contact card. Today only
+/// "Remove" lives here; it appears when the viewer is an admin who can
+/// remove the tapped member. The plain Block row (above, in
+/// `ContactCardActions`) covers the block intent in every mode, so this
+/// view stays focused on conversation-scope-specific affordances.
 private struct ContactCardGroupActions: View {
-    let canRemoveMembers: Bool
     let contactDisplayName: String
     let onRemove: () -> Void
-    let onBlockAndLeave: () -> Void
 
     var body: some View {
-        VStack(spacing: DesignConstants.Spacing.step2x) {
-            if canRemoveMembers {
-                groupActionRow(
-                    label: "Remove from convo",
-                    footer: "Remove \(contactDisplayName) from this conversation",
-                    accessibilityLabel: "Remove \(contactDisplayName)",
-                    accessibilityIdentifier: "remove-member-button",
-                    action: onRemove
-                )
-            }
-            groupActionRow(
-                label: "Block and leave",
-                footer: "Leave this convo and block \(contactDisplayName)",
-                accessibilityLabel: "Block \(contactDisplayName)",
-                accessibilityIdentifier: "block-member-button",
-                action: onBlockAndLeave
-            )
-        }
+        ContactCardActionRow(
+            label: "Remove",
+            footer: "Remove \(contactDisplayName) from the convo",
+            color: .colorCaution,
+            isDisabled: false,
+            accessibilityLabel: "Remove \(contactDisplayName)",
+            accessibilityIdentifier: "remove-member-button",
+            action: onRemove
+        )
         .padding(.horizontal, DesignConstants.Spacing.step4x)
         .padding(.top, DesignConstants.Spacing.step2x)
     }
+}
 
-    private func groupActionRow(
-        label: String,
-        footer: String,
-        accessibilityLabel: String,
-        accessibilityIdentifier: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 4.0) {
+// MARK: - Shared action row
+
+/// Reusable row used by both `ContactCardActions` (Pop up a convo, Block)
+/// and `ContactCardGroupActions` (Remove, Block and leave). The shape -
+/// rounded white pill on top with a small grey footer caption below - is
+/// the canonical card action style. The label color is the only knob: dark
+/// primary for affirmative actions, caution red for destructive.
+private struct ContactCardActionRow: View {
+    let label: String
+    let footer: String
+    let color: Color
+    let isDisabled: Bool
+    let accessibilityLabel: String
+    let accessibilityIdentifier: String
+    let action: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepX) {
             Button(action: action) {
                 Text(label)
-                    .font(.body)
-                    .foregroundStyle(.colorCaution)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(color)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, DesignConstants.Spacing.step2x)
+                    .padding(.vertical, DesignConstants.Spacing.step4x)
                     .padding(.horizontal, DesignConstants.Spacing.step3x)
                     .background(
                         RoundedRectangle(cornerRadius: 12.0).fill(.colorFillMinimal)
                     )
             }
+            .buttonStyle(.plain)
+            .disabled(isDisabled)
             .accessibilityLabel(accessibilityLabel)
             .accessibilityIdentifier(accessibilityIdentifier)
             Text(footer)
@@ -516,20 +488,15 @@ private struct ContactCardGroupActions: View {
 
 private struct ContactCardModalsModifier<
     BlockActions: View,
-    BlockLeaveActions: View,
     PickerContent: View
 >: ViewModifier {
     @Binding var presentingBlockConfirmation: Bool
-    @Binding var presentingBlockAndLeaveConfirmation: Bool
     @Binding var presentingPicker: Bool
     @Binding var presentingSendMessageError: Bool
     let sendMessageErrorMessage: String?
     let blockAlertTitle: String
     let blockAlertMessage: String
     let blockAlertActions: () -> BlockActions
-    let blockAndLeaveAlertTitle: String
-    let blockAndLeaveAlertMessage: String
-    let blockAndLeaveAlertActions: () -> BlockLeaveActions
     let pickerSheet: () -> PickerContent
 
     func body(content: Content) -> some View {
@@ -538,11 +505,6 @@ private struct ContactCardModalsModifier<
                 blockAlertActions()
             } message: {
                 Text(blockAlertMessage)
-            }
-            .alert(blockAndLeaveAlertTitle, isPresented: $presentingBlockAndLeaveConfirmation) {
-                blockAndLeaveAlertActions()
-            } message: {
-                Text(blockAndLeaveAlertMessage)
             }
             .alert(
                 "Couldn't open message picker",
@@ -664,8 +626,7 @@ extension Contact {
             ),
             contactsWriter: MockContactsWriter(),
             contactsRepository: MockContactsRepository(),
-            onRemove: {},
-            onBlockAndLeave: {}
+            onRemove: {}
         )
     }
 }
