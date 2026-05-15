@@ -211,10 +211,30 @@ struct ContactCardView: View {
         guard !isApplyingBlockChange else { return }
         isApplyingBlockChange = true
         let inboxId = contact.inboxId
+        let snapshot = ContactProfileSnapshot(
+            displayName: contact.displayName,
+            avatarURL: contact.avatarURL,
+            avatarSalt: contact.avatarSalt,
+            avatarNonce: contact.avatarNonce,
+            avatarKey: contact.avatarKey,
+            profileUpdatedAt: nil,
+            agentVerification: contact.agentVerification
+        )
+        let addedViaConversationId = contact.addedViaConversationId ?? mode.conversationId
         Task { @MainActor in
             defer { isApplyingBlockChange = false }
             do {
                 if block {
+                    // Synthetic contacts (opened from a chat-member-tap on a
+                    // non-contact) have no DB row yet. Upsert first so
+                    // `block()` has somewhere to write `blockedAt`; idempotent
+                    // for real contacts. Mirrors the pattern used by
+                    // `handleSendMessage` and `ConversationViewModel.blockAndLeaveConvo`.
+                    try await contactsWriter.upsertContact(
+                        inboxId: inboxId,
+                        addedViaConversationId: addedViaConversationId,
+                        profile: snapshot
+                    )
                     try await contactsWriter.block(inboxId: inboxId)
                 } else {
                     try await contactsWriter.unblock(inboxId: inboxId)
