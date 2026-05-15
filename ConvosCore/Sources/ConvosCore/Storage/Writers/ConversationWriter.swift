@@ -39,7 +39,8 @@ protocol ConversationWriterProtocol: Sendable {
     func storeWithLatestMessages(
         conversation: XMTPiOS.Group,
         inboxId: String,
-        clientConversationId: String?
+        clientConversationId: String?,
+        quarantinedAt: Date?
     ) async throws -> DBConversation
     func createPlaceholderConversation(
         draftConversationId: String?,
@@ -62,7 +63,26 @@ extension ConversationWriterProtocol {
         conversation: XMTPiOS.Group,
         inboxId: String
     ) async throws -> DBConversation {
-        try await storeWithLatestMessages(conversation: conversation, inboxId: inboxId, clientConversationId: nil)
+        try await storeWithLatestMessages(
+            conversation: conversation,
+            inboxId: inboxId,
+            clientConversationId: nil,
+            quarantinedAt: nil
+        )
+    }
+
+    @discardableResult
+    func storeWithLatestMessages(
+        conversation: XMTPiOS.Group,
+        inboxId: String,
+        clientConversationId: String?
+    ) async throws -> DBConversation {
+        try await storeWithLatestMessages(
+            conversation: conversation,
+            inboxId: inboxId,
+            clientConversationId: clientConversationId,
+            quarantinedAt: nil
+        )
     }
 }
 
@@ -72,10 +92,12 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
     private let inviteWriter: any InviteWriterProtocol
     private let messageWriter: any IncomingMessageWriterProtocol
     private let localStateWriter: any ConversationLocalStateWriterProtocol
+    private let contactSyncCoordinator: (any ContactSyncCoordinatorProtocol)?
 
     init(identityStore: any KeychainIdentityStoreProtocol,
          databaseWriter: any DatabaseWriter,
-         messageWriter: any IncomingMessageWriterProtocol) {
+         messageWriter: any IncomingMessageWriterProtocol,
+         contactSyncCoordinator: (any ContactSyncCoordinatorProtocol)? = nil) {
         self.databaseWriter = databaseWriter
         self.inviteWriter = InviteWriter(
             identityStore: identityStore,
@@ -83,6 +105,23 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
         )
         self.messageWriter = messageWriter
         self.localStateWriter = ConversationLocalStateWriter(databaseWriter: databaseWriter)
+        self.contactSyncCoordinator = contactSyncCoordinator
+    }
+
+    /// Fires the contact-sync coordinator with `force: true` after a
+    /// network-driven conversation/member commit. The coordinator's
+    /// action-gated check skips never-synced conversations, so this only
+    /// surfaces new members in groups the local user has already acted in.
+    /// Fire-and-forget; errors are logged.
+    private func enqueueContactSyncForNetworkChange(conversationId: String) {
+        guard let coordinator = contactSyncCoordinator else { return }
+        Task.detached {
+            do {
+                try await coordinator.syncContactsAfterMembershipChange(for: conversationId)
+            } catch {
+                Log.error("Contact sync after network member change failed for \(conversationId): \(error)")
+            }
+        }
     }
 
     func store(
@@ -100,13 +139,15 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
     func storeWithLatestMessages(
         conversation: XMTPiOS.Group,
         inboxId: String,
-        clientConversationId: String? = nil
+        clientConversationId: String? = nil,
+        quarantinedAt: Date? = nil
     ) async throws -> DBConversation {
         return try await _store(
             conversation: conversation,
             inboxId: inboxId,
             withLatestMessages: true,
-            clientConversationId: clientConversationId
+            clientConversationId: clientConversationId,
+            quarantinedAt: quarantinedAt
         )
     }
 
@@ -198,7 +239,8 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
         conversation: XMTPiOS.Group,
         inboxId: String,
         withLatestMessages: Bool = false,
-        clientConversationId: String? = nil
+        clientConversationId: String? = nil,
+        quarantinedAt: Date? = nil
     ) async throws -> DBConversation {
         // Sync group to get latest state including member permission levels
         try await conversation.sync()
@@ -216,7 +258,8 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
             metadata: metadata,
             inboxId: inboxId,
             clientConversationId: clientConversationId,
-            imageLastRenewed: nil
+            imageLastRenewed: nil,
+            quarantinedAt: quarantinedAt
         )
 
         // Save to database. Capture the actual clientConversationId used (may be a draft ID
@@ -228,6 +271,12 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
             dbMembers: dbMembers,
             memberProfiles: memberProfiles
         )
+
+        // Network-driven member commit just landed (initial conversation
+        // arrival or refresh-with-new-members). Fire the contact-sync
+        // coordinator with `force: true`; the coordinator will skip if the
+        // local user has not acted in this conversation yet (action-gated).
+        enqueueContactSyncForNetworkChange(conversationId: dbConversation.id)
 
         if let preservedInviteTag = saveResult.preservedInviteTag,
            (try conversation.inviteTag).isEmpty {
@@ -333,7 +382,8 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
         metadata: ConversationMetadata,
         inboxId: String,
         clientConversationId: String? = nil,
-        imageLastRenewed: Date? = nil
+        imageLastRenewed: Date? = nil,
+        quarantinedAt: Date? = nil
     ) async throws -> DBConversation {
         // Assert the inbox exists locally even though the column no longer
         // lives on the conversation row — readers expect an inbox row for the
@@ -367,7 +417,8 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
             conversationEmoji: metadata.conversationEmoji,
             imageLastRenewed: imageLastRenewed,
             isUnused: false,
-            hasHadVerifiedAssistant: metadata.hasHadVerifiedAssistant
+            hasHadVerifiedAssistant: metadata.hasHadVerifiedAssistant,
+            quarantinedAt: quarantinedAt
         )
     }
 
@@ -475,10 +526,27 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
             preservedInviteTag = nil
         }
 
+        // Preserve fields from the existing row that the caller did not
+        // explicitly carry forward:
+        //   - `hasHadVerifiedAssistant` is sticky-on (once true, stays true).
+        //   - `quarantinedAt` / `quarantineReleasedAt`: sync paths
+        //     (`store(...)`, push-driven `storeWithLatestMessages`) pass
+        //     `quarantinedAt: nil`, and `createDBConversation` does not
+        //     thread `quarantineReleasedAt` at all. Without this merge a
+        //     refresh would silently un-quarantine a held conversation.
+        //     Explicit non-nil values come from the stream processor's
+        //     quarantine path; the sweeper writes release timestamps
+        //     directly to the DB and never flows through this writer.
         if let existingConversation {
-            conversationToSave = conversationToSave.with(
-                hasHadVerifiedAssistant: existingConversation.hasHadVerifiedAssistant || conversationToSave.hasHadVerifiedAssistant
-            )
+            let mergedHasAgent: Bool = existingConversation.hasHadVerifiedAssistant || conversationToSave.hasHadVerifiedAssistant
+            let preservedQuarantinedAt: Date? = dbConversation.quarantinedAt ?? existingConversation.quarantinedAt
+            let preservedQuarantineReleasedAt: Date? = dbConversation.quarantineReleasedAt ?? existingConversation.quarantineReleasedAt
+            conversationToSave = conversationToSave
+                .with(hasHadVerifiedAssistant: mergedHasAgent)
+                .with(
+                    quarantinedAt: preservedQuarantinedAt,
+                    quarantineReleasedAt: preservedQuarantineReleasedAt
+                )
         }
 
         let existingConversationByTag = try existingConversationMatchingInviteTag(

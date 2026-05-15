@@ -136,7 +136,7 @@ enum ExplodeDuration: CaseIterable {
 class ConversationViewModel { // swiftlint:disable:this type_body_length
     // MARK: - Private
 
-    private let session: any SessionManagerProtocol
+    let session: any SessionManagerProtocol
     let messagingService: any MessagingServiceProtocol
     private let conversationStateManager: any ConversationStateManagerProtocol
     private let outgoingMessageWriter: any OutgoingMessageWriterProtocol
@@ -255,7 +255,22 @@ class ConversationViewModel { // swiftlint:disable:this type_body_length
         }
     }
     var untitledConversationPlaceholder: String {
-        conversation.computedDisplayName
+        conversation.computedDisplayName(memberNameOverride: contactNameLookup)
+    }
+
+    /// Inbox-to-contact-name lookup used for auto-generated unnamed-group
+    /// titles in the chat header. Mirrors the resolver injected into the
+    /// conversation list. Returns the contact's stored display name when
+    /// the inbox is a known contact, else `nil` so the legacy precedence
+    /// (per-conversation profile name, then "Somebody") applies.
+    private func contactNameLookup(_ inboxId: String) -> String? {
+        guard let contact = try? messagingService.contactsRepository().fetchContact(inboxId: inboxId) else {
+            return nil
+        }
+        guard let stored = contact.displayName, !stored.isEmpty else {
+            return nil
+        }
+        return stored
     }
     var conversationInfoSubtitle: String {
         if let expiresAt = scheduledExplosionDate {
@@ -289,7 +304,7 @@ class ConversationViewModel { // swiftlint:disable:this type_body_length
     }
 
     var conversationName: String {
-        isEditingConversationName ? editingConversationName : conversation.displayName
+        isEditingConversationName ? editingConversationName : conversation.computedDisplayName(memberNameOverride: contactNameLookup)
     }
 
     var conversationDescription: String {
@@ -2093,6 +2108,14 @@ extension ConversationViewModel {
     }
 
     func onTapAvatar(_ member: ConversationMember) {
+        // Tapping your own avatar in the messages view routes to "My info"
+        // instead of the contact card. Showing the contact card for self
+        // exposes Send-a-message and Block affordances against yourself,
+        // which is meaningless and would leak self into the contact list.
+        if member.isCurrentUser {
+            presentingProfileSettings = true
+            return
+        }
         presentingProfileForMember = member
     }
 
@@ -2185,6 +2208,14 @@ extension ConversationViewModel {
         let urlString = invite.inviteURLString
         guard !urlString.isEmpty else { return }
         UIPasteboard.general.string = urlString
+    }
+
+    /// Adds the given inboxIds as members of this conversation via the
+    /// existing `addMembers` flow. Used by the "Add from Contacts" entry on
+    /// the chat plus-menu.
+    func addMembersFromContacts(_ inboxIds: [String]) async throws {
+        guard !inboxIds.isEmpty else { return }
+        try await metadataWriter.addMembers(inboxIds, to: conversation.id)
     }
 
     func requestAssistantJoin() {
@@ -2292,12 +2323,28 @@ extension ConversationViewModel {
         }
     }
 
-    func blockAndLeaveConvo() {
+    /// Blocks the given inbox at the contact level, then leaves this
+    /// conversation. The block is written *first* so the contact-list-aware
+    /// inbound filter (`InboundConversationFilter`) honors the block on any
+    /// future welcome from this inbox even if the leave call somehow fails
+    /// or races with concurrent stream events. Callers pass the member's
+    /// inboxId; the contact row is upserted if not already present so the
+    /// `blockedAt` write has somewhere to land.
+    func blockAndLeaveConvo(inboxId: String) {
+        let contactsWriter = messagingService.contactsWriter()
         let consentWriter = consentWriter
         let conversation = conversation
         Task { [weak self] in
             guard let self else { return }
             do {
+                // Ensure a contact row exists so block() has something to
+                // flag. Idempotent — preserves identity columns on re-upsert.
+                try await contactsWriter.upsertContact(
+                    inboxId: inboxId,
+                    addedViaConversationId: conversation.id,
+                    profile: ContactProfileSnapshot()
+                )
+                try await contactsWriter.block(inboxId: inboxId)
                 try await consentWriter.delete(conversation: conversation)
                 await MainActor.run {
                     self.presentingConversationSettings = false
