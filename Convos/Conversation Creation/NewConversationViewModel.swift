@@ -51,6 +51,18 @@ class NewConversationViewModel: Identifiable {
     private(set) var messagesTopBarTrailingItemEnabled: Bool = false
     private(set) var messagesTextFieldEnabled: Bool = false
     private let startedWithFullscreenScanner: Bool
+    /// True when this VM was created with `.newConversationWithMembers`
+    /// (i.e. the contacts picker started the convo). Drives
+    /// `ConversationViewModel.hidesInviteCard` so the QR header isn't
+    /// rendered on top of a chat that already has members.
+    private let startedWithSeededMembers: Bool
+    /// Captured initial-member inbox ids for the seeded-members flow.
+    /// Used to seed each draft `Conversation` with contact-derived
+    /// members so the chat header renders the contact's name and
+    /// avatar from the moment the sheet opens, instead of flickering
+    /// through "New Convo" while the state machine creates the real
+    /// group.
+    private let seededMemberInboxIds: [String]
     let allowsDismissingScanner: Bool
     private let autoCreateConversation: Bool
     private(set) var showingFullScreenScanner: Bool
@@ -143,6 +155,14 @@ class NewConversationViewModel: Identifiable {
             self.allowsDismissingScanner = true
         }
 
+        if case .newConversationWithMembers(let ids) = mode {
+            self.startedWithSeededMembers = true
+            self.seededMemberInboxIds = ids
+        } else {
+            self.startedWithSeededMembers = false
+            self.seededMemberInboxIds = []
+        }
+
         self.isCreatingConversation = mode.isNewConversation
         createPlaceholderConversationViewModel()
         acquireInbox(mode: mode)
@@ -160,6 +180,8 @@ class NewConversationViewModel: Identifiable {
         self.qrScannerViewModel = QRScannerViewModel()
         self.autoCreateConversation = autoCreateConversation
         self.startedWithFullscreenScanner = showingFullScreenScanner
+        self.startedWithSeededMembers = false
+        self.seededMemberInboxIds = []
         self.showingFullScreenScanner = showingFullScreenScanner
         self.allowsDismissingScanner = allowsDismissingScanner
 
@@ -229,7 +251,7 @@ class NewConversationViewModel: Identifiable {
 
     private func createPlaceholderConversationViewModel() {
         let draftId: String = "draft-\(UUID().uuidString)"
-        let draftConversation: Conversation = .empty(id: draftId)
+        let draftConversation: Conversation = makeDraftConversation(id: draftId)
         let messagesRepo = MockMessagesRepository(conversationId: draftId)
         let draftRepo = MockDraftConversationRepository(conversation: draftConversation, messagesRepository: messagesRepo)
         let stateManager = MockConversationStateManager(
@@ -245,7 +267,57 @@ class NewConversationViewModel: Identifiable {
             applyGlobalDefaultsForNewConversation: false
         )
         convoVM.showsInfoView = !startedWithFullscreenScanner
+        armSeededExpectationIfNeeded(on: convoVM, for: draftConversation)
         self.conversationViewModel = convoVM
+    }
+
+    /// Returns a draft `Conversation` for use as a placeholder. When this
+    /// VM was started by the contacts picker
+    /// (`startedWithSeededMembers == true`), the draft carries synthetic
+    /// `ConversationMember`s built from the contact list so the chat
+    /// header renders the contact's name + avatar (and `kind = .dm` for
+    /// a single contact) from the moment the sheet opens. The
+    /// conversation publisher's `.ready` emission later replaces the
+    /// synthetic members with the real ones keyed by the same `inboxId`,
+    /// so the transition is a no-op re-render rather than a flicker.
+    /// Arms the `ConversationViewModel` publisher-emission gate for
+    /// picker-seeded VMs only. The default state on
+    /// `ConversationViewModel` is "gate open"; arming here matches
+    /// the synthetic draft we just constructed so DB emissions with
+    /// fewer non-self members are dropped until the state machine's
+    /// addMembers hook catches up. No-op when the draft has no seeded
+    /// members (e.g. `.newConversation`, scanner, joinInvite).
+    private func armSeededExpectationIfNeeded(
+        on convoVM: ConversationViewModel,
+        for draftConversation: Conversation
+    ) {
+        guard startedWithSeededMembers else { return }
+        convoVM.markSeeded(expectingMemberCount: draftConversation.membersWithoutCurrent.count)
+    }
+
+    private func makeDraftConversation(id: String) -> Conversation {
+        guard startedWithSeededMembers, !seededMemberInboxIds.isEmpty else {
+            return .empty(id: id)
+        }
+        let contactsRepository = session.messagingServiceSync().contactsRepository()
+        let seededContacts: [Contact] = seededMemberInboxIds.compactMap { contactsRepository.contact(for: $0) }
+        guard !seededContacts.isEmpty else {
+            return .empty(id: id)
+        }
+        var members: [ConversationMember] = seededContacts.map { $0.syntheticMember(conversationId: id) }
+        if case .authorized(let selfInboxId) = session.messagingServiceSync().state {
+            let selfProfile = Profile(
+                inboxId: selfInboxId,
+                conversationId: id,
+                name: nil,
+                avatar: nil
+            )
+            members.insert(
+                ConversationMember(profile: selfProfile, role: .superAdmin, isCurrentUser: true),
+                at: 0
+            )
+        }
+        return .draft(id: id, seededMembers: members)
     }
 
     private func configureWithMessagingService(
@@ -274,7 +346,7 @@ class NewConversationViewModel: Identifiable {
         }
         self.conversationStateManager = stateManager
         self.acquiredMessagingService = messagingService
-        let draftConversation: Conversation = .empty(
+        let draftConversation: Conversation = makeDraftConversation(
             id: stateManager.draftConversationRepository.conversationId
         )
         let convoVM = ConversationViewModel(
@@ -287,6 +359,7 @@ class NewConversationViewModel: Identifiable {
         if startedWithFullscreenScanner {
             convoVM.showsInfoView = false
         }
+        armSeededExpectationIfNeeded(on: convoVM, for: draftConversation)
         self.conversationViewModel = convoVM
         setupObservations()
         setupStateObservation()
@@ -303,6 +376,7 @@ class NewConversationViewModel: Identifiable {
                 do {
                     try await stateManager.createConversation()
                     await self?.applyGlobalConversationDefaultsIfNeeded(using: stateManager)
+                    await self?.persistHidesInviteCardIfNeeded(stateManager: stateManager)
                 } catch {
                     Log.error("Error auto-creating conversation: \(error.localizedDescription)")
                     guard !Task.isCancelled else { return }
@@ -311,6 +385,28 @@ class NewConversationViewModel: Identifiable {
                     }
                 }
             }
+        } else if existingConversationId != nil {
+            // Warm-cached convo: the DB row already exists, so the flag
+            // can be persisted right away without waiting on create.
+            Task { [weak self, stateManager] in
+                await self?.persistHidesInviteCardIfNeeded(stateManager: stateManager)
+            }
+        }
+    }
+
+    /// Persist `hidesInviteCard = true` on the conversation's local state
+    /// when this VM was launched via the contacts picker
+    /// (`.newConversationWithMembers`). Survives navigating away and
+    /// re-opening the chat from the conversations list.
+    private func persistHidesInviteCardIfNeeded(
+        stateManager: any ConversationStateManagerProtocol
+    ) async {
+        guard startedWithSeededMembers else { return }
+        let conversationId = stateManager.draftConversationRepository.conversationId
+        do {
+            try await stateManager.conversationLocalStateWriter.setHidesInviteCard(true, for: conversationId)
+        } catch {
+            Log.error("Failed to persist hidesInviteCard for \(conversationId): \(error.localizedDescription)")
         }
     }
 

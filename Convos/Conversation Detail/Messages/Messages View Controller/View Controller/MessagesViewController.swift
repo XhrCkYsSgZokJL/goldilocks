@@ -196,7 +196,7 @@ final class MessagesViewController: UIViewController {
     var onInviteAssistant: (() -> Void)?
     var onRetryTranscript: ((VoiceMemoTranscriptListItem) -> Void)?
     var profileSheetForMember: ((ConversationMember) -> AnyView)?
-    var memberNameOverride: ((String) -> String?)?
+    var memberContactOverride: ((String) -> Contact?)?
 
     var hasAssistant: Bool = false {
         didSet { dataSource.hasAssistant = hasAssistant }
@@ -412,8 +412,8 @@ final class MessagesViewController: UIViewController {
         dataSource.onRetryTranscript = { [weak self] item in
             self?.onRetryTranscript?(item)
         }
-        dataSource.memberNameOverride = { [weak self] inboxId in
-            self?.memberNameOverride?(inboxId)
+        dataSource.memberContactOverride = { [weak self] inboxId in
+            self?.memberContactOverride?(inboxId)
         }
 
         setupImmediateTouchGesture()
@@ -550,6 +550,11 @@ extension MessagesViewController {
         }
 
         var cells: [MessagesListItemType] = messages
+
+        // Mirror the conversation's persisted "hide invite QR" flag onto the
+        // data source so the `.invite` cell renderer can drop the QR card
+        // while keeping the invite menu visible.
+        dataSource.hidesInviteCard = conversation.hidesInviteCard
 
         // Add invite or conversation info at the beginning if all messages are loaded
         if hasLoadedAllMessages, !conversation.isDraft {
