@@ -20,7 +20,8 @@ cp .env.example .env
 
 npm install
 npm run migrate          # creates tables in Postgres
-npm run dev              # http://localhost:4000
+npm run server:dev       # HTTP API — http://localhost:4000
+npm run agents:dev       # XMTP agent process (run in a second terminal)
 ```
 
 ## Postgres

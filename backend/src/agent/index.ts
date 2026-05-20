@@ -68,7 +68,8 @@ async function main(): Promise<void> {
 
   const stopListener = await startListener({
     onAdminChanged: async (payload) => {
-      console.log(`[agent] admin_changed op=${payload.op} inbox=${payload.inbox_id.slice(0, 8)}…`);
+      const who = payload.inbox_id ? `${payload.inbox_id.slice(0, 8)}…` : (payload.name ?? 'unclaimed');
+      console.log(`[agent] admin_changed op=${payload.op} ${who}`);
       await adminsAgent.reconcile();
     },
     onClientRegistered: async (payload) => {

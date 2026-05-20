@@ -57,10 +57,11 @@ async function resolveCaller(
     return null;
   }
 
+  // A disabled admin row counts as a non-admin.
   const [adminRow] = await db
     .select()
     .from(adminInboxes)
-    .where(eq(adminInboxes.inboxId, device.inboxId))
+    .where(and(eq(adminInboxes.inboxId, device.inboxId), eq(adminInboxes.disabled, false)))
     .limit(1);
 
   return {

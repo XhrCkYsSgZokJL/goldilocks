@@ -7,7 +7,7 @@
 # Override the env vars below if your repos live elsewhere.
 
 export GOLDILOCKS_BACKEND="${GOLDILOCKS_BACKEND:-$HOME/Desktop/git/goldilocks-backend}"
-export CONVOS_IOS="${CONVOS_IOS:-$HOME/Desktop/git/convos-ios}"
+export GOLDILOCKS_IOS="${GOLDILOCKS_IOS:-$HOME/Desktop/git/goldilocks-ios}"
 # iOS bundle id — keychain entries are scoped to this. Adjust if you rebrand.
 export CONVOS_BUNDLE_ID="${CONVOS_BUNDLE_ID:-org.convos.ios-local}"
 
@@ -24,8 +24,8 @@ goldilocks-off() {
   echo "→ goldilocks-backend stack down (-v wipes Postgres volume)"
   ( cd "$GOLDILOCKS_BACKEND" && docker compose down -v ) || echo "   (backend stack was not running)"
 
-  echo "→ convos-ios XMTP node down (-v wipes node data)"
-  ( cd "$CONVOS_IOS" && docker compose -f dev/docker-compose.yml -p convos-ios down -v ) || echo "   (XMTP node was not running)"
+  echo "→ goldilocks-ios XMTP node down (-v wipes node data)"
+  ( cd "$GOLDILOCKS_IOS" && docker compose -f dev/docker-compose.yml -p convos-ios down -v ) || echo "   (XMTP node was not running)"
 
   echo "→ removing .agent-data (admins/reports private keys)"
   rm -rf "$GOLDILOCKS_BACKEND/.agent-data"
@@ -95,8 +95,8 @@ goldilocks-on() {
   echo "🟢  Goldilocks: bringing services up"
   echo
 
-  echo "→ starting convos-ios XMTP node"
-  ( cd "$CONVOS_IOS" && ./dev/up ) || { echo "❌  XMTP node failed to start"; return 1; }
+  echo "→ starting goldilocks-ios XMTP node"
+  ( cd "$GOLDILOCKS_IOS" && ./dev/up ) || { echo "❌  XMTP node failed to start"; return 1; }
 
   echo "→ starting goldilocks Postgres (waiting for healthcheck)"
   # `--wait` blocks until the service's healthcheck passes. The compose
@@ -124,14 +124,14 @@ goldilocks-on() {
 
   echo
   echo "✅  Goldilocks is on. You still need to start:"
-  echo "   • Backend:  cd $GOLDILOCKS_BACKEND && npm run dev"
-  echo "   • Agent:    cd $GOLDILOCKS_BACKEND && npm run agent:dev"
+  echo "   • Backend:  cd $GOLDILOCKS_BACKEND && npm run server:dev"
+  echo "   • Agent:    cd $GOLDILOCKS_BACKEND && npm run agents:dev"
 }
 
 goldilocks-status() {
   echo "📦  Containers:"
   ( cd "$GOLDILOCKS_BACKEND" && docker compose ps 2>/dev/null )
-  ( cd "$CONVOS_IOS" && docker compose -f dev/docker-compose.yml -p convos-ios ps 2>/dev/null )
+  ( cd "$GOLDILOCKS_IOS" && docker compose -f dev/docker-compose.yml -p convos-ios ps 2>/dev/null )
   echo
   echo "🐘  Postgres on :25433:"
   if nc -z localhost 25433 2>/dev/null; then

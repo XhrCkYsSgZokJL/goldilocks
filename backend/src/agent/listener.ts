@@ -15,7 +15,8 @@ const { Client: PgClient } = pg;
 
 export interface AdminChangedPayload {
   op: 'INSERT' | 'UPDATE' | 'DELETE';
-  inbox_id: string;
+  // Null when the CLI creates/removes an admin slot before it's claimed.
+  inbox_id: string | null;
   name: string | null;
 }
 

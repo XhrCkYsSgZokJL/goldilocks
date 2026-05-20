@@ -12,7 +12,7 @@
 import { eq, and, lte, sql } from 'drizzle-orm';
 import { Client, Group, MetadataField, PermissionPolicy, PermissionUpdateType } from '@xmtp/node-sdk';
 import { db } from '../db/client.js';
-import { adminInboxes, clients, clientChannels, reportJobs } from '../db/schema.js';
+import { clients, clientChannels, reportJobs } from '../db/schema.js';
 import type { AgentIdentity } from './store.js';
 import { WorkQueue } from './work-queue.js';
 
@@ -57,15 +57,13 @@ export class ReportsAgent {
   }
 
   private async reconcileInner(): Promise<void> {
-    // First, mark exploded any role='reports' rows whose client is now an
-    // admin. Admins don't get a personal Reports feed; this catches the
-    // case where an admin was first registered as a client (Reports
-    // created), then promoted, leaving the row stranded as "active".
-    // Marking exploded drops it from /v2/me/channels' active filter,
-    // which means iOS removes it from `GoldilocksOwnedChannels` and the
-    // staleness filter trims the conversation off the list.
-    await this.markAdminReportsExploded();
-
+    // Reports is a per-client feed, role-agnostic. Every client gets one,
+    // including those who later upgrade to admin — an admin is just a
+    // client whose inbox is also on the admin allowlist. iOS hides an
+    // admin's *own* Reports from their sidebar (the `isAdmin && role ==
+    // 'reports'` exclusion in GoldilocksSession); when they downgrade,
+    // that exclusion lifts and the still-active Reports row reappears.
+    // So the agent never special-cases admins here.
     const orphans = await db
       .select({
         clientId: clients.id,
@@ -77,9 +75,7 @@ export class ReportsAgent {
         clientChannels,
         and(eq(clientChannels.clientId, clients.id), eq(clientChannels.role, 'reports')),
       )
-      // Skip admins — they don't get a Reports group.
-      .leftJoin(adminInboxes, eq(adminInboxes.inboxId, clients.inboxId))
-      .where(sql`${clientChannels.xmtpGroupId} IS NULL AND ${adminInboxes.inboxId} IS NULL`);
+      .where(sql`${clientChannels.xmtpGroupId} IS NULL`);
 
     log(`[reports] reconcile: ${orphans.length} client(s) need a Reports group`);
     for (const c of orphans) {
@@ -206,47 +202,10 @@ export class ReportsAgent {
       log(`[reports] client_registered: Reports for ${payload.inboxId.slice(0, 8)}… already exists, skipping`);
       return;
     }
-    // Admins don't get a personal Reports group. They'll see report
-    // alerts in the cross-admin "Alerts" channel instead.
-    const [adminRow] = await db
-      .select({ inboxId: adminInboxes.inboxId })
-      .from(adminInboxes)
-      .where(eq(adminInboxes.inboxId, payload.inboxId))
-      .limit(1);
-    if (adminRow) {
-      log(`[reports] client_registered: ${payload.inboxId.slice(0, 8)}… is an admin, skipping Reports`);
-      return;
-    }
+    // Reports is role-agnostic — every client gets one. iOS hides an
+    // admin's own Reports from their sidebar; downgrading reveals it
+    // again. The agent doesn't special-case admins.
     await this.createReportsFor(payload);
-  }
-
-  /**
-   * On every reconcile pass, sweep client_channels for any role='reports'
-   * row whose client_id maps to an inbox in admin_inboxes, and flip them
-   * to status='exploded'. Cleans up Reports groups created before an
-   * admin promotion (admins register as clients first, then self-promote
-   * — the Reports row gets stranded otherwise). Idempotent.
-   */
-  private async markAdminReportsExploded(): Promise<void> {
-    const adminReports = await db
-      .select({
-        rowClientId: clientChannels.clientId,
-        clientNumber: clients.clientNumber,
-        inboxId: clients.inboxId,
-        xmtpGroupId: clientChannels.xmtpGroupId,
-      })
-      .from(clientChannels)
-      .innerJoin(clients, eq(clients.id, clientChannels.clientId))
-      .innerJoin(adminInboxes, eq(adminInboxes.inboxId, clients.inboxId))
-      .where(and(eq(clientChannels.role, 'reports'), eq(clientChannels.status, 'active')));
-
-    for (const row of adminReports) {
-      log(`[reports] admin ${row.inboxId.slice(0, 8)}… has stale Reports #${row.clientNumber}, marking exploded`);
-      await db
-        .update(clientChannels)
-        .set({ status: 'exploded', explodedAt: sql`now()` })
-        .where(and(eq(clientChannels.clientId, row.rowClientId), eq(clientChannels.role, 'reports')));
-    }
   }
 
   // ---- private helpers -------------------------------------------------

@@ -17,7 +17,7 @@
 // group too — that's a real privacy implication (the agent can read all
 // Advisory traffic). Documented as the trade-off of central management.
 
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, isNotNull, sql } from 'drizzle-orm';
 import { Client, Group, MetadataField, PermissionPolicy, PermissionUpdateType } from '@xmtp/node-sdk';
 import { db } from '../db/client.js';
 import {
@@ -518,8 +518,15 @@ export class AdminsAgent {
 }
 
 async function loadAdminInboxIds(): Promise<string[]> {
-  const rows = await db.select({ inboxId: adminInboxes.inboxId }).from(adminInboxes);
-  return rows.map((r) => r.inboxId);
+  // Disabled rows are treated as non-admins — excluded here so the
+  // reconcile's syncMembership removes them from every cross-admin
+  // group and Advisory. Unclaimed slots (the CLI created the row but
+  // nobody's entered the code yet) have a null inbox_id and are skipped.
+  const rows = await db
+    .select({ inboxId: adminInboxes.inboxId })
+    .from(adminInboxes)
+    .where(and(eq(adminInboxes.disabled, false), isNotNull(adminInboxes.inboxId)));
+  return rows.flatMap((r) => (r.inboxId ? [r.inboxId] : []));
 }
 
 /**

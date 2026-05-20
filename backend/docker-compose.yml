@@ -102,7 +102,7 @@ services:
   # bindings need glibc which the alpine base above doesn't ship):
   #
   #   cd goldilocks-backend
-  #   AGENT_DB_DIR=./.agent-data npm run agent:dev
+  #   AGENT_DB_DIR=./.agent-data npm run agents:dev
   #
   # The local run reaches Postgres via the published 25433 port and the
   # XMTP node via localhost:5555 (convos-ios `./dev/up`). To dockerize
@@ -113,7 +113,7 @@ services:
   #   build:
   #     context: .
   #     dockerfile: Dockerfile.agent
-  #   command: ["npm", "run", "agent:dev"]
+  #   command: ["npm", "run", "agents:dev"]
   #   depends_on:
   #     goldilocks-db:
   #       condition: service_healthy

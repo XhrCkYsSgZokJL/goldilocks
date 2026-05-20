@@ -10,7 +10,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, ne, sql } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db } from '../db/client.js';
 import { adminInboxes, authChallenges, clients, devices, serverAgents, serverGroups } from '../db/schema.js';
@@ -105,7 +105,12 @@ export default async function meRoutes(app: FastifyInstance) {
     if (!client) {
       return reply.code(409).send({ error: 'client_missing' });
     }
-    const [adminRow] = await db.select().from(adminInboxes).where(eq(adminInboxes.inboxId, device.inboxId)).limit(1);
+    // A disabled admin row counts as a non-admin.
+    const [adminRow] = await db
+      .select()
+      .from(adminInboxes)
+      .where(and(eq(adminInboxes.inboxId, device.inboxId), eq(adminInboxes.disabled, false)))
+      .limit(1);
 
     // Tell the goldilocks-agent that this user is online. The agent uses
     // the notification to call updateInstallations on every group the
@@ -136,9 +141,13 @@ export default async function meRoutes(app: FastifyInstance) {
   // as participants. Requires JWT so we don't leak the admin allowlist.
   // ---------------------------------------------------------------------
   app.get('/v2/admins', async (req, reply) => {
+    // Only enabled, *claimed* admins — an unclaimed slot (CLI created a
+    // row but nobody's entered the code yet) has a null inbox_id and
+    // can't be a group member. Disabled admins are excluded too.
     const rows = await db
       .select({ inboxId: adminInboxes.inboxId, name: adminInboxes.name })
-      .from(adminInboxes);
+      .from(adminInboxes)
+      .where(and(eq(adminInboxes.disabled, false), isNotNull(adminInboxes.inboxId)));
     return reply.code(200).send({ inboxes: rows });
   });
 
@@ -190,10 +199,92 @@ export default async function meRoutes(app: FastifyInstance) {
 
     await db
       .insert(adminInboxes)
-      .values({ inboxId: device.inboxId, name: 'Self-promoted (dev)' })
+      .values({
+        inboxId: device.inboxId,
+        name: 'Self-promoted (dev)',
+        upgradeCode: generateUpgradeCode(),
+        claimedAt: new Date(),
+      })
       .onConflictDoNothing();
 
     return reply.code(200).send({ ok: true, inboxId: device.inboxId });
+  });
+
+  // ---------------------------------------------------------------------
+  // POST /v2/admin/upgrade
+  // body: { code }
+  // Claims a CLI-created admin slot. Each admin row carries its own
+  // uniquely-generated `upgrade_code` (issued by `npm run admins`). The
+  // person enters that code in the iOS debug area; we bind their inbox_id
+  // to the matching slot. The UPDATE fires `admin_changed` → the agent
+  // adds the inbox to the cross-admin groups + every Advisory. A wrong
+  // code, or a code whose slot has been disabled by the CLI, is rejected.
+  // ---------------------------------------------------------------------
+  app.post('/v2/admin/upgrade', async (req, reply) => {
+    const parsed = z.object({ code: z.string().min(1).max(64) }).safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_body' });
+    }
+    const code = parsed.data.code.trim();
+
+    const deviceId = req.deviceId!;
+    const [device] = await db.select().from(devices).where(eq(devices.deviceId, deviceId)).limit(1);
+    if (!device?.inboxId) {
+      return reply.code(409).send({ error: 'device_not_registered' });
+    }
+
+    // The code identifies a specific admin slot created in the CLI.
+    const [slot] = await db
+      .select()
+      .from(adminInboxes)
+      .where(eq(adminInboxes.upgradeCode, code))
+      .limit(1);
+    if (!slot) {
+      return reply.code(403).send({ error: 'invalid_code' });
+    }
+    if (slot.disabled) {
+      return reply.code(403).send({ error: 'code_disabled' });
+    }
+
+    // Release this inbox from any other slot it already occupies (e.g.
+    // the admin switched codes), then bind it to the claimed slot. Both
+    // UPDATEs fire `admin_changed` so the agent reconciles membership.
+    await db
+      .update(adminInboxes)
+      .set({ inboxId: null, claimedAt: null })
+      .where(and(eq(adminInboxes.inboxId, device.inboxId), ne(adminInboxes.id, slot.id)));
+
+    await db
+      .update(adminInboxes)
+      .set({ inboxId: device.inboxId, claimedAt: new Date() })
+      .where(eq(adminInboxes.id, slot.id));
+
+    return reply.code(200).send({ ok: true, isAdmin: true, inboxId: device.inboxId });
+  });
+
+  // ---------------------------------------------------------------------
+  // POST /v2/admin/downgrade
+  // Self-downgrade: the caller releases the admin slot they claimed. We
+  // clear inbox_id + claimed_at so the slot (name + code) returns to the
+  // registry — the admin can re-claim it later by re-entering the same
+  // code. The UPDATE fires `admin_changed`, and the agent's reconcile
+  // removes the inbox from the Admins + Audit Log groups and every
+  // Advisory. The CLI's disable/remove are the hard revocations. No-op
+  // if the caller wasn't an admin.
+  // ---------------------------------------------------------------------
+  app.post('/v2/admin/downgrade', async (req, reply) => {
+    const deviceId = req.deviceId!;
+    const [device] = await db.select().from(devices).where(eq(devices.deviceId, deviceId)).limit(1);
+    if (!device?.inboxId) {
+      return reply.code(409).send({ error: 'device_not_registered' });
+    }
+
+    await db
+      .update(adminInboxes)
+      .set({ inboxId: null, claimedAt: null })
+      .where(eq(adminInboxes.inboxId, device.inboxId));
+
+    return reply.code(200).send({ ok: true, isAdmin: false, inboxId: device.inboxId });
   });
 
   // ---------------------------------------------------------------------
@@ -267,7 +358,12 @@ export default async function meRoutes(app: FastifyInstance) {
     if (claimAdminRole && config.GOLDILOCKS_ALLOW_SELF_PROMOTE) {
       await db
         .insert(adminInboxes)
-        .values({ inboxId, name: 'Self-promoted (dev)' })
+        .values({
+          inboxId,
+          name: 'Self-promoted (dev)',
+          upgradeCode: generateUpgradeCode(),
+          claimedAt: new Date(),
+        })
         .onConflictDoNothing();
     }
 
@@ -285,11 +381,12 @@ export default async function meRoutes(app: FastifyInstance) {
     }
 
     // Admin allowlist lookup (post-claim, so a fresh admin shows
-    // isAdmin=true on the very first /v2/me response).
+    // isAdmin=true on the very first /v2/me response). A disabled row
+    // counts as a non-admin.
     const [adminRow] = await db
       .select()
       .from(adminInboxes)
-      .where(eq(adminInboxes.inboxId, inboxId))
+      .where(and(eq(adminInboxes.inboxId, inboxId), eq(adminInboxes.disabled, false)))
       .limit(1);
 
     return reply.code(200).send({
@@ -307,4 +404,15 @@ export default async function meRoutes(app: FastifyInstance) {
  */
 function generateNonce(): string {
   return randomBytes(16).toString('hex');
+}
+
+/**
+ * 10-digit numeric upgrade code. Numeric so it matches the iOS debug
+ * area's numpad entry field. Only used by the dev self-promote paths —
+ * real admin slots get their codes from the `admins` CLI, which checks
+ * for uniqueness. Collisions here are astronomically unlikely and the
+ * inserts that use it are `onConflictDoNothing`.
+ */
+function generateUpgradeCode(): string {
+  return String(Math.floor(Math.random() * 1e10)).padStart(10, '0');
 }
