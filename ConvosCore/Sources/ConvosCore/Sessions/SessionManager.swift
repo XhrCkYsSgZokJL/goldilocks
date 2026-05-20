@@ -507,6 +507,14 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         try await apiClient.promoteSelfToAdminDev()
     }
 
+    public func upgradeGoldilocksAdmin(code: String) async throws {
+        try await apiClient.upgradeGoldilocksAdmin(code: code)
+    }
+
+    public func downgradeGoldilocksAdmin() async throws {
+        try await apiClient.downgradeGoldilocksAdmin()
+    }
+
     public func fetchGoldilocksAdminInboxIds() async throws -> [String] {
         let response = try await apiClient.fetchGoldilocksAdmins()
         return response.inboxes.map { $0.inboxId }

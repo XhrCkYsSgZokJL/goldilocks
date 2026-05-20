@@ -35,7 +35,9 @@ struct ConversationsView: View {
 
     @ViewBuilder
     private var adminBanner: some View {
-        let role = GoldilocksConfig.role
+        // Read role from the observable session so the banner updates
+        // immediately if the user upgrades to admin mid-session.
+        let role = GoldilocksSession.shared.role
         let clientNumber = GoldilocksSession.shared.clientNumber
         let label: String = {
             switch role {

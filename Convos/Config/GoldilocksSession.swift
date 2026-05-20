@@ -23,7 +23,14 @@ import Observation
 final class GoldilocksSession {
     static let shared: GoldilocksSession = GoldilocksSession()
 
-    private(set) var identity: GoldilocksAuth.Identity?
+    /// Backend identity. Setting it keeps `GoldilocksConfig.role` in sync
+    /// so non-observing call sites (Conversation extensions, groupNames)
+    /// see the right role after registration or a mid-session upgrade.
+    private(set) var identity: GoldilocksAuth.Identity? {
+        didSet {
+            GoldilocksConfig.role = (identity?.isAdmin ?? false) ? .admin : .client
+        }
+    }
     private(set) var adminInboxIds: [String] = []
     private(set) var isRegistering: Bool = false
     private(set) var lastError: String?
@@ -31,32 +38,29 @@ final class GoldilocksSession {
     var clientNumber: Int64? { identity?.clientNumber }
     var isAdmin: Bool { identity?.isAdmin ?? false }
 
+    /// Effective role, derived from `isAdmin`. Observable: SwiftUI views
+    /// reading this re-render when `identity` changes (e.g. after an
+    /// admin upgrade).
+    var role: GoldilocksRole { isAdmin ? .admin : .client }
+
     private init() {}
 
     /// Run the SIWE handshake exactly once per app launch, then fetch the
     /// admin inbox list. Subsequent calls are no-ops while a registration
     /// is in flight or once one has succeeded.
     ///
-    /// In DEBUG builds, if the launch env var GOLDILOCKS_AUTO_ADMIN=1, we
-    /// auto-promote ourselves to admin after registration so the spawn
-    /// script's "admin sim" works without any manual button-tap.
+    /// Every install registers as a plain client. A user becomes an admin
+    /// only by entering the upgrade code in the debug area's "Upgrade"
+    /// row — see `upgradeToAdmin(session:code:)`. If the inbox is already
+    /// on the admin allowlist (a prior upgrade), `/v2/me` returns
+    /// `isAdmin=true` and the role reflects it immediately.
     func registerIfNeeded(session: any SessionManagerProtocol) async {
         guard identity == nil, !isRegistering else { return }
         isRegistering = true
         defer { isRegistering = false }
 
         do {
-            // For admin builds, claim the admin role inline so the
-            // backend can insert admin_inboxes BEFORE clients in the
-            // same call. That ordering ensures admin_changed NOTIFY
-            // arrives at the agent before client_registered, and
-            // reports-agent skips Reports creation entirely — no race,
-            // no stranded MLS Reports group on the network. Legacy env
-            // var `GOLDILOCKS_AUTO_ADMIN=1` is still respected so the
-            // spawn-two-sims script keeps working.
-            let envWantsAdmin = ProcessInfo.processInfo.environment["GOLDILOCKS_AUTO_ADMIN"] == "1"
-            let claim = (GoldilocksConfig.role == .admin) || envWantsAdmin
-            let result = try await session.registerWithGoldilocks(claimAdminRole: claim)
+            let result = try await session.registerWithGoldilocks(claimAdminRole: false)
             self.identity = result
             self.lastError = nil
             Log.info("[Goldilocks] Registered as client #\(result.clientNumber), isAdmin=\(result.isAdmin)")
@@ -66,11 +70,6 @@ final class GoldilocksSession {
             return
         }
 
-        // The inline claim above already promoted the inbox in dev,
-        // but `autoPromoteIfRequested` stays as a fallback for any
-        // path that didn't pass the flag (e.g. the "Become admin (DEV)"
-        // settings toggle a user might tap after launch).
-        await autoPromoteIfRequested(session: session)
         await refreshAdminInboxes(session: session)
         await refreshAgentInboxes(session: session)
     }
@@ -178,18 +177,49 @@ final class GoldilocksSession {
         }
     }
 
-    /// DEV-ONLY. Promote this device's inbox to admin via the backend's
-    /// dev endpoint, then refresh local identity so isAdmin flips.
-    func promoteToAdminDev(session: any SessionManagerProtocol) async {
+    /// Promote this device's inbox to admin by submitting the secret
+    /// upgrade code to `POST /v2/admin/upgrade`. On success the backend
+    /// adds the inbox to `admin_inboxes` (firing `admin_changed`), and
+    /// we re-fetch `/v2/me` so `identity.isAdmin` — and therefore
+    /// `role` and `GoldilocksConfig.role` — flip to admin.
+    ///
+    /// Returns `true` iff the upgrade succeeded. A relaunch is still
+    /// recommended so every role-dependent view picks up the change.
+    func upgradeToAdmin(session: any SessionManagerProtocol, code: String) async -> Bool {
         do {
-            try await session.promoteSelfToAdminDev()
+            try await session.upgradeGoldilocksAdmin(code: code)
             let refreshed = try await session.refreshGoldilocksIdentity()
             self.identity = refreshed
-            Log.info("[Goldilocks] Promoted to admin. isAdmin=\(refreshed.isAdmin)")
             await refreshAdminInboxes(session: session)
+            Log.info("[Goldilocks] Upgrade complete. isAdmin=\(refreshed.isAdmin)")
+            return refreshed.isAdmin
         } catch {
             self.lastError = error.localizedDescription
-            Log.error("[Goldilocks] Admin promotion failed: \(error.localizedDescription)")
+            Log.error("[Goldilocks] Admin upgrade failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// Self-downgrade: drop this device's admin role via
+    /// `POST /v2/admin/downgrade`. The backend flips the admin_inboxes
+    /// row to disabled (firing `admin_changed`), the agent removes the
+    /// inbox from the cross-admin groups + every Advisory, and we
+    /// re-fetch `/v2/me` so `isAdmin`/`role` flip back to client.
+    ///
+    /// Returns `true` iff the downgrade succeeded. A relaunch is
+    /// recommended so every role-dependent view picks up the change.
+    func downgradeFromAdmin(session: any SessionManagerProtocol) async -> Bool {
+        do {
+            try await session.downgradeGoldilocksAdmin()
+            let refreshed = try await session.refreshGoldilocksIdentity()
+            self.identity = refreshed
+            await refreshAdminInboxes(session: session)
+            Log.info("[Goldilocks] Downgrade complete. isAdmin=\(refreshed.isAdmin)")
+            return !refreshed.isAdmin
+        } catch {
+            self.lastError = error.localizedDescription
+            Log.error("[Goldilocks] Admin downgrade failed: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -203,20 +233,5 @@ final class GoldilocksSession {
         } catch {
             Log.warning("[Goldilocks] Couldn't fetch admin inboxes: \(error.localizedDescription)")
         }
-    }
-
-    /// Auto-promote when the build-time role is `.admin`. The admin
-    /// keychain slot is treated as permanently admin: on first
-    /// registration we promote it; on subsequent registrations the inbox
-    /// is already in admin_inboxes so /v2/me returns isAdmin=true and we
-    /// skip. Legacy env var GOLDILOCKS_AUTO_ADMIN=1 still works as a
-    /// fallback.
-    private func autoPromoteIfRequested(session: any SessionManagerProtocol) async {
-        let envWantsAdmin = ProcessInfo.processInfo.environment["GOLDILOCKS_AUTO_ADMIN"] == "1"
-        let roleWantsAdmin = GoldilocksConfig.role == .admin
-        guard envWantsAdmin || roleWantsAdmin else { return }
-        guard identity?.isAdmin == false else { return }   // already admin → skip
-        Log.info("[Goldilocks] Configured role is admin — auto-promoting this inbox...")
-        await promoteToAdminDev(session: session)
     }
 }

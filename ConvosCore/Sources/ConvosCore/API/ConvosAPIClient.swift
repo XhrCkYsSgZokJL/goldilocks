@@ -75,6 +75,8 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func registerWithGoldilocks(inboxId: String, siweMessage: String, signature: String, claimAdminRole: Bool) async throws -> ConvosAPI.GoldilocksMeResponse
     func fetchGoldilocksMe() async throws -> ConvosAPI.GoldilocksMeResponse
     func promoteSelfToAdminDev() async throws
+    func upgradeGoldilocksAdmin(code: String) async throws
+    func downgradeGoldilocksAdmin() async throws
     func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse
     func fetchGoldilocksAgents() async throws -> ConvosAPI.GoldilocksAgentsResponse
     func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse
@@ -703,6 +705,22 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
 
     func promoteSelfToAdminDev() async throws {
         var request = try authenticatedRequest(for: "v2/admin/promote-self", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([String: String]())
+        let _: EmptyResponse = try await performRequest(request)
+    }
+
+    func upgradeGoldilocksAdmin(code: String) async throws {
+        var request = try authenticatedRequest(for: "v2/admin/upgrade", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["code": code])
+        // Throws on non-2xx — a wrong code returns 403 and surfaces as
+        // an error the caller turns into "upgrade failed".
+        let _: EmptyResponse = try await performRequest(request)
+    }
+
+    func downgradeGoldilocksAdmin() async throws {
+        var request = try authenticatedRequest(for: "v2/admin/downgrade", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode([String: String]())
         let _: EmptyResponse = try await performRequest(request)

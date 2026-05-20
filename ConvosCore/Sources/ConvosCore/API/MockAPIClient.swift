@@ -149,6 +149,10 @@ final class MockAPIClient: ConvosAPIClientProtocol, Sendable {
 
     func promoteSelfToAdminDev() async throws {}
 
+    func upgradeGoldilocksAdmin(code: String) async throws {}
+
+    func downgradeGoldilocksAdmin() async throws {}
+
     func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse {
         .init(inboxes: [])
     }

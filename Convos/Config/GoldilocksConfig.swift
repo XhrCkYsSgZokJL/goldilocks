@@ -8,72 +8,26 @@ import Foundation
 /// fall back to the standard new-conversation flow (so the build still works
 /// while you're setting things up).
 enum GoldilocksConfig {
-    /// Build-time role for this install. Edit this constant and ⌘R to
-    /// switch between admin and client identities. Each role has its own
-    /// keychain slot, so flipping back and forth doesn't lose the other
-    /// role's onboarding state.
+    /// Effective role for this run. Every install starts as `.client` —
+    /// there is no build-time role flag. `GoldilocksSession` flips this
+    /// to `.admin` (via the `identity` didSet) once the backend confirms
+    /// the inbox is on the admin allowlist: either it already was, or
+    /// the user entered the upgrade code in the debug area's "Upgrade"
+    /// row (POST /v2/admin/upgrade).
     ///
-    /// You can also override this at runtime via the `GOLDILOCKS_ROLE`
-    /// scheme env var (`admin` or `client`). The env var wins when set,
-    /// the constant is the fallback.
-    ///
-    /// Recommended workflow:
-    ///   1. Set to `.admin`, ⌘R. The admin inbox registers and is
-    ///      promoted server-side (lands in `admin_inboxes`).
-    ///   2. Flip to `.client`, ⌘R. The client gets a fresh identity and
-    ///      pulls the admin inbox list from `/v2/admins` so the
-    ///      Advisory + Reports groups it creates include the admin.
-    static let defaultRole: GoldilocksRole = .admin
+    /// Plain stored value rather than @Observable — UI that needs to
+    /// react to a mid-session upgrade should observe
+    /// `GoldilocksSession.shared` directly (its `role` / `isAdmin` are
+    /// observable). Anything reading this static catches up on the next
+    /// list recompute or app relaunch.
+    nonisolated(unsafe) static var role: GoldilocksRole = .client
 
-    /// Build-time display name for this install. Combined with `defaultRole`
-    /// to produce a unique keychain slot + device-id suffix, so multiple
-    /// admins (e.g. Morgan, Tillie) and multiple clients (e.g. Bob, Alice)
-    /// can coexist on the same simulator. Each (role, name) pair gets its
-    /// own persisted identity. Edit + ⌘R to spin up another instance.
-    ///
-    /// Override at runtime via `GOLDILOCKS_NAME` scheme env var.
-    static let defaultName: String = "Morgan"
-
-    /// Effective role for this run. Reads `GOLDILOCKS_ROLE` env var if
-    /// present, otherwise falls back to `defaultRole`.
-    static var role: GoldilocksRole {
-        let raw = ProcessInfo.processInfo.environment["GOLDILOCKS_ROLE"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        if let raw, let parsed = GoldilocksRole(rawValue: raw) {
-            return parsed
-        }
-        return defaultRole
-    }
-
-    /// Effective display name for this run. Reads `GOLDILOCKS_NAME` env
-    /// var if set, otherwise falls back to `defaultName`.
-    static var name: String {
-        let raw = ProcessInfo.processInfo.environment["GOLDILOCKS_NAME"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let raw, !raw.isEmpty {
-            return raw
-        }
-        return defaultName
-    }
-
-    /// Filename-safe version of `name` used inside slot suffixes.
-    /// Lowercased, alphanumerics + hyphens; spaces become hyphens; everything
-    /// else is dropped. Empty after sanitisation falls back to "anon".
-    static var sanitizedName: String {
-        let allowed = name
-            .lowercased()
-            .replacingOccurrences(of: " ", with: "-")
-            .filter { $0.isLetter || $0.isNumber || $0 == "-" }
-        return allowed.isEmpty ? "anon" : allowed
-    }
-
-    /// Combined identifier used as the keychain slot suffix + device-id
-    /// suffix, e.g. "admin.morgan", "client.bob". Each (role, name) pair
-    /// produces a unique identity row on the backend.
-    static var slotIdentifier: String {
-        "\(role.rawValue).\(sanitizedName)"
-    }
+    /// Keychain slot suffix + device-id suffix. Fixed: one XMTP identity
+    /// per app install. To test multiple users, use separate simulators
+    /// (each has its own keychain) or erase + reinstall for a fresh
+    /// identity. Must be stable and known at launch — before any network
+    /// call — so it can't depend on role or server state.
+    static let slotIdentifier: String = "goldilocks"
 
     /// Legacy hardcoded inbox IDs. Used as a fallback when the backend's
     /// /v2/admins list is unreachable or empty. Once the spawn-two-sims

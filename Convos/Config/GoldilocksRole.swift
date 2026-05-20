@@ -2,14 +2,14 @@ import ConvosCore
 import ConvosCoreiOS
 import Foundation
 
-/// Build-time role for this install. The active role is set in
-/// `GoldilocksConfig.role` (constant in source) or the `GOLDILOCKS_ROLE`
-/// scheme env var. Each role gets its own keychain slot so flipping the
-/// flag and ⌘R picks up that role's persisted identity.
+/// The viewer's effective role. Every install starts `.client`; a user
+/// becomes `.admin` only when their inbox is on the backend's admin
+/// allowlist (`admin_inboxes`) — confirmed by `/v2/me` and surfaced
+/// through `GoldilocksConfig.role` / `GoldilocksSession.role`.
 ///
-/// We deliberately don't try to switch identity at runtime — Convos's
-/// SessionManager / MessagingService / SQLCipher DB are wired around a
-/// single inbox and tearing them down to swap mid-session is invasive.
+/// There is no build-time role flag and no keychain-slot-per-role: one
+/// XMTP identity per install. The role is purely a UI/behavior
+/// distinction derived from server state, not a separate identity.
 enum GoldilocksRole: String, Codable, CaseIterable {
     case client
     case admin
@@ -23,11 +23,11 @@ enum GoldilocksRole: String, Codable, CaseIterable {
 }
 
 enum GoldilocksRolePrefs {
-    /// Wire the keychain slot suffix and device-id suffix to the active
-    /// (role, name) pair via `GoldilocksConfig.slotIdentifier`. Must be
-    /// called before the first `KeychainIdentityStore` read AND before
-    /// any device registration / auth call — i.e. as early as possible
-    /// in app launch, before SessionManager or ConvosClient is constructed.
+    /// Wire the keychain slot suffix and device-id suffix to the fixed
+    /// `GoldilocksConfig.slotIdentifier`. Must be called before the first
+    /// `KeychainIdentityStore` read AND before any device registration /
+    /// auth call — i.e. as early as possible in app launch, before
+    /// SessionManager or ConvosClient is constructed.
     static func applyToKeychain() {
         let suffix = GoldilocksConfig.slotIdentifier
         KeychainIdentityStore.slotSuffix = suffix

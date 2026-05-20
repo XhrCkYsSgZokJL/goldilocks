@@ -109,6 +109,16 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// admin_inboxes. Backend rejects unless GOLDILOCKS_ALLOW_SELF_PROMOTE=true.
     func promoteSelfToAdminDev() async throws
 
+    /// Submit the secret upgrade code to `POST /v2/admin/upgrade`. On
+    /// success the caller's inbox is added to `admin_inboxes`. Throws if
+    /// the code is wrong or the endpoint is disabled.
+    func upgradeGoldilocksAdmin(code: String) async throws
+
+    /// Self-downgrade: `POST /v2/admin/downgrade` flips the caller's
+    /// admin_inboxes row to disabled. The agent removes the inbox from
+    /// the cross-admin groups + every Advisory on the next reconcile.
+    func downgradeGoldilocksAdmin() async throws
+
     /// Fetch the inbox IDs of all admins (Goldilocks team). Used by the
     /// client app as the recipient list when creating Advisory/Reports.
     func fetchGoldilocksAdminInboxIds() async throws -> [String]
@@ -190,6 +200,14 @@ extension SessionManagerProtocol {
     }
 
     public func promoteSelfToAdminDev() async throws {
+        // No-op for mocks
+    }
+
+    public func upgradeGoldilocksAdmin(code: String) async throws {
+        // No-op for mocks
+    }
+
+    public func downgradeGoldilocksAdmin() async throws {
         // No-op for mocks
     }
 

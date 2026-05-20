@@ -42,6 +42,11 @@ struct DebugViewSection: View {
     @State private var logStorageInfo: DebugLogExporter.LogStorageInfo?
     @State private var showingAssistantsInfoSheet: Bool = false
     @State private var showingSafariTestSheet: Bool = false
+    @State private var showingUpgradePrompt: Bool = false
+    @State private var showingDowngradeConfirm: Bool = false
+    @State private var upgradeCode: String = ""
+    @State private var roleChangeMessage: String?
+    @State private var showingRoleChangeResult: Bool = false
 
     var body: some View {
         Group {
@@ -49,10 +54,60 @@ struct DebugViewSection: View {
                 HStack {
                     Text("Role")
                     Spacer()
-                    Text(GoldilocksConfig.role.displayName)
-                        .foregroundStyle(GoldilocksConfig.role == .admin ? .orange : .secondary)
+                    Text(GoldilocksSession.shared.role.displayName)
+                        .foregroundStyle(GoldilocksSession.shared.isAdmin ? .orange : .secondary)
                         .fontWeight(.semibold)
                 }
+                if GoldilocksSession.shared.isAdmin {
+                    let downgradeAction = { showingDowngradeConfirm = true }
+                    Button(action: downgradeAction) {
+                        Text("Downgrade to Client")
+                            .foregroundStyle(.colorTextPrimary)
+                    }
+                } else {
+                    let upgradeAction = { showingUpgradePrompt = true }
+                    Button(action: upgradeAction) {
+                        Text("Upgrade to Admin")
+                            .foregroundStyle(.colorTextPrimary)
+                    }
+                }
+            }
+            .alert("Upgrade to Admin", isPresented: $showingUpgradePrompt) {
+                TextField("10-digit code", text: $upgradeCode)
+                    .keyboardType(.numberPad)
+                Button("Cancel", role: .cancel) { upgradeCode = "" }
+                Button("Upgrade") {
+                    let code = upgradeCode.trimmingCharacters(in: .whitespacesAndNewlines)
+                    upgradeCode = ""
+                    Task {
+                        let ok = await GoldilocksSession.shared.upgradeToAdmin(session: session, code: code)
+                        roleChangeMessage = ok
+                            ? "You're now an admin. Relaunch the app for all changes to take effect."
+                            : "Upgrade failed — check the code and try again."
+                        showingRoleChangeResult = true
+                    }
+                }
+            } message: {
+                Text("Enter the secret admin upgrade code.")
+            }
+            .alert("Downgrade to Client", isPresented: $showingDowngradeConfirm) {
+                Button("Cancel", role: .cancel) {}
+                Button("Downgrade", role: .destructive) {
+                    Task {
+                        let ok = await GoldilocksSession.shared.downgradeFromAdmin(session: session)
+                        roleChangeMessage = ok
+                            ? "You're now a client. Relaunch the app for all changes to take effect."
+                            : "Downgrade failed — try again."
+                        showingRoleChangeResult = true
+                    }
+                }
+            } message: {
+                Text("Drop your admin role and return to the client view?")
+            }
+            .alert("Goldilocks Role", isPresented: $showingRoleChangeResult, presenting: roleChangeMessage) { _ in
+                Button("OK", role: .cancel) {}
+            } message: { message in
+                Text(message)
             }
 
             Section("Features") {
