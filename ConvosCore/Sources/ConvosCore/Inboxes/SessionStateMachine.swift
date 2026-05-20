@@ -1052,9 +1052,34 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
 
                 try Task.checkCancellation()
 
-                Log.debug("Authenticating with backend and storing JWT...")
-                _ = try await apiClient.authenticate(appCheckToken: appCheckToken, retryCount: 0)
-                Log.info("Successfully authenticated with backend")
+                // Default path: SIWE auth. Loads the on-device identity,
+                // signs an EIP-4361 message with its Ethereum private key,
+                // exchanges for a JWT containing `accountId`. Registering
+                // the signing context with the API client BEFORE the call
+                // is what makes the 401 re-auth path and every subsequent
+                // authenticated request use the SIWE slot — without this
+                // the API client would silently fall back to legacy
+                // device-only auth on token expiry.
+                if let identity = try await identityStore.load() {
+                    let signing = BackendAuthSigningContext.make(from: identity.keys.privateKey)
+                    apiClient.updateSIWESigningContext(signing)
+                    Log.debug("Authenticating with backend via SIWE (address \(signing.address))...")
+                    let token = try await apiClient.authenticateWithSIWE(
+                        appCheckToken: appCheckToken,
+                        signing: signing
+                    )
+                    let accountId = BackendAuthProbe.extractAccountId(from: token) ?? "?"
+                    Log.info("Successfully authenticated with backend (SIWE, address=\(signing.address), accountId=\(accountId))")
+                } else {
+                    // No on-device identity yet: clear any stale signing
+                    // context and fall back to the legacy device-only
+                    // path. SIWE will run on the next attempt once an
+                    // identity is provisioned.
+                    apiClient.updateSIWESigningContext(nil)
+                    Log.debug("No identity yet; falling back to legacy device-only auth...")
+                    _ = try await apiClient.authenticate(appCheckToken: appCheckToken, retryCount: 0)
+                    Log.info("Successfully authenticated with backend (legacy)")
+                }
                 return
             } catch is CancellationError {
                 throw CancellationError()
