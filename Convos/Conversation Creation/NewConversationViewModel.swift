@@ -35,6 +35,13 @@ enum NewConversationMode {
     /// conversation arrives at `.ready` with the picked members already
     /// in it.
     case newConversationWithMembers(initialMemberInboxIds: [String])
+    /// Opens an existing conversation in the same sheet presentation we
+    /// use for the new-convo flows. Used when "Chat" on a contact card
+    /// resolves to a 1:1 the user already has with that person, so the
+    /// app doesn't let them spin up a second redundant 1:1. The state
+    /// machine uses `.useExisting` (no create, no addMembers), and the
+    /// conversation publisher emits `.ready` against the existing row.
+    case existingConversation(conversationId: String)
     case scanner
     case joinInvite(code: String)
 }
@@ -56,6 +63,10 @@ class NewConversationViewModel: Identifiable {
     /// `ConversationViewModel.hidesInviteCard` so the QR header isn't
     /// rendered on top of a chat that already has members.
     private let startedWithSeededMembers: Bool
+    /// True when this VM was constructed with `.existingConversation`.
+    /// Belt-and-braces guard against `cleanUpIfNeeded` ever destroying
+    /// the real conversation behind the sheet - see comment there.
+    private let isExistingConversation: Bool
     /// Captured initial-member inbox ids for the seeded-members flow.
     /// Used to seed each draft `Conversation` with contact-derived
     /// members so the chat header renders the contact's name and
@@ -148,7 +159,10 @@ class NewConversationViewModel: Identifiable {
             self.showingFullScreenScanner = true
             self.allowsDismissingScanner = true
 
-        case .joinInvite:
+        // `.existingConversation` and `.joinInvite` both open / join
+        // an existing chat without creating one - same scanner-off
+        // configuration.
+        case .existingConversation, .joinInvite:
             self.autoCreateConversation = false
             self.startedWithFullscreenScanner = false
             self.showingFullScreenScanner = false
@@ -162,6 +176,8 @@ class NewConversationViewModel: Identifiable {
             self.startedWithSeededMembers = false
             self.seededMemberInboxIds = []
         }
+
+        self.isExistingConversation = if case .existingConversation = mode { true } else { false }
 
         self.isCreatingConversation = mode.isNewConversation
         createPlaceholderConversationViewModel()
@@ -182,6 +198,9 @@ class NewConversationViewModel: Identifiable {
         self.startedWithFullscreenScanner = showingFullScreenScanner
         self.startedWithSeededMembers = false
         self.seededMemberInboxIds = []
+        // Tests-only init - the warm-cache flow goes through the
+        // public init. Existing-conversation cleanup guard stays off.
+        self.isExistingConversation = false
         self.showingFullScreenScanner = showingFullScreenScanner
         self.allowsDismissingScanner = allowsDismissingScanner
 
@@ -202,6 +221,12 @@ class NewConversationViewModel: Identifiable {
 
     func cleanUpIfNeeded() {
         guard !_reachedReadyState, !_reachedJoiningState, !_cleanedUp else { return }
+        // Defensive: `.existingConversation` flows should already exit
+        // via `_reachedReadyState` (useExisting emits .ready). If that
+        // ever drifts and `deleteConversation` stops being a no-op,
+        // this prevents destroying the real conversation behind the
+        // sheet on dismiss-before-ready.
+        guard !isExistingConversation else { return }
         _cleanedUp = true
         deleteConversation()
     }
@@ -234,6 +259,9 @@ class NewConversationViewModel: Identifiable {
                     existingConversationId: existingConversationId,
                     initialMemberInboxIds: initialMemberInboxIds
                 )
+
+            case .existingConversation(let conversationId):
+                configureWithMessagingService(session.messagingService(), existingConversationId: conversationId)
 
             case .scanner, .joinInvite:
                 let messagingService = session.messagingService()
@@ -813,7 +841,7 @@ private extension NewConversationMode {
         switch self {
         case .newConversation, .newConversationWithMembers:
             return true
-        case .scanner, .joinInvite:
+        case .existingConversation, .scanner, .joinInvite:
             return false
         }
     }
