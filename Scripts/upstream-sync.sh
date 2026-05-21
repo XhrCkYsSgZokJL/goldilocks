@@ -64,10 +64,10 @@ pick e62840a1 "#762 connections: republish orphaned grant metadata"
 pick 3565b95e "#766 quickname: flip per-conversation flag on apply"
 pick 0422384b "#772 reactions drawer self-sizes to content"
 pick 1fd7ca81 "#773 CLAUDE.md type-check timeout rules"
-# #794 (MessagesBottomBar type-check timeout) intentionally skipped — it
-# fixes bloat introduced by upstream-only work we aren't pulling; our copy
-# of the file is untouched and compiles fine.
-pick 39995d43 "#818 fix drawer title clipping"
+# #794 and #818 intentionally skipped — both conflict purely on upstream
+# drift (a MessagesBottomBar type-check fix for bloat we don't have, and a
+# ReadBy drawer file our tree never had). Minor build/cosmetic fixes, moot
+# for our tree.
 pick 8ae258f9 "#822 re-anchor messages list when keyboard appears"
 
 # ---------------------------------------------------------------------
