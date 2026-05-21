@@ -12,6 +12,7 @@
     "build": "tsc -p tsconfig.json",
     "migrate": "tsx src/db/migrate.ts",
     "admins": "tsx scripts/admins.ts",
+    "clients": "tsx scripts/clients.ts",
     "spawn-two-sims": "bash scripts/spawn-two-sims.sh",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",

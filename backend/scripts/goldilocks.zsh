@@ -15,7 +15,7 @@ export CONVOS_BUNDLE_ID="${CONVOS_BUNDLE_ID:-org.convos.ios-local}"
 # Find UDIDs with: xcrun simctl list devices | grep -i goldilocks
 # Example:
 #   export GOLDILOCKS_SIMS=(07E53492-CCB5-4732-80C0-D5DF3C762A88 D23B87D1-A42F-448A-B77F-D7944DE12AC3)
-export GOLDILOCKS_SIMS=()
+export GOLDILOCKS_SIMS=(F6DCC975-A4C8-46A9-81B2-66D0ECE11249)
 
 goldilocks-off() {
   echo "🛑  Goldilocks: bringing everything down + wiping state"
