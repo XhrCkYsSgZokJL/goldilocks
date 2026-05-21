@@ -136,12 +136,17 @@ public enum GoldilocksAuth {
 public enum GoldilocksSubscriptionTier: String, Sendable, Equatable, CaseIterable {
     case light
     case active
+    /// "No plan" — the client is not subscribed. Stored on the backend as
+    /// NULL for the active tier, but requestable (as 'none') so a client
+    /// can ask to be moved off all plans through the same approval flow.
+    case noPlan = "none"
 
     /// Human-facing plan name.
     public var displayName: String {
         switch self {
         case .light: return "Light"
         case .active: return "Active"
+        case .noPlan: return "No plan"
         }
     }
 
@@ -150,6 +155,7 @@ public enum GoldilocksSubscriptionTier: String, Sendable, Equatable, CaseIterabl
         switch self {
         case .light: return "$99/mo"
         case .active: return "$199/mo"
+        case .noPlan: return "—"
         }
     }
 }

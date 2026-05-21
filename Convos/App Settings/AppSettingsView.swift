@@ -342,7 +342,9 @@ struct SubscriptionView: View {
     }
 
     private func planRow(for tier: GoldilocksSubscriptionTier) -> some View {
-        let isCurrent = GoldilocksSession.shared.subscriptionTier == tier
+        // A nil active tier means "no plan", so fold it onto .noPlan for
+        // the comparison — that lets the "No plan" row show as current.
+        let isCurrent = (GoldilocksSession.shared.subscriptionTier ?? .noPlan) == tier
         let isRequested = GoldilocksSession.shared.requestedTier == tier
         let isBusy = requestingTier == tier
         let action: @MainActor () -> Void = {
@@ -354,7 +356,7 @@ struct SubscriptionView: View {
                 )
                 requestingTier = nil
                 if success {
-                    resultMessage = "Your request for the \(tier.displayName) plan has been sent. " +
+                    resultMessage = "Your request to switch to \(tier.displayName) has been sent. " +
                         "The Goldilocks team will confirm it shortly."
                 } else {
                     resultMessage = "Couldn't send your request. " +
