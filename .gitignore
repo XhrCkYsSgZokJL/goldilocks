@@ -137,3 +137,6 @@ qa/cxdb/qa.sqlite-shm
 
 # Runtime artifacts
 .claude/scheduled_tasks.lock
+
+# Git bundle backups (created during the Goldilocks repo migration)
+*.bundle
