@@ -82,7 +82,9 @@ echo "  own before continuing. (Not cherry-picked — upstream churned the"
 echo "  pin several times; we want only the final value.)"
 echo ""
 pick 74e238cb "#768 pre-commit hook bash 3.2 compat (we fixed this too — reconcile)"
-pick 5820a54c "#780 fix invite DM push subscriptions"
+# #780 skipped — invite-DM push fix, heavily entangled with the (later
+# reverted) backup/restore feature we never had. Goldilocks doesn't use
+# invite DMs anyway. Not worth a 7-file risky merge.
 pick 3d72da3b "#815 don't drop libxmtp DB on .inactive launches"
 
 # ---------------------------------------------------------------------
