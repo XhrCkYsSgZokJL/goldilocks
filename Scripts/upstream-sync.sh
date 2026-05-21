@@ -89,21 +89,17 @@ pick 3d72da3b "#815 don't drop libxmtp DB on .inactive launches"
 
 # ---------------------------------------------------------------------
 echo ""
-echo "=== Wave 3 — attachments / HTML (larger; expect conflicts) ==="
+echo "=== Wave 3 — attachments / HTML ==="
 pick 67a451f7 "#790 allow sending Files"
-pick 3aa73037 "#791 multi-attachment composer"
-pick 7c917c26 "#803 render HTML attachments in a WKWebView sheet"
-pick a7f86ad3 "#806 inline HTML + Chat|Stuff paging"
-pick feaa62fa "#816 route Stuff search through FocusCoordinator"
-pick adaf4ea9 "#819 make Stuff list reactive"
-pick d957e66c "#820 route Save to Files for non-photo attachments"
-pick dcd14ab5 "#821 HTML attachment cell height"
-pick 15f2af8c "#825 HTML thumbnails via PDFKit"
-pick b58373c5 "#771 connections capability resolution v1"
+# Wave 3 stops here. #791 (multi-attachment composer) onward is entangled
+# with the upstream Quickname->Profile rename (#788) we deliberately did
+# not pull, and the HTML cluster is a cohesive refactor that needs a
+# build + test loop per commit. Tackle the rest as a separate hands-on
+# effort — see docs/plans/upstream-sync.md.
 
 # ---------------------------------------------------------------------
 echo ""
-echo "✅ All three waves cherry-picked onto 'upstream-sync'."
+echo "✅ Waves 1 & 2 (plus #790) are on 'upstream-sync'. Wave 3 deferred."
 echo ""
 echo "Now, before merging back into goldilocks:"
 echo "  1. Do the libxmtp Package.swift bump (Wave 2 manual step) if not done."
