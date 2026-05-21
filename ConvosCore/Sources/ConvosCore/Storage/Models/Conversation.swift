@@ -57,6 +57,19 @@ public extension Conversation {
         return !GoldilocksOwnedChannels.contains(xmtpGroupId: id)
     }
 
+    /// True for a group with no name and no members besides the current
+    /// user — an unused or abandoned conversation left behind by the
+    /// new-conversation prewarm. It can only render as the placeholder
+    /// "New Channel", so the conversations list filters it out. Goldilocks
+    /// agent-managed channels are exempt: the agent always gives them a
+    /// name and members, and `isStaleGoldilocksChannel` already governs them.
+    var isEmptyPlaceholderConversation: Bool {
+        guard !isGoldilocksManaged else { return false }
+        guard kind != .dm else { return false }
+        guard name?.isEmpty ?? true else { return false }
+        return membersWithoutCurrent.isEmpty
+    }
+
     var isForked: Bool {
         debugInfo.commitLogForkStatus == .forked
     }

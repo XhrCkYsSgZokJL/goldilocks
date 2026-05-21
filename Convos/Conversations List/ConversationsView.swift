@@ -55,7 +55,20 @@ struct ConversationsView: View {
             case .client: return "person.crop.circle.fill"
             }
         }()
-        HStack(spacing: 4) {
+        HStack(spacing: DesignConstants.Spacing.step2x) {
+            goldilocksChip(icon: icon, label: label)
+            if role == .client, let plan = planChip {
+                goldilocksChip(icon: plan.icon, label: plan.label)
+            }
+        }
+        .padding(.horizontal, DesignConstants.Spacing.step4x)
+        .padding(.vertical, DesignConstants.Spacing.step2x)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A small capsule chip — used for the role badge and the plan badge.
+    private func goldilocksChip(icon: String, label: String) -> some View {
+        return HStack(spacing: 4) {
             Image(systemName: icon)
                 .font(.caption2)
             Text(label)
@@ -68,9 +81,20 @@ struct ConversationsView: View {
         .background(
             Capsule().fill(Color.secondary.opacity(0.12))
         )
-        .padding(.horizontal, DesignConstants.Spacing.step4x)
-        .padding(.vertical, DesignConstants.Spacing.step2x)
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Icon + label for the subscription chip shown beside the role chip,
+    /// or nil when the client has no plan and no pending request. A
+    /// pending request shows a clock; an active plan shows a checkmark.
+    private var planChip: (icon: String, label: String)? {
+        let session = GoldilocksSession.shared
+        if let requested = session.requestedTier {
+            return ("clock.fill", requested.displayName)
+        }
+        if let current = session.subscriptionTier {
+            return ("checkmark.circle.fill", current.displayName)
+        }
+        return nil
     }
 
     var filteredEmptyStateView: some View {

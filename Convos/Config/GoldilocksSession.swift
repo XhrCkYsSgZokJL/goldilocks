@@ -38,6 +38,13 @@ final class GoldilocksSession {
     var clientNumber: Int64? { identity?.clientNumber }
     var isAdmin: Bool { identity?.isAdmin ?? false }
 
+    /// Current subscription plan, or nil if the client has no plan yet.
+    var subscriptionTier: GoldilocksSubscriptionTier? { identity?.subscriptionTier }
+    /// A plan the client has requested, awaiting team approval.
+    var requestedTier: GoldilocksSubscriptionTier? { identity?.requestedTier }
+    /// Whether the Custom tier has been unlocked for this client.
+    var customTierEnabled: Bool { identity?.customTierEnabled ?? false }
+
     /// Effective role, derived from `isAdmin`. Observable: SwiftUI views
     /// reading this re-render when `identity` changes (e.g. after an
     /// admin upgrade).
@@ -219,6 +226,27 @@ final class GoldilocksSession {
         } catch {
             self.lastError = error.localizedDescription
             Log.error("[Goldilocks] Admin downgrade failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// Ask the backend to put this client on `tier`. The backend parks
+    /// the choice in `requested_tier`; the Goldilocks team approves it
+    /// from the `clients` CLI. We re-fetch `/v2/me` so the pending
+    /// request shows immediately in Settings.
+    ///
+    /// Returns `true` iff the request was accepted by the backend.
+    func requestSubscription(session: any SessionManagerProtocol, tier: GoldilocksSubscriptionTier) async -> Bool {
+        do {
+            try await session.requestGoldilocksSubscription(tier: tier)
+            let refreshed = try await session.refreshGoldilocksIdentity()
+            self.identity = refreshed
+            self.lastError = nil
+            Log.info("[Goldilocks] Subscription requested: \(tier.rawValue)")
+            return true
+        } catch {
+            self.lastError = error.localizedDescription
+            Log.error("[Goldilocks] Subscription request failed: \(error.localizedDescription)")
             return false
         }
     }

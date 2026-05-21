@@ -20,7 +20,7 @@ struct ConvosToolbarButton: View {
 
                 Text("Goldilocks Digital")
                     .font(.body)
-                    .foregroundStyle(.colorFillPrimary)
+                    .foregroundStyle(.colorTextPrimary)
                     .padding(.trailing, DesignConstants.Spacing.stepX)
             }
             .padding(padding ? DesignConstants.Spacing.step2x : 0)
@@ -55,6 +55,43 @@ struct AppSettingsView: View {
         }
     }
 
+    private var currentPlanLabel: String {
+        if let tier = GoldilocksSession.shared.subscriptionTier {
+            return tier.displayName
+        }
+        if GoldilocksSession.shared.requestedTier != nil {
+            return "Pending"
+        }
+        return "No plan"
+    }
+
+    @ViewBuilder
+    private var subscriptionSection: some View {
+        if !GoldilocksSession.shared.isAdmin {
+            Section {
+                NavigationLink {
+                    SubscriptionView(session: session)
+                } label: {
+                    HStack {
+                        Image(systemName: "creditcard.fill")
+                            .foregroundStyle(.colorTextPrimary)
+
+                        Text("Subscription")
+                            .foregroundStyle(.colorTextPrimary)
+
+                        Spacer()
+
+                        Text(currentPlanLabel)
+                            .foregroundStyle(.colorTextSecondary)
+                    }
+                }
+                .listRowInsets(.init(top: 0, leading: DesignConstants.Spacing.step4x, bottom: 0, trailing: 10.0))
+            } footer: {
+                Text("Your Goldilocks Digital plan")
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -79,6 +116,8 @@ struct AppSettingsView: View {
                 .listRowInsets(.all, DesignConstants.Spacing.step2x)
                 .listSectionMargins(.top, 0.0)
                 .listSectionSeparator(.hidden)
+
+                subscriptionSection
 
                 Section {
                     NavigationLink {
@@ -119,20 +158,6 @@ struct AppSettingsView: View {
                     .accessibilityIdentifier("my-info-row")
                 } footer: {
                     Text("Private unless you choose to share")
-                }
-
-                if FeatureFlags.shared.isAssistantEnabled {
-                    Section {
-                        NavigationLink {
-                            AssistantSettingsView(session: session)
-                        } label: {
-                            Text("Assistants")
-                                .foregroundStyle(.colorTextPrimary)
-                        }
-                        .listRowInsets(.init(top: 0, leading: DesignConstants.Spacing.step4x, bottom: 0, trailing: 10.0))
-                    } footer: {
-                        Text("Optional AI for groups")
-                    }
                 }
 
                 connectionsSection
@@ -280,5 +305,114 @@ struct AppSettingsView: View {
             session: MockInboxesService(),
             onDeleteAllData: {}
         )
+    }
+}
+
+/// Subscription plans screen, reached from the top of App Settings.
+/// Shows the three Goldilocks Digital tiers, marks the client's current
+/// plan, and lets them request a change — the request is parked on the
+/// backend for the Goldilocks team to approve from the `clients` CLI.
+struct SubscriptionView: View {
+    let session: any SessionManagerProtocol
+
+    @State private var requestingTier: GoldilocksSubscriptionTier?
+    @State private var resultMessage: String?
+    @State private var showingResult: Bool = false
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(GoldilocksSubscriptionTier.allCases, id: \.self) { tier in
+                    planRow(for: tier)
+                }
+            } footer: {
+                Text(footerText)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(.colorBackgroundRaisedSecondary)
+        .navigationTitle("Subscription")
+        .toolbarTitleDisplayMode(.inline)
+        .alert("Subscription", isPresented: $showingResult) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(resultMessage ?? "")
+        }
+    }
+
+    private func planRow(for tier: GoldilocksSubscriptionTier) -> some View {
+        let isCurrent = GoldilocksSession.shared.subscriptionTier == tier
+        let isRequested = GoldilocksSession.shared.requestedTier == tier
+        let isBusy = requestingTier == tier
+        let action: @MainActor () -> Void = {
+            Task { @MainActor in
+                requestingTier = tier
+                let success = await GoldilocksSession.shared.requestSubscription(
+                    session: session,
+                    tier: tier
+                )
+                requestingTier = nil
+                if success {
+                    resultMessage = "Your request for the \(tier.displayName) plan has been sent. " +
+                        "The Goldilocks team will confirm it shortly."
+                } else {
+                    resultMessage = "Couldn't send your request. " +
+                        (GoldilocksSession.shared.lastError ?? "Please try again.")
+                }
+                showingResult = true
+            }
+        }
+
+        return Button(action: action) {
+            HStack(spacing: DesignConstants.Spacing.step2x) {
+                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepX) {
+                    Text(tier.displayName)
+                        .font(.body)
+                        .foregroundStyle(.colorTextPrimary)
+
+                    Text(tier.priceLabel)
+                        .font(.subheadline)
+                        .foregroundStyle(.colorTextSecondary)
+                }
+
+                Spacer()
+
+                planTrailing(isCurrent: isCurrent, isRequested: isRequested, isBusy: isBusy)
+            }
+        }
+        .disabled(isCurrent || isRequested || requestingTier != nil)
+    }
+
+    @ViewBuilder
+    private func planTrailing(isCurrent: Bool, isRequested: Bool, isBusy: Bool) -> some View {
+        if isBusy {
+            ProgressView()
+        } else if isCurrent {
+            Label("Current", systemImage: "checkmark.circle.fill")
+                .font(.subheadline)
+                .foregroundStyle(.colorFillPrimary)
+        } else if isRequested {
+            Text("Requested")
+                .font(.subheadline)
+                .foregroundStyle(.colorTextSecondary)
+        } else {
+            Image(systemName: "chevron.right")
+                .font(.footnote)
+                .foregroundStyle(.colorTextTertiary)
+        }
+    }
+
+    private var footerText: String {
+        if GoldilocksSession.shared.subscriptionTier == nil {
+            return "You don't have an active plan yet. Request one and the Goldilocks team will set you up."
+        }
+        return "Choosing a plan sends a request to the Goldilocks team for approval."
+    }
+}
+
+#Preview {
+    NavigationStack {
+        SubscriptionView(session: MockInboxesService())
     }
 }

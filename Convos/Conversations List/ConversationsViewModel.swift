@@ -137,6 +137,7 @@ final class ConversationsViewModel {
             .filter { $0.kind == .group }
             .filter { !$0.isGoldilocksGroup }
             .filter { !$0.isStaleGoldilocksChannel }
+            .filter { !$0.isEmptyPlaceholderConversation }
             .sorted { ($0.pinnedOrder ?? Int.max) < ($1.pinnedOrder ?? Int.max) }
 
         switch activeFilter {
@@ -171,6 +172,7 @@ final class ConversationsViewModel {
             // recency order, alongside non-Goldilocks chats.
             .filter { !$0.isPinned || $0.isPinnedGoldilocksGroup }
             .filter { !$0.isStaleGoldilocksChannel }
+            .filter { !$0.isEmptyPlaceholderConversation }
             .sorted { lhs, rhs in
                 switch (lhs.isPinnedGoldilocksGroup, rhs.isPinnedGoldilocksGroup) {
                 case (true, false):

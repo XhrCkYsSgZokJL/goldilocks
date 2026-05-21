@@ -77,6 +77,7 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func promoteSelfToAdminDev() async throws
     func upgradeGoldilocksAdmin(code: String) async throws
     func downgradeGoldilocksAdmin() async throws
+    func requestGoldilocksSubscription(tier: GoldilocksSubscriptionTier) async throws
     func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse
     func fetchGoldilocksAgents() async throws -> ConvosAPI.GoldilocksAgentsResponse
     func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse
@@ -723,6 +724,13 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         var request = try authenticatedRequest(for: "v2/admin/downgrade", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode([String: String]())
+        let _: EmptyResponse = try await performRequest(request)
+    }
+
+    func requestGoldilocksSubscription(tier: GoldilocksSubscriptionTier) async throws {
+        var request = try authenticatedRequest(for: "v2/me/subscription/request", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["tier": tier.rawValue])
         let _: EmptyResponse = try await performRequest(request)
     }
 

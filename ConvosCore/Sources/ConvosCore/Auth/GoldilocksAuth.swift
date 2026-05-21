@@ -28,11 +28,36 @@ public enum GoldilocksAuth {
         public let clientNumber: Int64
         public let isAdmin: Bool
         public let inboxId: String
+        public let subscriptionTier: GoldilocksSubscriptionTier?
+        public let requestedTier: GoldilocksSubscriptionTier?
+        public let customTierEnabled: Bool
 
-        public init(clientNumber: Int64, isAdmin: Bool, inboxId: String) {
+        public init(
+            clientNumber: Int64,
+            isAdmin: Bool,
+            inboxId: String,
+            subscriptionTier: GoldilocksSubscriptionTier? = nil,
+            requestedTier: GoldilocksSubscriptionTier? = nil,
+            customTierEnabled: Bool = false
+        ) {
             self.clientNumber = clientNumber
             self.isAdmin = isAdmin
             self.inboxId = inboxId
+            self.subscriptionTier = subscriptionTier
+            self.requestedTier = requestedTier
+            self.customTierEnabled = customTierEnabled
+        }
+
+        /// Build an identity from the backend's `/v2/me` response.
+        public init(from response: ConvosAPI.GoldilocksMeResponse) {
+            self.clientNumber = response.clientNumber
+            self.isAdmin = response.isAdmin
+            self.inboxId = response.inboxId
+            self.subscriptionTier = response.subscriptionTier
+                .flatMap(GoldilocksSubscriptionTier.init(rawValue:))
+            self.requestedTier = response.requestedTier
+                .flatMap(GoldilocksSubscriptionTier.init(rawValue:))
+            self.customTierEnabled = response.customEnabled ?? false
         }
     }
 
@@ -86,11 +111,7 @@ public enum GoldilocksAuth {
             claimAdminRole: claimAdminRole
         )
 
-        return Identity(
-            clientNumber: me.clientNumber,
-            isAdmin: me.isAdmin,
-            inboxId: me.inboxId
-        )
+        return Identity(from: me)
     }
 
     /// EIP-191 personal_sign expects the recovery byte (v) to be 27 or 28.
@@ -106,5 +127,29 @@ public enum GoldilocksAuth {
             bytes[64] &+= 27
         }
         return Data(bytes)
+    }
+}
+
+/// The Goldilocks Digital subscription plans. A client's tier is assigned
+/// by the team via the `clients` backend CLI; the iOS app shows the plans
+/// and lets the client request one.
+public enum GoldilocksSubscriptionTier: String, Sendable, Equatable, CaseIterable {
+    case light
+    case active
+
+    /// Human-facing plan name.
+    public var displayName: String {
+        switch self {
+        case .light: return "Light"
+        case .active: return "Active"
+        }
+    }
+
+    /// Human-facing price.
+    public var priceLabel: String {
+        switch self {
+        case .light: return "$99/mo"
+        case .active: return "$199/mo"
+        }
     }
 }

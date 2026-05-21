@@ -190,14 +190,13 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         }
     }
 
+    /// Goldilocks: the unused-conversation prewarm is disabled. Goldilocks
+    /// clients and admins never start ad-hoc group chats — Advisory, Reports
+    /// and the cross-admin groups are all agent-created — so pre-publishing
+    /// an empty MLS group on every launch only littered the XMTP network and
+    /// could surface as a stray "New Channel" row once consumed.
     private func prewarmUnusedConversation() async {
-        let service = loadOrCreateService()
-        await unusedConversationCache.prepareUnusedConversation(
-            service: service,
-            databaseWriter: databaseWriter,
-            databaseReader: databaseReader,
-            environment: environment
-        )
+        // No-op: prewarm intentionally disabled for Goldilocks.
     }
 
     /// Single entry point for the process-wide `MessagingService`. Every
@@ -333,14 +332,11 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
 
     public func prepareNewConversation() async -> (service: AnyMessagingService, conversationId: String?) {
         let service = loadOrCreateService()
+        // Goldilocks: prewarm is disabled (see `prewarmUnusedConversation`),
+        // so there is no cached conversation to hand back — `conversationId`
+        // is nil and callers create one on demand. We also don't re-arm it.
         let conversationId = await unusedConversationCache.consumeUnusedConversationId(
             databaseWriter: databaseWriter
-        )
-        await unusedConversationCache.prepareUnusedConversation(
-            service: service,
-            databaseWriter: databaseWriter,
-            databaseReader: databaseReader,
-            environment: environment
         )
         return (service, conversationId)
     }
@@ -483,6 +479,14 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
     /// XMTP private key from the keychain, has it sign a challenge, posts
     /// the message + signature to /v2/me, returns the assigned client info.
     public func registerWithGoldilocks(claimAdminRole: Bool) async throws -> GoldilocksAuth.Identity {
+        // Ensure the XMTP inbox is authorized before reading its keys. On a
+        // fresh install nothing else has triggered AuthorizeInboxOperation
+        // yet, so `identityStore.load()` would otherwise race ahead and
+        // return nil. (The unused-conversation prewarm used to warm this
+        // early as a side effect; that prewarm is intentionally disabled.)
+        let service = loadOrCreateService()
+        _ = try await service.sessionStateManager.waitForInboxReadyResult()
+
         guard let identity = try await identityStore.load() else {
             throw GoldilocksAuth.AuthError.missingPrivateKey
         }
@@ -496,11 +500,7 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
 
     public func refreshGoldilocksIdentity() async throws -> GoldilocksAuth.Identity {
         let response = try await apiClient.fetchGoldilocksMe()
-        return GoldilocksAuth.Identity(
-            clientNumber: response.clientNumber,
-            isAdmin: response.isAdmin,
-            inboxId: response.inboxId
-        )
+        return GoldilocksAuth.Identity(from: response)
     }
 
     public func promoteSelfToAdminDev() async throws {
@@ -513,6 +513,10 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
 
     public func downgradeGoldilocksAdmin() async throws {
         try await apiClient.downgradeGoldilocksAdmin()
+    }
+
+    public func requestGoldilocksSubscription(tier: GoldilocksSubscriptionTier) async throws {
+        try await apiClient.requestGoldilocksSubscription(tier: tier)
     }
 
     public func fetchGoldilocksAdminInboxIds() async throws -> [String] {
