@@ -1,4 +1,5 @@
 import ConvosCore
+import Foundation
 import SwiftUI
 
 struct ConvosToolbarButton: View {
@@ -29,12 +30,28 @@ struct ConvosToolbarButton: View {
     }
 }
 
+/// A settings sub-screen a caller can deep-link straight into when
+/// presenting `AppSettingsView` — e.g. tapping a chip on the
+/// conversations list.
+enum AppSettingsRoute: Hashable {
+    case myInfo
+    case subscription
+}
+
 struct AppSettingsView: View {
     @Bindable var viewModel: AppSettingsViewModel
     @Bindable var quicknameViewModel: QuicknameSettingsViewModel
     let session: any SessionManagerProtocol
     let onDeleteAllData: () -> Void
+    var initialRoute: AppSettingsRoute?
     @State private var showingDeleteAllDataConfirmation: Bool = false
+    @State private var path: [AppSettingsRoute] = []
+    @State private var didApplyInitialRoute: Bool = false
+    @State private var titleTapCount: Int = 0
+    @State private var showingUpgradePrompt: Bool = false
+    @State private var upgradeCode: String = ""
+    @State private var upgradeResultMessage: String?
+    @State private var showingUpgradeResult: Bool = false
     @Environment(\.openURL) private var openURL: OpenURLAction
     @Environment(\.dismiss) private var dismiss: DismissAction
 
@@ -56,13 +73,11 @@ struct AppSettingsView: View {
     }
 
     private var currentPlanLabel: String {
-        if let tier = GoldilocksSession.shared.subscriptionTier {
-            return tier.displayName
+        let plan = GoldilocksSeatPlan.shared
+        if plan.totalSeats == 0 {
+            return "No plan"
         }
-        if GoldilocksSession.shared.requestedTier != nil {
-            return "Pending"
-        }
-        return "No plan"
+        return "$\(plan.monthlyTotal)/mo"
     }
 
     @ViewBuilder
@@ -92,8 +107,26 @@ struct AppSettingsView: View {
         }
     }
 
+    /// The "My info" destination — shared by the settings row and the
+    /// `AppSettingsRoute.myInfo` deep link. Rendered without its own
+    /// `NavigationStack` since it's pushed inside the settings stack.
+    private var myInfoDestination: some View {
+        MyInfoView(
+            profile: .constant(.empty()),
+            profileImage: .constant(nil),
+            editingDisplayName: .constant(""),
+            quicknameViewModel: quicknameViewModel,
+            showsCancelButton: false,
+            showsProfile: false,
+            showsUseQuicknameButton: false,
+            canEditQuickname: true,
+            embedInNavigationStack: false
+        ) { _ in
+        }
+    }
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 Section {
                     VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepX) {
@@ -104,12 +137,27 @@ struct AppSettingsView: View {
                             .foregroundStyle(.colorTextPrimary)
                             .minimumScaleFactor(0.7)
                             .lineLimit(1)
-                        Text("Digital asset security tailored to the way you live.")
+                            .contentShape(Rectangle())
+                            .onTapGesture(perform: handleTitleTap)
+                        Text("Helping you secure your digital life.")
                             .font(.subheadline)
                             .foregroundStyle(.colorTextPrimary)
                     }
                     .padding(.horizontal, DesignConstants.Spacing.step2x)
                     .listRowBackground(Color.clear)
+                    .alert("Upgrade to Admin", isPresented: $showingUpgradePrompt) {
+                        TextField("10-digit code", text: $upgradeCode)
+                            .keyboardType(.numberPad)
+                        Button("Cancel", role: .cancel) { upgradeCode = "" }
+                        Button("Upgrade", action: submitUpgradeCode)
+                    } message: {
+                        Text("Enter the secret admin upgrade code.")
+                    }
+                    .alert("Goldilocks Role", isPresented: $showingUpgradeResult, presenting: upgradeResultMessage) { _ in
+                        Button("OK", role: .cancel) {}
+                    } message: { message in
+                        Text(message)
+                    }
                 }
                 .listRowSeparator(.hidden)
                 .listRowSpacing(0.0)
@@ -121,17 +169,7 @@ struct AppSettingsView: View {
 
                 Section {
                     NavigationLink {
-                        MyInfoView(
-                            profile: .constant(.empty()),
-                            profileImage: .constant(nil),
-                            editingDisplayName: .constant(""),
-                            quicknameViewModel: quicknameViewModel,
-                            showsCancelButton: false,
-                            showsProfile: false,
-                            showsUseQuicknameButton: false,
-                            canEditQuickname: true
-                        ) { _ in
-                        }
+                        myInfoDestination
                     } label: {
                         HStack {
                             Image(systemName: "lanyardcard.fill")
@@ -178,12 +216,17 @@ struct AppSettingsView: View {
                 .listRowSeparatorTint(.colorBorderSubtle)
 
                 Section {
+                    NavigationLink {
+                        LegalView()
+                    } label: {
+                        Text("Privacy & Terms")
+                            .foregroundStyle(.colorTextPrimary)
+                    }
+
                     Button {
                         openExternalURL("https://xmtp.org")
                     } label: {
-                        NavigationLink {
-                            EmptyView()
-                        } label: {
+                        HStack(spacing: DesignConstants.Spacing.step2x) {
                             HStack(alignment: .firstTextBaseline, spacing: 0.0) {
                                 Text("Secured by ")
                                 Image("xmtpIcon")
@@ -192,26 +235,16 @@ struct AppSettingsView: View {
                                     .padding(.trailing, 1.0)
                                 Text("XMTP")
                             }
-                            .foregroundStyle(.colorTextPrimary)
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.footnote)
+                                .foregroundStyle(.colorTextTertiary)
                         }
                     }
                     .foregroundStyle(.colorTextPrimary)
+                    .accessibilityHint("Opens xmtp.org in your browser")
 
-                    Button {
-                        openExternalURL("https://hq.convos.org/privacy-and-terms")
-                    } label: {
-                        NavigationLink("Privacy & Terms", destination: EmptyView())
-                    }
-                    .foregroundStyle(.colorTextPrimary)
-
-                    Button {
-                        sendFeedback()
-                    } label: {
-                        Text("Send feedback")
-                    }
-                    .foregroundStyle(.colorTextPrimary)
-
-                    if !ConfigManager.shared.currentEnvironment.isProduction {
+                    if GoldilocksSession.shared.isAdmin {
                         NavigationLink {
                             DebugExportView(environment: ConfigManager.shared.currentEnvironment, session: session)
                         } label: {
@@ -277,22 +310,52 @@ struct AppSettingsView: View {
                         .disabled(true)
                 }
             }
+            .navigationDestination(for: AppSettingsRoute.self) { route in
+                switch route {
+                case .myInfo:
+                    myInfoDestination
+                case .subscription:
+                    SubscriptionView(session: session)
+                }
+            }
+            .onAppear {
+                guard !didApplyInitialRoute, let initialRoute else { return }
+                didApplyInitialRoute = true
+                path = [initialRoute]
+            }
         }
     }
 
-    private func sendFeedback() {
-        let email = "convos@xmtp.com"
-        let subject = "Convos Feedback"
-        let mailtoString = "mailto:\(email)?subject=\(subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? subject)"
+    /// Secret entry point: tapping the "Goldilocks Digital" title five
+    /// times reveals the admin upgrade-code prompt. No-op for admins.
+    private func handleTitleTap() {
+        guard !GoldilocksSession.shared.isAdmin else { return }
+        titleTapCount += 1
+        if titleTapCount >= Constant.secretUpgradeTapCount {
+            titleTapCount = 0
+            showingUpgradePrompt = true
+        }
+    }
 
-        if let mailtoURL = URL(string: mailtoString) {
-            openURL(mailtoURL)
+    private func submitUpgradeCode() {
+        let code = upgradeCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        upgradeCode = ""
+        Task {
+            let success = await GoldilocksSession.shared.upgradeToAdmin(session: session, code: code)
+            upgradeResultMessage = success
+                ? "You're now an admin. Relaunch the app for all changes to take effect."
+                : "Upgrade failed — check the code and try again."
+            showingUpgradeResult = true
         }
     }
 
     private func openExternalURL(_ urlString: String) {
         guard let url = URL(string: urlString) else { return }
         openURL(url)
+    }
+
+    private enum Constant {
+        static let secretUpgradeTapCount: Int = 5
     }
 }
 
@@ -308,109 +371,285 @@ struct AppSettingsView: View {
     }
 }
 
-/// Subscription plans screen, reached from the top of App Settings.
-/// Shows the three Goldilocks Digital tiers, marks the client's current
-/// plan, and lets them request a change — the request is parked on the
-/// backend for the Goldilocks team to approve from the `clients` CLI.
+/// Subscription screen, reached from the top of App Settings.
+///
+/// The client builds a list of people, each on a Light or Active plan,
+/// sees the combined monthly total and next charge date, and posts the
+/// roster to their Advisory chat. Stripe billing is wired up in a later
+/// stage — for now the people list is held on-device.
 struct SubscriptionView: View {
     let session: any SessionManagerProtocol
 
-    @State private var requestingTier: GoldilocksSubscriptionTier?
-    @State private var resultMessage: String?
-    @State private var showingResult: Bool = false
+    @State private var plan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
+    @State private var editingMember: SeatMember?
+    @State private var isAddingMember: Bool = false
+    @State private var isSending: Bool = false
+    @State private var sendResultMessage: String?
+    @State private var showingSendResult: Bool = false
+    @State private var paymentMethod: PaymentMethod = .card
 
     var body: some View {
         List {
-            Section {
-                ForEach(GoldilocksSubscriptionTier.allCases, id: \.self) { tier in
-                    planRow(for: tier)
-                }
-            } footer: {
-                Text(footerText)
-                    .foregroundStyle(.colorTextSecondary)
-            }
+            peopleSection
+            summarySection
+            paymentSection
+            sendSection
         }
         .scrollContentBackground(.hidden)
         .background(.colorBackgroundRaisedSecondary)
         .navigationTitle("Subscription")
         .toolbarTitleDisplayMode(.inline)
-        .alert("Subscription", isPresented: $showingResult) {
+        .sheet(item: $editingMember) { member in
+            SeatMemberEditorView(
+                member: member,
+                onDelete: {
+                    plan.members.removeAll { $0.id == member.id }
+                },
+                onSave: { updated in
+                    guard let index = plan.members.firstIndex(where: { $0.id == updated.id }) else { return }
+                    plan.members[index] = updated
+                }
+            )
+        }
+        .sheet(isPresented: $isAddingMember) {
+            SeatMemberEditorView(member: SeatMember()) { newMember in
+                plan.members.append(newMember)
+            }
+        }
+        .alert("Send to Advisory", isPresented: $showingSendResult) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(resultMessage ?? "")
+            Text(sendResultMessage ?? "")
         }
-    }
-
-    private func planRow(for tier: GoldilocksSubscriptionTier) -> some View {
-        // A nil active tier means "no plan", so fold it onto .noPlan for
-        // the comparison — that lets the "No plan" row show as current.
-        let isCurrent = (GoldilocksSession.shared.subscriptionTier ?? .noPlan) == tier
-        let isRequested = GoldilocksSession.shared.requestedTier == tier
-        let isBusy = requestingTier == tier
-        let action: @MainActor () -> Void = {
-            Task { @MainActor in
-                requestingTier = tier
-                let success = await GoldilocksSession.shared.requestSubscription(
-                    session: session,
-                    tier: tier
-                )
-                requestingTier = nil
-                if success {
-                    resultMessage = "Your request to switch to \(tier.displayName) has been sent. " +
-                        "The Goldilocks team will confirm it shortly."
-                } else {
-                    resultMessage = "Couldn't send your request. " +
-                        (GoldilocksSession.shared.lastError ?? "Please try again.")
-                }
-                showingResult = true
-            }
-        }
-
-        return Button(action: action) {
-            HStack(spacing: DesignConstants.Spacing.step2x) {
-                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepX) {
-                    Text(tier.displayName)
-                        .font(.body)
-                        .foregroundStyle(.colorTextPrimary)
-
-                    Text(tier.priceLabel)
-                        .font(.subheadline)
-                        .foregroundStyle(.colorTextSecondary)
-                }
-
-                Spacer()
-
-                planTrailing(isCurrent: isCurrent, isRequested: isRequested, isBusy: isBusy)
-            }
-        }
-        .disabled(isCurrent || isRequested || requestingTier != nil)
     }
 
     @ViewBuilder
-    private func planTrailing(isCurrent: Bool, isRequested: Bool, isBusy: Bool) -> some View {
-        if isBusy {
-            ProgressView()
-        } else if isCurrent {
-            Label("Current", systemImage: "checkmark.circle.fill")
-                .font(.subheadline)
-                .foregroundStyle(.colorFillPrimary)
-        } else if isRequested {
-            Text("Requested")
+    private var summarySection: some View {
+        Section {
+            HStack {
+                Text("Monthly total")
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+                Text("$\(plan.monthlyTotal)/mo")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.colorTextPrimary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var paymentSection: some View {
+        Section {
+            Picker("Payment method", selection: $paymentMethod) {
+                ForEach(PaymentMethod.allCases, id: \.self) { method in
+                    Text(method.label).tag(method)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            let syncAction = { plan.markSubscriptionSynced() }
+            Button(action: syncAction) {
+                HStack {
+                    Spacer()
+                    Text(subscriptionButtonLabel)
+                        .font(.body.weight(.semibold))
+                    Spacer()
+                }
+            }
+            .disabled(!canSyncSubscription)
+        } header: {
+            Text("Payment method")
+        }
+    }
+
+    private var subscriptionButtonLabel: String {
+        if !plan.hasSubscription {
+            return "Create Subscription"
+        }
+        if plan.subscriptionNeedsUpdate {
+            return "Update Subscription"
+        }
+        return "Subscription Up to Date"
+    }
+
+    private var canSyncSubscription: Bool {
+        guard !plan.members.isEmpty else { return false }
+        return !plan.hasSubscription || plan.subscriptionNeedsUpdate
+    }
+
+    @ViewBuilder
+    private var peopleSection: some View {
+        Section {
+            if plan.members.isEmpty {
+                Text("No people added yet.")
+                    .foregroundStyle(.colorTextSecondary)
+            } else {
+                ForEach(plan.members) { member in
+                    let editAction = { editingMember = member }
+                    let rowBackground: Color? = plan.isPending(member) ? Color.orange.opacity(0.15) : nil
+                    Button(action: editAction) {
+                        memberRow(member)
+                    }
+                    .listRowBackground(rowBackground)
+                }
+                .onDelete(perform: deleteMembers)
+            }
+            let addAction = { isAddingMember = true }
+            Button(action: addAction) {
+                Label("Add person", systemImage: "plus.circle.fill")
+            }
+            .foregroundStyle(.colorFillPrimary)
+        } header: {
+            Text("People")
+        }
+    }
+
+    private func memberRow(_ member: SeatMember) -> some View {
+        let displayName: String = member.name.isEmpty ? "Unnamed" : member.name
+        return HStack(spacing: DesignConstants.Spacing.step2x) {
+            Text(displayName)
+                .font(.body)
+                .foregroundStyle(.colorTextPrimary)
+            Spacer()
+            Text("\(member.tier.displayName) · \(member.tier.priceLabel)")
                 .font(.subheadline)
                 .foregroundStyle(.colorTextSecondary)
-        } else {
             Image(systemName: "chevron.right")
                 .font(.footnote)
                 .foregroundStyle(.colorTextTertiary)
         }
     }
 
-    private var footerText: String {
-        if GoldilocksSession.shared.subscriptionTier == nil {
-            return "You don't have an active plan yet. Request one and the Goldilocks team will set you up."
+    @ViewBuilder
+    private var sendSection: some View {
+        Section {
+            let sendAction: () -> Void = { Task { await sendRoster() } }
+            Button(action: sendAction) {
+                HStack {
+                    Spacer()
+                    if isSending {
+                        ProgressView()
+                    } else {
+                        Text("Send to Advisory")
+                            .font(.body.weight(.semibold))
+                    }
+                    Spacer()
+                }
+            }
+            .disabled(!canSendToAdvisory || isSending)
         }
-        return "Choosing a plan sends a request to the Goldilocks team for approval."
     }
+
+    private func sendRoster() async {
+        isSending = true
+        do {
+            try await plan.sendRosterToAdvisory(session: session)
+            sendResultMessage = "Your people list was posted to your Advisory chat."
+        } catch {
+            sendResultMessage = error.localizedDescription
+        }
+        isSending = false
+        showingSendResult = true
+    }
+
+    private var canSendToAdvisory: Bool {
+        plan.canSendToAdvisory
+    }
+
+    private func deleteMembers(at offsets: IndexSet) {
+        plan.members.remove(atOffsets: offsets)
+    }
+
+    /// The two ways a client can pay. Card routes to Stripe; Crypto routes
+    /// to a separate crypto payment provider. Both are wired up in a later
+    /// billing stage.
+    private enum PaymentMethod: CaseIterable {
+        case card
+        case crypto
+
+        var label: String {
+            switch self {
+            case .card: return "Card"
+            case .crypto: return "Crypto"
+            }
+        }
+    }
+}
+
+/// Sheet for adding or editing the person who fills a subscription seat.
+struct SeatMemberEditorView: View {
+    @Environment(\.dismiss) private var dismiss: DismissAction
+
+    @State private var draft: SeatMember
+    private let onSave: (SeatMember) -> Void
+    private let onDelete: (() -> Void)?
+
+    init(
+        member: SeatMember,
+        onDelete: (() -> Void)? = nil,
+        onSave: @escaping (SeatMember) -> Void
+    ) {
+        _draft = State(initialValue: member)
+        self.onDelete = onDelete
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Name", text: $draft.name)
+                        .textContentType(.name)
+                    TextField("Email", text: $draft.email)
+                        .textContentType(.emailAddress)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                    TextField("Phone (optional)", text: $draft.phone)
+                        .textContentType(.telephoneNumber)
+                        .keyboardType(.phonePad)
+                }
+                Section {
+                    Picker("Plan", selection: $draft.tier) {
+                        ForEach(Self.tierOptions, id: \.self) { tier in
+                            Text(tier.displayName).tag(tier)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("Plan")
+                } footer: {
+                    Text("Light is $100/mo. Active is $200/mo.")
+                }
+                if let onDelete {
+                    Section {
+                        let deleteAction = {
+                            onDelete()
+                            dismiss()
+                        }
+                        Button("Remove person from plan", role: .destructive, action: deleteAction)
+                    }
+                }
+            }
+            .navigationTitle("Person")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    let cancelAction = { dismiss() }
+                    Button("Cancel", action: cancelAction)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    let saveAction = {
+                        onSave(draft)
+                        dismiss()
+                    }
+                    Button("Save", action: saveAction)
+                        .disabled(draft.name.isEmpty || draft.email.isEmpty)
+                }
+            }
+        }
+    }
+
+    private static let tierOptions: [GoldilocksSubscriptionTier] = [.light, .active]
 }
 
 #Preview {

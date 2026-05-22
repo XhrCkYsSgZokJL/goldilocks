@@ -13,6 +13,9 @@ struct MyInfoView: View {
     let showsProfile: Bool
     let showsUseQuicknameButton: Bool
     let canEditQuickname: Bool
+    /// When false, `MyInfoView` renders without its own `NavigationStack` —
+    /// used when it's pushed inside an existing one (e.g. App Settings).
+    var embedInNavigationStack: Bool = true
 
     let onUseQuickname: (QuicknameSettings) -> Void
 
@@ -78,7 +81,7 @@ struct MyInfoView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        OptionalNavigationStack(isEnabled: embedInNavigationStack) {
             Form {
                 headerSection
 
@@ -211,6 +214,30 @@ struct MyInfoView: View {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Wraps its content in a `NavigationStack` only when `isEnabled` is true.
+/// Lets `MyInfoView` carry its own navigation bar when shown standalone
+/// (e.g. as a sheet) while nesting cleanly when pushed inside an existing
+/// navigation stack, such as the App Settings screen.
+private struct OptionalNavigationStack<Content: View>: View {
+    private let isEnabled: Bool
+    private let content: Content
+
+    init(isEnabled: Bool, @ViewBuilder content: () -> Content) {
+        self.isEnabled = isEnabled
+        self.content = content()
+    }
+
+    var body: some View {
+        if isEnabled {
+            NavigationStack {
+                content
+            }
+        } else {
+            content
         }
     }
 }

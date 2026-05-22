@@ -7,6 +7,7 @@ struct ConversationsView: View {
 
     @Namespace private var namespace: Namespace.ID
     @State private var presentingAppSettings: Bool = false
+    @State private var appSettingsInitialRoute: AppSettingsRoute?
     @Environment(\.dismiss) private var dismiss: DismissAction
     @State private var sidebarWidth: CGFloat = 0.0
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass: UserInterfaceSizeClass?
@@ -56,9 +57,24 @@ struct ConversationsView: View {
             }
         }()
         HStack(spacing: DesignConstants.Spacing.step2x) {
-            goldilocksChip(icon: icon, label: label)
-            if role == .client, let plan = planChip {
-                goldilocksChip(icon: plan.icon, label: plan.label)
+            let openMyInfo = {
+                appSettingsInitialRoute = .myInfo
+                presentingAppSettings = true
+            }
+            Button(action: openMyInfo) {
+                goldilocksChip(icon: icon, label: label)
+            }
+            .buttonStyle(.plain)
+
+            if role == .client, let people = peopleChip {
+                let openSubscription = {
+                    appSettingsInitialRoute = .subscription
+                    presentingAppSettings = true
+                }
+                Button(action: openSubscription) {
+                    goldilocksChip(icon: people.icon, label: people.label)
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, DesignConstants.Spacing.step4x)
@@ -66,7 +82,7 @@ struct ConversationsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// A small capsule chip — used for the role badge and the plan badge.
+    /// A small capsule chip — used for the role badge and the people badge.
     private func goldilocksChip(icon: String, label: String) -> some View {
         return HStack(spacing: 4) {
             Image(systemName: icon)
@@ -78,23 +94,19 @@ struct ConversationsView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, DesignConstants.Spacing.step3x)
         .padding(.vertical, 4)
-        .background(
-            Capsule().fill(Color.secondary.opacity(0.12))
-        )
+        // Liquid Glass capsule so the conversation rows show through /
+        // scroll behind the chip, matching the glass toolbar title.
+        .glassEffect(.regular, in: Capsule())
     }
 
-    /// Icon + label for the subscription chip shown beside the role chip,
-    /// or nil when the client has no plan and no pending request. A
-    /// pending request shows a clock; an active plan shows a checkmark.
-    private var planChip: (icon: String, label: String)? {
-        let session = GoldilocksSession.shared
-        if let requested = session.requestedTier {
-            return ("clock.fill", requested.displayName)
-        }
-        if let current = session.subscriptionTier {
-            return ("checkmark.circle.fill", current.displayName)
-        }
-        return nil
+    /// Icon + label for the chip shown beside the role chip — the number
+    /// of people on the client's subscription. Nil when the client hasn't
+    /// added anyone yet.
+    private var peopleChip: (icon: String, label: String)? {
+        let count = GoldilocksSeatPlan.shared.totalSeats
+        guard count > 0 else { return nil }
+        let noun: String = count == 1 ? "person" : "people"
+        return ("person.2.fill", "\(count) \(noun)")
     }
 
     var filteredEmptyStateView: some View {
@@ -189,7 +201,11 @@ struct ConversationsView: View {
     @ViewBuilder
     private var sidebarContent: some View {
         VStack(spacing: 0) {
+            // zIndex keeps the chips drawing above the conversation rows —
+            // the list ignores the top safe area and extends up behind
+            // them, so without this the rows would render over the chips.
             adminBanner
+                .zIndex(1)
             if viewModel.unpinnedConversations.isEmpty && viewModel.pinnedConversations.isEmpty && viewModel.activeFilter == .all && horizontalSizeClass == .compact {
                 emptyConversationsViewScrollable
             } else if viewModel.isFilteredResultEmpty && viewModel.pinnedConversations.isEmpty && horizontalSizeClass == .compact {
@@ -206,6 +222,7 @@ struct ConversationsView: View {
     private var sidebarToolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             ConvosToolbarButton(padding: false) {
+                appSettingsInitialRoute = nil
                 presentingAppSettings = true
             }
             .accessibilityLabel("Convos settings")
@@ -308,6 +325,7 @@ struct ConversationsView: View {
         .focusEffectDisabled()
         .modifier(ConversationsSheetModifier(
             presentingAppSettings: $presentingAppSettings,
+            appSettingsInitialRoute: appSettingsInitialRoute,
             viewModel: viewModel,
             quicknameViewModel: quicknameViewModel,
             conversationPendingExplosion: $conversationPendingExplosion,
@@ -326,6 +344,7 @@ struct ConversationsView: View {
 
 private struct ConversationsSheetModifier: ViewModifier {
     @Binding var presentingAppSettings: Bool
+    let appSettingsInitialRoute: AppSettingsRoute?
     @Bindable var viewModel: ConversationsViewModel
     let quicknameViewModel: QuicknameSettingsViewModel
     @Binding var conversationPendingExplosion: Conversation?
@@ -338,7 +357,8 @@ private struct ConversationsSheetModifier: ViewModifier {
                     viewModel: viewModel.appSettingsViewModel,
                     quicknameViewModel: quicknameViewModel,
                     session: viewModel.session,
-                    onDeleteAllData: viewModel.deleteAllData
+                    onDeleteAllData: viewModel.deleteAllData,
+                    initialRoute: appSettingsInitialRoute
                 )
                 .navigationTransition(
                     .zoom(sourceID: "app-settings-transition-source", in: namespace)

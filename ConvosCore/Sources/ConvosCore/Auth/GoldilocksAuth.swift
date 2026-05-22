@@ -133,13 +133,14 @@ public enum GoldilocksAuth {
 /// The Goldilocks Digital subscription plans. A client's tier is assigned
 /// by the team via the `clients` backend CLI; the iOS app shows the plans
 /// and lets the client request one.
-public enum GoldilocksSubscriptionTier: String, Sendable, Equatable, CaseIterable {
-    case light
-    case active
+public enum GoldilocksSubscriptionTier: String, Codable, Sendable, Equatable, CaseIterable {
     /// "No plan" — the client is not subscribed. Stored on the backend as
     /// NULL for the active tier, but requestable (as 'none') so a client
     /// can ask to be moved off all plans through the same approval flow.
+    /// Declared first so it sorts to the top of the plan list.
     case noPlan = "none"
+    case light
+    case active
 
     /// Human-facing plan name.
     public var displayName: String {
@@ -153,9 +154,18 @@ public enum GoldilocksSubscriptionTier: String, Sendable, Equatable, CaseIterabl
     /// Human-facing price.
     public var priceLabel: String {
         switch self {
-        case .light: return "$99/mo"
-        case .active: return "$199/mo"
-        case .noPlan: return "—"
+        case .light: return "$100/mo"
+        case .active: return "$200/mo"
+        case .noPlan: return "$0"
+        }
+    }
+
+    /// Monthly price per seat, in whole US dollars — used for seat totals.
+    public var monthlyPrice: Int {
+        switch self {
+        case .light: return 100
+        case .active: return 200
+        case .noPlan: return 0
         }
     }
 }

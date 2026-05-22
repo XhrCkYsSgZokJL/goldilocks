@@ -947,9 +947,7 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
             ],
             dbEncryptionKey: keys.databaseKey,
             dbDirectory: environment.defaultDatabasesDirectory,
-            deviceSyncEnabled: true,
-            maxDbPoolSize: 10,
-            minDbPoolSize: 3
+            deviceSyncEnabled: true
         )
     }
 

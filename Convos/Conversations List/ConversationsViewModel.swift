@@ -131,13 +131,17 @@ final class ConversationsViewModel {
         // the unpinned list — not as a "pinned tile" — so we exclude it here
         // even if the DB happens to flag it pinned (e.g. carryover from
         // earlier dev iterations).
-        let baseConversations = conversations
-            .filter(\.isVisibleInCurrentRole)
-            .filter { $0.isPinned }
-            .filter { $0.kind == .group }
-            .filter { !$0.isGoldilocksGroup }
-            .filter { !$0.isStaleGoldilocksChannel }
-            .filter { !$0.isEmptyPlaceholderConversation }
+        // One typed predicate instead of six chained `.filter` calls —
+        // the chain blew past the type-checker's time budget.
+        let baseConversations: [Conversation] = conversations
+            .filter { (c: Conversation) -> Bool in
+                c.isVisibleInCurrentRole
+                    && c.isPinned
+                    && c.kind == .group
+                    && !c.isGoldilocksGroup
+                    && !c.isStaleGoldilocksChannel
+                    && !c.isEmptyPlaceholderConversation
+            }
             .sorted { ($0.pinnedOrder ?? Int.max) < ($1.pinnedOrder ?? Int.max) }
 
         switch activeFilter {
@@ -154,25 +158,19 @@ final class ConversationsViewModel {
         // Include unpinned groups + the Goldilocks groups (regardless of
         // their pin flag), with Goldilocks always sorted to the front in
         // the order declared in `GoldilocksConfig.groupNames`.
-        // [Goldilocks debug] log per-stage filter counts so we can see
-        // why the spinner is showing when MLS welcomes have actually been
-        // received by libxmtp. Remove once stable.
-        let total = conversations.count
-        let visible = conversations.filter(\.isVisibleInCurrentRole).count
-        let group = conversations.filter(\.isVisibleInCurrentRole).filter { $0.kind == .group }.count
-        let nameSummary = conversations.map { "\($0.name ?? "nil"):\($0.kind)" }.joined(separator: ",")
-        Log.info("[Goldilocks-debug] conversations total=\(total) visibleInRole=\(visible) afterKindGroup=\(group) names=\(nameSummary)")
-        let baseConversations = conversations
-            .filter(\.isVisibleInCurrentRole)
-            .filter { $0.kind == .group }
-            // `isPinnedGoldilocksGroup` is what overrides the stored
-            // `isPinned` for sort-to-top — for admins, only Admins
-            // qualifies; for clients, Advisory + Reports do. Their own
-            // Advisory/Reports rows for admins flow with the regular
-            // recency order, alongside non-Goldilocks chats.
-            .filter { !$0.isPinned || $0.isPinnedGoldilocksGroup }
-            .filter { !$0.isStaleGoldilocksChannel }
-            .filter { !$0.isEmptyPlaceholderConversation }
+        // One typed predicate instead of five chained `.filter` calls — the
+        // chain was heavy for the type-checker. `isPinnedGoldilocksGroup`
+        // overrides the stored `isPinned` for sort-to-top (admins: only
+        // Admins; clients: Advisory + Reports); other rows flow with the
+        // regular recency order.
+        let baseConversations: [Conversation] = conversations
+            .filter { (c: Conversation) -> Bool in
+                c.isVisibleInCurrentRole
+                    && c.kind == .group
+                    && (!c.isPinned || c.isPinnedGoldilocksGroup)
+                    && !c.isStaleGoldilocksChannel
+                    && !c.isEmptyPlaceholderConversation
+            }
             .sorted { lhs, rhs in
                 switch (lhs.isPinnedGoldilocksGroup, rhs.isPinnedGoldilocksGroup) {
                 case (true, false):
