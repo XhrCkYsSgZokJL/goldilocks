@@ -27,6 +27,16 @@ import { WorkQueue } from './work-queue.js';
 // leak into Reports membership.
 const reportsName = (clientNumber: number): string => `Reports #${clientNumber}`;
 const REPORTS_GROUP_DESCRIPTION = 'Goldilocks Digital Audit Log';
+// Minimum gap between recreating the same channel. A recreate issues a
+// fresh welcome that takes a moment to reach the client; recreating
+// faster than this just churns dead groups.
+const RECOVER_MIN_INTERVAL_MS = 30_000;
+// Hard cap: if this many recreates inside the window have not let the
+// client see the channel, the failure is at the MLS layer (stale
+// installations / key-package corruption) and recreating again cannot
+// fix it. Stop and log loudly instead of churning groups forever.
+const RECOVER_MAX_RECREATES = 3;
+const RECOVER_CAP_WINDOW_MS = 600_000;
 
 export class ReportsAgent {
   constructor(
@@ -44,6 +54,23 @@ export class ReportsAgent {
   });
   private enqueue<T>(label: string, fn: () => Promise<T>): Promise<T> {
     return this.queue.enqueue(label, fn);
+  }
+
+  /** Recreate timestamps per clientId, used to cap recover-driven churn. */
+  private readonly recreateHistory = new Map<string, number[]>();
+
+  /** Recreates for this client within the cap window. */
+  private recentRecreateCount(clientId: string): number {
+    const now = Date.now();
+    return (this.recreateHistory.get(clientId) ?? []).filter((t) => now - t < RECOVER_CAP_WINDOW_MS).length;
+  }
+
+  /** Record a recreate and prune entries outside the cap window. */
+  private recordRecreate(clientId: string): void {
+    const now = Date.now();
+    const recent = (this.recreateHistory.get(clientId) ?? []).filter((t) => now - t < RECOVER_CAP_WINDOW_MS);
+    recent.push(now);
+    this.recreateHistory.set(clientId, recent);
   }
 
   /**
@@ -146,42 +173,55 @@ export class ReportsAgent {
       .select({
         clientNumber: clients.clientNumber,
         xmtpGroupId: clientChannels.xmtpGroupId,
+        createdAt: clientChannels.createdAt,
+        recreatedAt: clientChannels.recreatedAt,
       })
       .from(clients)
       .innerJoin(clientChannels, eq(clientChannels.clientId, clients.id))
       .where(and(eq(clients.id, payload.clientId), eq(clientChannels.role, 'reports')))
       .limit(1);
 
-    if (!row || !row.xmtpGroupId) {
-      log(`[reports] recover: no Reports row for ${payload.inboxId.slice(0, 8)}…, provisioning fresh`);
-      await this.createReportsFor({
-        clientId: payload.clientId,
-        clientNumber: row?.clientNumber ?? 0,
-        inboxId: payload.inboxId,
-      });
+    const clientNumber = row?.clientNumber ?? 0;
+
+    // Dedup: a recreate issues a fresh welcome that takes a moment to
+    // reach the client. If we just provisioned this channel, let that
+    // welcome land instead of churning yet another group.
+    if (row?.xmtpGroupId) {
+      const lastProvisioned = (row.recreatedAt ?? row.createdAt).getTime();
+      const ageMs = Date.now() - lastProvisioned;
+      if (ageMs < RECOVER_MIN_INTERVAL_MS) {
+        log(`[reports] recover: Reports #${clientNumber} provisioned ${Math.round(ageMs / 1000)}s ago — letting that welcome land, skipping`);
+        return;
+      }
+    }
+
+    // Hard cap. If repeated recreates have not let the client see the
+    // channel, the welcome is failing at the MLS layer and recreating
+    // again will not help — stop churning and log loudly so the cause
+    // is visible.
+    const recreatesSoFar = this.recentRecreateCount(payload.clientId);
+    if (recreatesSoFar >= RECOVER_MAX_RECREATES) {
+      log(`[reports] recover: ⚠️ GIVING UP on Reports #${clientNumber} for ${payload.inboxId.slice(0, 8)}… — ${recreatesSoFar} recreates in the last ${Math.round(RECOVER_CAP_WINDOW_MS / 60000)}min and the client still cannot decrypt the welcome. This is an MLS-layer failure; recreating the group cannot fix it. Most likely cause: too many stale XMTP installations on this inbox (repeated reinstalls). Fix: give the device a fresh inbox, or revoke the inbox's stale installations.`);
       return;
     }
 
-    const group = await this.tryLoadGroup(row.xmtpGroupId);
-    if (!group) {
-      log(`[reports] recover: Reports group ${row.xmtpGroupId.slice(0, 8)}… not loadable, recreating`);
-      await this.createReportsFor({
-        clientId: payload.clientId,
-        clientNumber: row.clientNumber,
-        inboxId: payload.inboxId,
-      });
-      return;
-    }
-
-    log(`[reports] recover: re-welcoming ${payload.inboxId.slice(0, 8)}… to Reports #${row.clientNumber}`);
-    await refreshInboxStates(this.client, [payload.inboxId]);
-    // See AdminsAgent.recoverChannelsForInner — addMembers alone does
-    // the right thing whether the client is currently a member or not.
-    try {
-      await group.addMembers([payload.inboxId]);
-    } catch (err) {
-      log(`[reports] recover addMembers failed: ${(err as Error).message}`);
-    }
+    // A welcome that reached the client but failed to decrypt (XMTP
+    // installation-rotation / key-package race) is gone for good —
+    // libxmtp marks it non-retryable and drops it. addMembers() no-ops
+    // for an inbox that is already a member, so it can never re-issue a
+    // welcome. Recreating the group with a welcome sealed to the
+    // client's current key packages is the only thing that can.
+    log(`[reports] recover: recreating Reports #${clientNumber} for ${payload.inboxId.slice(0, 8)}… (recreate ${recreatesSoFar + 1}/${RECOVER_MAX_RECREATES}, fresh welcome)`);
+    this.recordRecreate(payload.clientId);
+    await this.createReportsFor({
+      clientId: payload.clientId,
+      clientNumber,
+      inboxId: payload.inboxId,
+    });
+    await db
+      .update(clientChannels)
+      .set({ recreatedAt: sql`now()` })
+      .where(and(eq(clientChannels.clientId, payload.clientId), eq(clientChannels.role, 'reports')));
   }
 
   /**
@@ -270,17 +310,22 @@ export class ReportsAgent {
     // Refresh client's identity state so the welcome encrypts to the
     // right installation. See AdminsAgent for why this matters.
     await refreshInboxStates(this.client, [payload.inboxId]);
+    // Diagnostic: the welcome is HPKE-sealed per installation, so a
+    // pile-up of stale installations on this inbox is the prime suspect
+    // when the client cannot decrypt it. Log the count + ids.
+    await logInboxInstallations(this.client, payload.inboxId, '[reports] diag:');
     log(`[reports] Creating Reports #${payload.clientNumber} for ${payload.inboxId.slice(0, 8)}…`);
     const name = reportsName(payload.clientNumber);
     const description = REPORTS_GROUP_DESCRIPTION;
     // Members = [client]. Agent is the creator and is a member by
     // default. Admins are NOT added — Reports stays a 2-party feed
     // until/unless the client invites others.
-    const group = await this.client.conversations.newGroup([payload.inboxId], {
+    const group = await this.client.conversations.createGroup([payload.inboxId], {
       groupName: name,
       groupDescription: description,
     });
-    // Defensive metadata write — newGroup options don't always stick.
+    log(`[reports] Created Reports #${payload.clientNumber} group ${group.id.slice(0, 8)}… — welcome sent to ${payload.inboxId.slice(0, 8)}…`);
+    // Defensive metadata write — createGroup options don't always stick.
     await this.enforceGroupMetadata(group, name, description);
     // Lock down name/description/image so the client can't rename a
     // Reports feed they receive.
@@ -308,13 +353,13 @@ export class ReportsAgent {
  * shouldn't be renaming them or swapping the icon.
  */
 async function lockGroupMetadata(group: Group): Promise<void> {
-  const policySet = group.permissions?.policySet;
+  const policySet = group.permissions().policySet;
   if (!policySet) return;
 
   const checks: { current: PermissionPolicy | undefined; field: MetadataField; label: string }[] = [
     { current: policySet.updateGroupNamePolicy, field: MetadataField.GroupName, label: 'name' },
     { current: policySet.updateGroupDescriptionPolicy, field: MetadataField.Description, label: 'description' },
-    { current: policySet.updateGroupImageUrlSquarePolicy, field: MetadataField.ImageUrlSquare, label: 'image' },
+    { current: policySet.updateGroupImageUrlSquarePolicy, field: MetadataField.GroupImageUrlSquare, label: 'image' },
   ];
 
   for (const { current, field, label } of checks) {
@@ -397,6 +442,29 @@ async function refreshInboxStates(client: Client, inboxIds: string[]): Promise<v
     }
   } catch (err) {
     console.warn(`[agent] refreshInboxStates failed (non-fatal): ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Log how many XMTP installations an inbox currently has. A welcome is
+ * HPKE-sealed per installation; a pile-up of stale installations (from
+ * repeated app reinstalls) is the prime suspect when a client cannot
+ * decrypt the welcome for a freshly created group. Best-effort: the
+ * node-sdk surface for this has shifted across versions.
+ */
+async function logInboxInstallations(client: Client, inboxId: string, label: string): Promise<void> {
+  try {
+    const c = client as any;
+    const states = await c.preferences?.inboxStateFromInboxIds?.([inboxId], true);
+    const state = Array.isArray(states) ? states[0] : states;
+    const installations = (state?.installations ?? []) as Array<{ id?: string }>;
+    const ids = installations.map((i) => (i.id ?? '').slice(0, 8)).filter((s: string) => s.length > 0);
+    log(`${label} inbox ${inboxId.slice(0, 8)}… has ${installations.length} XMTP installation(s): [${ids.join(', ')}]`);
+    if (installations.length >= 8) {
+      log(`${label} ⚠️ ${installations.length} installations is near/over XMTP's ~10-per-inbox limit — welcome delivery to the newest installation becomes unreliable. The inbox needs stale-installation revocation.`);
+    }
+  } catch (err) {
+    log(`${label} could not read inbox installations (non-fatal): ${(err as Error).message}`);
   }
 }
 

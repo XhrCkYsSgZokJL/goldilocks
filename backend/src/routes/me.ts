@@ -131,8 +131,6 @@ export default async function meRoutes(app: FastifyInstance) {
       isAdmin: !!adminRow,
       inboxId: client.inboxId,
       subscriptionTier: client.subscriptionTier,
-      requestedTier: client.requestedTier,
-      customEnabled: client.customTierEnabled,
     });
   });
 
@@ -217,7 +215,7 @@ export default async function meRoutes(app: FastifyInstance) {
   // POST /v2/admin/upgrade
   // body: { code }
   // Claims a CLI-created admin slot. Each admin row carries its own
-  // uniquely-generated `upgrade_code` (issued by `npm run admins`). The
+  // uniquely-generated `upgrade_code` (issued by `npm run cli`). The
   // person enters that code in the iOS debug area; we bind their inbox_id
   // to the matching slot. The UPDATE fires `admin_changed` → the agent
   // adds the inbox to the cross-admin groups + every Advisory. A wrong
@@ -291,41 +289,9 @@ export default async function meRoutes(app: FastifyInstance) {
   });
 
   // ---------------------------------------------------------------------
-  // POST /v2/me/subscription/request
-  // body: { tier: 'light' | 'active' | 'custom' }
-  // A client asks to be put on a plan. The choice is parked in
-  // `clients.requested_tier` for the Goldilocks team to approve or deny
-  // from the `clients` CLI — it does not change the active plan. Custom
-  // can only be requested once the team has unlocked it for this client.
-  // ---------------------------------------------------------------------
-  app.post('/v2/me/subscription/request', async (req, reply) => {
-    const parsed = z.object({ tier: z.enum(['none', 'light', 'active', 'custom']) }).safeParse(req.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'invalid_body' });
-    }
-    const deviceId = req.deviceId!;
-    const [device] = await db.select().from(devices).where(eq(devices.deviceId, deviceId)).limit(1);
-    if (!device?.inboxId) {
-      return reply.code(409).send({ error: 'device_not_registered' });
-    }
-    const [client] = await db.select().from(clients).where(eq(clients.inboxId, device.inboxId)).limit(1);
-    if (!client) {
-      return reply.code(409).send({ error: 'client_missing' });
-    }
-    if (parsed.data.tier === 'custom' && !client.customTierEnabled) {
-      return reply.code(403).send({ error: 'custom_not_enabled' });
-    }
-    await db
-      .update(clients)
-      .set({ requestedTier: parsed.data.tier })
-      .where(eq(clients.id, client.id));
-    return reply.code(200).send({ ok: true, requestedTier: parsed.data.tier });
-  });
-
-  // ---------------------------------------------------------------------
   // POST /v2/me
   // body: { inboxId, siweMessage, signature }
-  // returns: { clientNumber, isAdmin, inboxId, subscriptionTier, requestedTier, customEnabled }
+  // returns: { clientNumber, isAdmin, inboxId, subscriptionTier }
   // ---------------------------------------------------------------------
   app.post('/v2/me', async (req, reply) => {
     const parsed = MeBody.safeParse(req.body);
@@ -429,8 +395,6 @@ export default async function meRoutes(app: FastifyInstance) {
       isAdmin: !!adminRow,
       inboxId: client.inboxId,
       subscriptionTier: client.subscriptionTier,
-      requestedTier: client.requestedTier,
-      customEnabled: client.customTierEnabled,
     });
   });
 }

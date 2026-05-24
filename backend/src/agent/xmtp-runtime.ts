@@ -44,12 +44,19 @@ export async function bootAgentClient(identity: AgentIdentity): Promise<Client> 
 
   const dbEncryptionKey = decodeEncryptionKey(config.AGENT_DB_ENCRYPTION_KEY);
 
-  const client = await Client.create(signer, {
+  // Built as a separate object on purpose: node-sdk 6 types
+  // `Client.create`'s options as `Omit<ClientOptions, 'codecs'>`, and
+  // because `ClientOptions` is a union the `Omit` drops `env` / `apiUrl`
+  // from its known keys — so an inline object literal fails the
+  // excess-property check. A pre-built object is structurally
+  // assignable and passes `env` through to the runtime unchanged.
+  const clientOptions = {
     env: config.XMTP_NETWORK,
     apiUrl: config.XMTP_NETWORK === 'local' ? config.XMTP_API_URL : undefined,
     dbPath: identity.xmtpDbPath,
     dbEncryptionKey,
-  });
+  };
+  const client = await Client.create(signer, clientOptions);
 
   // The first time this runs the inbox_id is fresh — persist it so the
   // listener and other agents can look up which inbox belongs to which

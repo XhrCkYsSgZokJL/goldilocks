@@ -107,18 +107,11 @@ export const clients = pgTable('clients', {
   clientNumber: bigserial('client_number', { mode: 'number' }).notNull().unique(),
   inboxId: text('inbox_id').notNull().unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  // Active subscription plan, managed by the `clients` CLI. null = no
-  // plan. One of 'light', 'active', 'custom'.
+  // Active subscription plan: 'light', 'active', or null for no plan.
   subscriptionTier: text('subscription_tier'),
-  // A plan the client asked for from the iOS Settings screen, awaiting
-  // team approval. null = no pending request.
-  requestedTier: text('requested_tier'),
-  // Unlocks the Custom tier for this client — gated because Custom is
-  // billed hourly and only offered to select clients.
-  customTierEnabled: boolean('custom_tier_enabled').notNull().default(false),
 });
 
-// CLI-managed admin registry. The `npm run admins` tool creates one row
+// CLI-managed admin registry. The `npm run cli` tool creates one row
 // per admin with a human name and a uniquely-generated `upgrade_code`.
 // The person installs the app, registers as a client, and types that
 // code in the debug area to claim the slot — that fills in `inbox_id` +

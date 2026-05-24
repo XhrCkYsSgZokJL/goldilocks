@@ -1,0 +1,179 @@
+# Goldilocks backend — production stack.
+#
+# Runs the whole service on one box and exposes it to the internet through
+# a Cloudflare tunnel (no static IP, no open inbound ports).
+#
+# All configuration comes from a local .env.prod file (chmod 600, never
+# committed). The CLI sets it up — see docs/production-setup.md.
+#
+# Deploy with:  ./scripts/deploy.sh
+# Or directly:  docker compose -f docker-compose.prod.yml up -d --build
+#
+# See docs/production-setup.md for the full runbook.
+
+name: goldilocks-prod
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  goldilocks-db:
+    image: postgres:16
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-goldilocks}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}
+      POSTGRES_DB: ${POSTGRES_DB:-goldilocks}
+    volumes:
+      - goldilocks-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-goldilocks} -d ${POSTGRES_DB:-goldilocks}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Published on the loopback interface only (127.0.0.1) so the goldilocks
+    # CLI on this box can connect for admin / client management. Not
+    # reachable from the network or the internet.
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  backend:
+    build: .
+    image: goldilocks-backend:latest
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      goldilocks-db:
+        condition: service_healthy
+    env_file: .env.prod
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4000
+      DATABASE_URL: postgres://${POSTGRES_USER:-goldilocks}:${POSTGRES_PASSWORD}@goldilocks-db:5432/${POSTGRES_DB:-goldilocks}
+      # Self-promote is a dev-only backdoor. Hard-off in production.
+      GOLDILOCKS_ALLOW_SELF_PROMOTE: "false"
+      # Attachment bytes (STORAGE_PROVIDER=local) are written here, onto the
+      # goldilocks-attachments volume below.
+      LOCAL_STORAGE_DIR: /var/lib/goldilocks-attachments
+    volumes:
+      - goldilocks-attachments:/var/lib/goldilocks-attachments
+    # No host port published — the Cloudflare tunnel reaches this over the
+    # internal compose network. Nothing is directly exposed.
+    expose:
+      - "4000"
+
+  agent:
+    build: .
+    image: goldilocks-backend:latest
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["node", "dist/agent/index.js"]
+    depends_on:
+      goldilocks-db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    env_file: .env.prod
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-goldilocks}:${POSTGRES_PASSWORD}@goldilocks-db:5432/${POSTGRES_DB:-goldilocks}
+      AGENT_DB_DIR: /var/lib/goldilocks-agent
+    volumes:
+      - goldilocks-agent-data:/var/lib/goldilocks-agent
+
+  # Cloudflare "quick tunnel" (TryCloudflare). No account, no token, no
+  # domain: cloudflared opens an outbound connection and Cloudflare assigns
+  # a random https://<random>.trycloudflare.com hostname that proxies to the
+  # backend. Nothing inbound is exposed on the box.
+  #
+  # The hostname is ephemeral. It stays alive as long as this container keeps
+  # running — it survives a backend-only redeploy — but a new one is issued
+  # whenever cloudflared restarts (box reboot, crash, or explicit restart).
+  # Read the current URL with:  ./scripts/tunnel-url.sh
+  #
+  # To move to a stable custom domain later, swap this service for the
+  # named-tunnel form commented out below. See docs/production-setup.md.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["tunnel", "--no-autoupdate", "--url", "http://backend:4000"]
+    depends_on:
+      backend:
+        condition: service_started
+
+  # --- Named tunnel (stable custom domain). Use this in place of the quick
+  # tunnel above once a domain is on Cloudflare and you have a tunnel token
+  # in .env.prod as CLOUDFLARE_TUNNEL_TOKEN.
+  #
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   restart: unless-stopped
+  #   logging: *default-logging
+  #   command: ["tunnel", "run"]
+  #   environment:
+  #     TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env.prod}
+  #   depends_on:
+  #     backend:
+  #       condition: service_started
+
+  # Nightly backup: pg_dump of the database + a tar of the agent identity
+  # data, kept for 30 days under ./backups on this box. See backup.sh.
+  backup:
+    image: postgres:16
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      goldilocks-db:
+        condition: service_healthy
+    environment:
+      PGHOST: goldilocks-db
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER:-goldilocks}
+      POSTGRES_DB: ${POSTGRES_DB:-goldilocks}
+      BACKUP_RETENTION_DAYS: "30"
+    volumes:
+      - ./backups:/backups
+      - goldilocks-agent-data:/agent-data:ro
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        while true; do
+          bash /usr/local/bin/backup.sh || echo "[backup] run failed"
+          sleep 86400
+        done
+
+  # XMTP push-notification relay. Disabled — push notifications are deferred
+  # (see the Deferred section of docs/production-setup.md). When ready, put
+  # the .p8 auth key in ./secrets/, uncomment this service, and redeploy.
+  #
+  # notification-server:
+  #   image: xmtp/example-notification-server-go:latest
+  #   platform: linux/amd64
+  #   restart: unless-stopped
+  #   logging: *default-logging
+  #   depends_on:
+  #     goldilocks-db:
+  #       condition: service_healthy
+  #   environment:
+  #     DB_CONNECTION_STRING: postgres://${POSTGRES_USER:-goldilocks}:${POSTGRES_PASSWORD}@goldilocks-db:5432/${POSTGRES_DB:-goldilocks}?sslmode=disable
+  #     XMTP_GRPC_ADDRESS: ${XMTP_GRPC_URL}
+  #     APNS_TOPIC: ${APNS_TOPIC}
+  #     APNS_KEY_PATH: /run/secrets/apns_auth_key.p8
+  #     APNS_KEY_ID: ${APNS_KEY_ID}
+  #     APNS_TEAM_ID: ${APNS_TEAM_ID}
+  #     APNS_MODE: production
+  #     LOG_LEVEL: info
+  #   volumes:
+  #     - ./secrets/apns_auth_key.p8:/run/secrets/apns_auth_key.p8:ro
+
+volumes:
+  goldilocks-pgdata:
+  goldilocks-agent-data:
+  goldilocks-attachments:

@@ -28,12 +28,19 @@ export interface StorageProvider {
    * @param contentType MIME type the client will set on its PUT.
    * @param filename original filename, used for content-disposition.
    * @param uploadedBy deviceId of the uploader, for audit.
+   * @param baseUrl absolute API base (origin + prefix) the client reached
+   *        this server at. The local provider builds upload/asset URLs from
+   *        it so they point back here; providers that store elsewhere
+   *        (IPFS, S3) ignore it.
    */
-  presignedUpload(args: {
-    contentType: string;
-    filename: string;
-    uploadedBy?: string;
-  }): Promise<PresignedUpload>;
+  presignedUpload(
+    args: {
+      contentType: string;
+      filename: string;
+      uploadedBy?: string;
+    },
+    baseUrl?: string,
+  ): Promise<PresignedUpload>;
 
   /**
    * Extend the lifetime of stored objects (e.g. re-pin to IPFS,

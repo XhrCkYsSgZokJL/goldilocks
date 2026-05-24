@@ -1,6 +1,6 @@
 # Multi-stage build for the Goldilocks backend.
 
-FROM node:20-alpine AS deps
+FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev && cp -R node_modules /tmp/prod_node_modules
@@ -10,7 +10,7 @@ COPY src ./src
 COPY migrations ./migrations
 RUN npm run build
 
-FROM node:20-alpine AS runtime
+FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=deps /tmp/prod_node_modules ./node_modules

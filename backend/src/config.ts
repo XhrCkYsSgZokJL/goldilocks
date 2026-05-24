@@ -2,19 +2,35 @@ import 'dotenv/config';
 import { z } from 'zod';
 
 const schema = z.object({
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+
   PORT: z.coerce.number().int().default(4000),
   HOST: z.string().default('0.0.0.0'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+
+  // Public origin the iOS app uses to reach this API. With the Cloudflare
+  // quick tunnel this is the ephemeral trycloudflare.com hostname; with a
+  // named tunnel it's a custom domain. Used to build attachment URLs.
+  // An empty value in .env is treated as unset and falls back to
+  // http://<host>:<port>.
+  PUBLIC_BASE_URL: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().url().optional(),
+  ),
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 chars (use: openssl rand -hex 32)'),
   JWT_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
 
-  STORAGE_PROVIDER: z.enum(['lighthouse', 'mock']).default('mock'),
+  STORAGE_PROVIDER: z.enum(['lighthouse', 'mock', 'local']).default('mock'),
   LIGHTHOUSE_API_KEY: z.string().optional(),
   LIGHTHOUSE_WALLET_PRIVATE_KEY: z.string().optional(),
   IPFS_GATEWAY: z.string().url().default('https://gateway.lighthouse.storage/ipfs'),
+
+  // Directory the 'local' storage provider writes attachment bytes to. In
+  // Docker this is a mounted volume; locally it defaults under the CWD.
+  LOCAL_STORAGE_DIR: z.string().default('./.attachments'),
 
   CORS_ORIGIN: z.string().default('*'),
 
