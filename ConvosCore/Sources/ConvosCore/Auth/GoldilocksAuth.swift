@@ -29,23 +29,17 @@ public enum GoldilocksAuth {
         public let isAdmin: Bool
         public let inboxId: String
         public let subscriptionTier: GoldilocksSubscriptionTier?
-        public let requestedTier: GoldilocksSubscriptionTier?
-        public let customTierEnabled: Bool
 
         public init(
             clientNumber: Int64,
             isAdmin: Bool,
             inboxId: String,
-            subscriptionTier: GoldilocksSubscriptionTier? = nil,
-            requestedTier: GoldilocksSubscriptionTier? = nil,
-            customTierEnabled: Bool = false
+            subscriptionTier: GoldilocksSubscriptionTier? = nil
         ) {
             self.clientNumber = clientNumber
             self.isAdmin = isAdmin
             self.inboxId = inboxId
             self.subscriptionTier = subscriptionTier
-            self.requestedTier = requestedTier
-            self.customTierEnabled = customTierEnabled
         }
 
         /// Build an identity from the backend's `/v2/me` response.
@@ -55,9 +49,6 @@ public enum GoldilocksAuth {
             self.inboxId = response.inboxId
             self.subscriptionTier = response.subscriptionTier
                 .flatMap(GoldilocksSubscriptionTier.init(rawValue:))
-            self.requestedTier = response.requestedTier
-                .flatMap(GoldilocksSubscriptionTier.init(rawValue:))
-            self.customTierEnabled = response.customEnabled ?? false
         }
     }
 
@@ -130,13 +121,9 @@ public enum GoldilocksAuth {
     }
 }
 
-/// The Goldilocks Digital subscription plans. A client's tier is assigned
-/// by the team via the `clients` backend CLI; the iOS app shows the plans
-/// and lets the client request one.
+/// The Goldilocks Digital subscription plans.
 public enum GoldilocksSubscriptionTier: String, Codable, Sendable, Equatable, CaseIterable {
-    /// "No plan" — the client is not subscribed. Stored on the backend as
-    /// NULL for the active tier, but requestable (as 'none') so a client
-    /// can ask to be moved off all plans through the same approval flow.
+    /// "No plan" — the client is not subscribed (NULL on the backend).
     /// Declared first so it sorts to the top of the plan list.
     case noPlan = "none"
     case light

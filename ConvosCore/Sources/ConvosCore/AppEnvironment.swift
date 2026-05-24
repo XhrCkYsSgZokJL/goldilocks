@@ -223,7 +223,12 @@ public extension AppEnvironment {
         ) else {
             fatalError("Failed getting container URL for group identifier: \(appGroupIdentifier)")
         }
-        return groupUrl.appendingPathComponent("logs", isDirectory: true)
+        // Deliberately "xmtp-logs", not "logs": FileLogHandler already
+        // creates "Logs/" in this same app-group container, and on the
+        // case-insensitive simulator filesystem a "logs" directory
+        // collides with it — which makes libxmtp's persistent log writer
+        // silently fail to create its directory.
+        return groupUrl.appendingPathComponent("xmtp-logs", isDirectory: true)
     }
 
     var defaultDatabasesDirectoryURL: URL {

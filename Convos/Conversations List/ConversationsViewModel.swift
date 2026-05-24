@@ -275,11 +275,19 @@ final class ConversationsViewModel {
     func onAppear() {
         isVisible = true
         updateListVisibility()
-        // Kick off the SIWE handshake against the Goldilocks backend on
-        // first appearance. Idempotent — GoldilocksSession bails if it's
-        // already registered or already in flight.
+        kickGoldilocksSetup()
+    }
+
+    /// Register with the Goldilocks backend (idempotent) and then drive the
+    /// client's channels all the way into the local database, retrying
+    /// until they land. Safe to call repeatedly — both steps latch once
+    /// complete. Invoked on every appearance and every app foreground so a
+    /// transient backend or network outage can never leave the app stuck
+    /// on the "Setting up your channels…" state.
+    private func kickGoldilocksSetup() {
         Task { [session] in
             await GoldilocksSession.shared.registerIfNeeded(session: session)
+            await GoldilocksSession.shared.ensureGoldilocksChannelsPresent(session: session)
         }
     }
 
@@ -619,6 +627,9 @@ final class ConversationsViewModel {
                 } else if let conversation = self.newConversationViewModel?.conversationViewModel?.conversation {
                     self.markConversationAsRead(conversation)
                 }
+                // Re-arm Goldilocks setup on every foreground so channel
+                // provisioning recovers after a backend/network outage.
+                self.kickGoldilocksSetup()
             }
             .store(in: &cancellables)
     }

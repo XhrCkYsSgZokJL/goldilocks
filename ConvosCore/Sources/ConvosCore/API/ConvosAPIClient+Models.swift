@@ -245,28 +245,20 @@ public enum ConvosAPI {
         public let clientNumber: Int64
         public let isAdmin: Bool
         public let inboxId: String
-        /// Active subscription plan ("light" | "active" | "custom"), or
-        /// nil if the client has no plan yet.
+        /// Active subscription plan ("light" | "active"), or nil if the
+        /// client has no plan.
         public let subscriptionTier: String?
-        /// A plan the client has requested, awaiting team approval, or nil.
-        public let requestedTier: String?
-        /// Whether the Custom tier has been unlocked for this client.
-        public let customEnabled: Bool?
 
         public init(
             clientNumber: Int64,
             isAdmin: Bool,
             inboxId: String,
-            subscriptionTier: String? = nil,
-            requestedTier: String? = nil,
-            customEnabled: Bool? = nil
+            subscriptionTier: String? = nil
         ) {
             self.clientNumber = clientNumber
             self.isAdmin = isAdmin
             self.inboxId = inboxId
             self.subscriptionTier = subscriptionTier
-            self.requestedTier = requestedTier
-            self.customEnabled = customEnabled
         }
     }
 
