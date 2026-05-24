@@ -29,6 +29,7 @@ final class GoldilocksSession {
     private(set) var identity: GoldilocksAuth.Identity? {
         didSet {
             GoldilocksConfig.role = (identity?.isAdmin ?? false) ? .admin : .client
+            GoldilocksConfig.ownClientNumber = identity?.clientNumber
         }
     }
     private(set) var adminInboxIds: [String] = []
@@ -229,11 +230,7 @@ final class GoldilocksSession {
     /// per-role channel IDs (Advisory + Reports) that must be present locally.
     private func refreshOwnedChannels(session: any SessionManagerProtocol) async throws -> [String] {
         let serverChannels = try await session.listGoldilocksChannels()
-        // Admins have no personal Reports group in their sidebar — exclude
-        // role='reports' for them so it never counts as a missing channel.
-        let active = serverChannels
-            .filter { $0.status == "active" }
-            .filter { !(isAdmin && $0.role == "reports") }
+        let active = serverChannels.filter { $0.status == "active" }
         let perRoleIds = active.compactMap { $0.xmtpGroupId }
         var ownedIds = perRoleIds
         if isAdmin {
@@ -300,6 +297,18 @@ final class GoldilocksSession {
             Log.error("[Goldilocks] Admin downgrade failed: \(error.localizedDescription)")
             return false
         }
+    }
+
+    /// Set this device's subscription plan on the Goldilocks backend, then
+    /// refresh the cached identity so `subscriptionTier` reflects it. Backs
+    /// the Subscription screen's Create/Update button, which simulates a
+    /// billing success while Stripe is not yet wired up. Re-throws on
+    /// failure so the caller can surface it.
+    func setSubscriptionTier(_ tier: GoldilocksSubscriptionTier, session: any SessionManagerProtocol) async throws {
+        try await session.setGoldilocksSubscriptionTier(tier)
+        let refreshed = try await session.refreshGoldilocksIdentity()
+        self.identity = refreshed
+        Log.info("[Goldilocks] Subscription tier set to \(tier.rawValue)")
     }
 
     /// Re-fetch /v2/admins. Called after registration and after any admin

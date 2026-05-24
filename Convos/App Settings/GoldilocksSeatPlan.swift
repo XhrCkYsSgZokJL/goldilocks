@@ -93,6 +93,16 @@ final class GoldilocksSeatPlan {
         }
     }
 
+    /// The overall plan tier reported to the backend — Active when any
+    /// seat is on the Active plan, otherwise Light. This is the value the
+    /// admin channels grid reads to flag a client as subscribed.
+    var planTier: GoldilocksSubscriptionTier {
+        if members.contains(where: { $0.tier == .active }) {
+            return .active
+        }
+        return members.isEmpty ? .noPlan : .light
+    }
+
     private init() {
         let snapshot = Self.loadSnapshot()
         self.members = snapshot?.members ?? []
@@ -153,12 +163,21 @@ final class GoldilocksSeatPlan {
     }
 
     /// Record that the subscription now covers the current people list.
-    /// Called when the client taps Create / Update Subscription.
     func markSubscriptionSynced() {
         subscribedRoster = currentRosterEntries
     }
 
-    // MARK: - Advisory roster
+    /// Simulate a successful subscription purchase: push the plan tier to
+    /// the Goldilocks backend, then record the roster locally. The backend
+    /// tier is what the admin channels grid reads, so this is what makes a
+    /// simulated subscription show up there. The local roster is only
+    /// marked synced once the backend call succeeds.
+    func syncSubscription(session: any SessionManagerProtocol) async throws {
+        try await GoldilocksSession.shared.setSubscriptionTier(planTier, session: session)
+        markSubscriptionSynced()
+    }
+
+    // MARK: - Roster delivery
 
     /// Errors surfaced when posting the roster to the Advisory chat.
     enum RosterSendError: LocalizedError {
@@ -192,20 +211,29 @@ final class GoldilocksSeatPlan {
         return lines.joined(separator: "\n")
     }
 
-    /// Compose the current people list and post it to the client's Advisory
-    /// XMTP group. Independent of billing — the roster is just a chat
-    /// message, so this works before Stripe is wired up.
-    func sendRosterToAdvisory(session: any SessionManagerProtocol) async throws {
+    /// True when `conversation` is the caller's own Advisory chat — the
+    /// chat the roster posts to. `goldilocksPinnedSection` resolves the
+    /// caller's own channels, so an admin (who belongs to many clients'
+    /// Advisories) still posts into their own.
+    private func isRosterDestination(_ conversation: Conversation) -> Bool {
+        guard conversation.goldilocksPinnedSection == .client else { return false }
+        return (conversation.name ?? "").hasPrefix("Advisory")
+    }
+
+    /// Compose the current people list and post it to the caller's own
+    /// Advisory XMTP group. Independent of billing — the roster is just a
+    /// chat message, so this works before Stripe is wired up.
+    func sendRosterToChannel(session: any SessionManagerProtocol) async throws {
         let conversations: [Conversation] = try session
             .conversationsRepository(for: [.allowed, .unknown])
             .fetchAll()
-        guard let advisory = conversations.first(where: { (conversation: Conversation) -> Bool in
-            (conversation.name ?? "").hasPrefix("Advisory")
+        guard let destination = conversations.first(where: { (conversation: Conversation) -> Bool in
+            isRosterDestination(conversation)
         }) else {
             throw RosterSendError.advisoryChatNotFound
         }
         let writer = session.messagingService().messageWriter(
-            for: advisory.id,
+            for: destination.id,
             backgroundUploadManager: BackgroundUploadManager.shared
         )
         try await writer.send(text: rosterMessageText)

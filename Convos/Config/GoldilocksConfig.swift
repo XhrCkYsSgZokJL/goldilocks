@@ -22,6 +22,13 @@ enum GoldilocksConfig {
     /// list recompute or app relaunch.
     nonisolated(unsafe) static var role: GoldilocksRole = .client
 
+    /// This install's own Goldilocks client number, mirrored from
+    /// `GoldilocksSession.identity` so non-isolated call sites (the
+    /// `Conversation` extensions below) can pick out the user's *own*
+    /// "Advisory #N" / "Reports #N" and tell them apart from the other
+    /// clients' Advisories an admin is also a member of.
+    nonisolated(unsafe) static var ownClientNumber: Int64?
+
     /// Keychain slot suffix + device-id suffix. Fixed: one XMTP identity
     /// per app install. To test multiple users, use separate simulators
     /// (each has its own keychain) or erase + reinstall for a fresh
@@ -38,16 +45,16 @@ enum GoldilocksConfig {
 
     /// The canonical Goldilocks support group names for the current role.
     /// Used as prefixes for the sort-priority ordering inside the pinned
-    /// block (Advisory comes before Reports for clients; Admins before
-    /// Audit Log for admins).
-    /// - Client: Advisory + Reports — each created on first "Open channels"
-    ///   tap with all admins as super-admin members.
-    /// - Admin: Admins + Audit Log — both cross-admin groups; the agent
-    ///   creates them once at least one admin exists.
+    /// block (Advisory before Reports for clients; Admins, Audit Log,
+    /// Advisory, then Reports for admins).
+    /// - Client: Advisory + Reports — the channels they use day-to-day.
+    /// - Admin: Admins + Audit Log (the cross-admin coordination groups,
+    ///   rendered under the "Admin" section header) followed by the
+    ///   admin's own Advisory + Reports (rendered under "Client").
     static var groupNames: [String] {
         switch role {
         case .client: return ["Advisory", "Reports"]
-        case .admin:  return ["Admins", "Audit Log"]
+        case .admin:  return ["Admins", "Audit Log", "Advisory", "Reports"]
         }
     }
 
@@ -93,6 +100,15 @@ enum GoldilocksConfig {
     }
 }
 
+/// A labelled section in the block of Goldilocks groups pinned to the top
+/// of the conversations list. Admins see both; clients see only `.client`.
+enum GoldilocksPinnedSection: Equatable {
+    /// Cross-admin coordination groups — "Admins" + "Audit Log".
+    case admin
+    /// The user's own channels — "Advisory #N" + "Reports #N".
+    case client
+}
+
 extension Conversation {
     /// True when this conversation is one of the canonical Goldilocks support
     /// groups (matches by name only — we explicitly *don't* match by member
@@ -103,23 +119,33 @@ extension Conversation {
         return GoldilocksConfig.isGoldilocksGroupName(name)
     }
 
-    /// Subset of Goldilocks groups that should sort to the top of the
-    /// conversations list (above non-Goldilocks chats) regardless of the
-    /// stored `isPinned` flag. Role-aware:
-    ///   - Admin: cross-admin "Admins" + "Audit Log" groups. Admins is
-    ///     for coordination; Audit Log is the firehose of client reports.
-    ///     Other Advisories (which the admin is technically a member of)
-    ///     flow with normal recency-based ordering.
-    ///   - Client: their own Advisory + Reports — the channels they
-    ///     actually use day-to-day.
-    var isPinnedGoldilocksGroup: Bool {
-        guard let name else { return false }
+    /// Which labelled section this group belongs to in the block pinned to
+    /// the top of the conversations list, or nil if it isn't one of the
+    /// current role's pinned Goldilocks groups. Role-aware:
+    ///   - Admin: an Admin section — the cross-admin "Admins" + "Audit Log"
+    ///     groups — and a Client section — the admin's *own* "Advisory #N"
+    ///     + "Reports #N", matched by client number so the other clients'
+    ///     Advisories they belong to are left in normal recency order.
+    ///   - Client: only the Client section — their own Advisory + Reports.
+    var goldilocksPinnedSection: GoldilocksPinnedSection? {
+        guard let name else { return nil }
         switch GoldilocksConfig.role {
         case .admin:
-            return name == "Admins" || name == "Audit Log"
+            if name == "Admins" || name == "Audit Log" { return .admin }
+            guard let number = GoldilocksConfig.ownClientNumber else { return nil }
+            if name == "Advisory #\(number)" || name == "Reports #\(number)" { return .client }
+            return nil
         case .client:
-            return name.hasPrefix("Advisory") || name.hasPrefix("Reports")
+            if name.hasPrefix("Advisory") || name.hasPrefix("Reports") { return .client }
+            return nil
         }
+    }
+
+    /// True when this group sorts to the top of the conversations list,
+    /// inside one of the pinned sections, regardless of its stored
+    /// `isPinned` flag.
+    var isPinnedGoldilocksGroup: Bool {
+        goldilocksPinnedSection != nil
     }
 
     /// True if this conversation should be visible in the conversation list
@@ -131,7 +157,8 @@ extension Conversation {
     ///   `GoldilocksOwnedChannels`. Those still surface in the admin
     ///   channels grid view for oversight.
     /// - Client: sees their own Advisory/Reports + non-Goldilocks chats;
-    ///   Admins coordination group hidden.
+    ///   the cross-admin Admins + Audit Log groups are hidden — a former
+    ///   admin can still be a member of them after downgrading.
     var isVisibleInCurrentRole: Bool {
         guard let name else { return true }
         switch GoldilocksConfig.role {
@@ -140,7 +167,7 @@ extension Conversation {
             // the admin's owned set (Admins + own Advisory + own Reports).
             return true
         case .client:
-            return name != "Admins"
+            return name != "Admins" && name != "Audit Log"
         }
     }
 }

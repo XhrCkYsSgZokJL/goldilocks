@@ -119,6 +119,11 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// the cross-admin groups + every Advisory on the next reconcile.
     func downgradeGoldilocksAdmin() async throws
 
+    /// Set the caller's subscription plan on the Goldilocks backend
+    /// (`POST /v2/me/subscription`). Writes `clients.subscription_tier`,
+    /// which drives the subscription flag in the admin channels grid.
+    func setGoldilocksSubscriptionTier(_ tier: GoldilocksSubscriptionTier) async throws
+
     /// Fetch the inbox IDs of all admins (Goldilocks team). Used by the
     /// client app as the recipient list when creating Advisory/Reports.
     func fetchGoldilocksAdminInboxIds() async throws -> [String]
@@ -208,6 +213,10 @@ extension SessionManagerProtocol {
     }
 
     public func downgradeGoldilocksAdmin() async throws {
+        // No-op for mocks
+    }
+
+    public func setGoldilocksSubscriptionTier(_ tier: GoldilocksSubscriptionTier) async throws {
         // No-op for mocks
     }
 

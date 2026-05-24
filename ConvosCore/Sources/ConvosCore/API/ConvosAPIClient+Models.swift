@@ -326,6 +326,9 @@ public enum ConvosAPI {
         public let createdAt: String
         public let explodedAt: String?
         public let recreatedAt: String?
+        /// The client's active subscription plan ("light", "active",
+        /// "custom"), or nil when they have no plan.
+        public let subscriptionTier: String?
     }
 
     public struct GoldilocksAdminChannelsResponse: Codable, Sendable {

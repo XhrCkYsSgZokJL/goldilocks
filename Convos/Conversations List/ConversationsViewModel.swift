@@ -160,9 +160,9 @@ final class ConversationsViewModel {
         // the order declared in `GoldilocksConfig.groupNames`.
         // One typed predicate instead of five chained `.filter` calls — the
         // chain was heavy for the type-checker. `isPinnedGoldilocksGroup`
-        // overrides the stored `isPinned` for sort-to-top (admins: only
-        // Admins; clients: Advisory + Reports); other rows flow with the
-        // regular recency order.
+        // overrides the stored `isPinned` for sort-to-top (admins: Admins,
+        // Audit Log, their own Advisory + Reports; clients: Advisory +
+        // Reports); other rows flow with the regular recency order.
         let baseConversations: [Conversation] = conversations
             .filter { (c: Conversation) -> Bool in
                 c.isVisibleInCurrentRole

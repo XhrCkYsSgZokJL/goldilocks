@@ -23,6 +23,16 @@ final class AdminChannelsViewModel {
         self.session = session
     }
 
+    /// Number of distinct clients that currently have a subscription plan.
+    /// A client owns several channels, so rows are de-duplicated by inbox.
+    var planCount: Int {
+        Set(
+            channels
+                .filter { $0.hasSubscription }
+                .map { $0.clientInboxId }
+        ).count
+    }
+
     func refresh() async {
         isLoading = true
         defer { isLoading = false }
@@ -80,33 +90,67 @@ struct AdminChannelsView: View {
     }
 
     private var channelsList: some View {
-        List {
-            ForEach(viewModel.channels, id: \.uniqueKey) { channel in
-                HStack(spacing: DesignConstants.Spacing.step3x) {
-                    roleIcon(for: channel)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(channel.displayTitle)
-                            .font(.body)
-                            .foregroundStyle(.colorTextPrimary)
-                        Text(channel.subtitle)
-                            .font(.caption)
-                            .foregroundStyle(channel.status == "exploded"
-                                             ? .colorTextTertiary
-                                             : .colorTextSecondary)
-                    }
-                    Spacer()
-                    if channel.status == "exploded" {
-                        Text("EXPLODED")
-                            .font(.caption2)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.colorTextTertiary)
-                    }
+        VStack(spacing: 0) {
+            planCountHeader
+            List {
+                ForEach(viewModel.channels, id: \.uniqueKey) { channel in
+                    channelRow(for: channel)
+                        .listRowBackground(rowBackground(for: channel))
                 }
-                .opacity(channel.status == "exploded" ? 0.5 : 1.0)
-                .padding(.vertical, DesignConstants.Spacing.stepX)
+            }
+            .listStyle(.plain)
+        }
+    }
+
+    private var planCountHeader: some View {
+        let count: Int = viewModel.planCount
+        let noun: String = count == 1 ? "plan" : "plans"
+        return HStack(spacing: 0) {
+            Text("\(count) \(noun)")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(Constant.subscribedAccent)
+            Spacer()
+        }
+        .padding(.horizontal, DesignConstants.Spacing.step4x)
+        .padding(.vertical, DesignConstants.Spacing.step2x)
+    }
+
+    private func channelRow(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
+        let isExploded: Bool = channel.status == "exploded"
+        let subtitleColor: Color = isExploded ? .colorTextTertiary : .colorTextSecondary
+        let rowOpacity: Double = isExploded ? 0.5 : 1.0
+        let tierColor: Color = channel.hasSubscription ? Constant.subscribedAccent : Constant.unsubscribedAccent
+        return HStack(spacing: DesignConstants.Spacing.step3x) {
+            roleIcon(for: channel)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(channel.displayTitle)
+                    .font(.body)
+                    .foregroundStyle(.colorTextPrimary)
+                Text(channel.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(subtitleColor)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(channel.subscriptionLabel)
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(tierColor)
+                if isExploded {
+                    Text("EXPLODED")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.colorTextTertiary)
+                }
             }
         }
-        .listStyle(.plain)
+        .opacity(rowOpacity)
+        .padding(.vertical, DesignConstants.Spacing.stepX)
+    }
+
+    private func rowBackground(for channel: ConvosAPI.GoldilocksAdminChannel) -> Color {
+        channel.hasSubscription ? Constant.subscribedRowTint : Constant.unsubscribedRowTint
     }
 
     private func roleIcon(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
@@ -124,6 +168,17 @@ struct AdminChannelsView: View {
                 .foregroundStyle(.colorFillPrimary)
         }
     }
+
+    private enum Constant {
+        /// Faint gold wash behind rows whose client has an active plan.
+        static let subscribedRowTint: Color = Color(red: 0.85, green: 0.65, blue: 0.13).opacity(0.16)
+        /// Faint blue wash behind rows whose client has no plan.
+        static let unsubscribedRowTint: Color = Color(red: 0.20, green: 0.48, blue: 0.95).opacity(0.12)
+        /// Gold used for the plan label on subscribed rows.
+        static let subscribedAccent: Color = Color(red: 0.70, green: 0.52, blue: 0.05)
+        /// Blue used for the plan label on unsubscribed rows.
+        static let unsubscribedAccent: Color = Color(red: 0.16, green: 0.40, blue: 0.85)
+    }
 }
 
 private extension ConvosAPI.GoldilocksAdminChannel {
@@ -138,4 +193,18 @@ private extension ConvosAPI.GoldilocksAdminChannel {
     }
 
     var uniqueKey: String { "\(clientInboxId)-\(role)" }
+
+    /// True when the client is on a paid plan (any non-empty tier).
+    var hasSubscription: Bool {
+        guard let tier = subscriptionTier, !tier.isEmpty else { return false }
+        return tier.lowercased() != "none"
+    }
+
+    /// Human-facing plan name shown on the admin row.
+    var subscriptionLabel: String {
+        guard hasSubscription, let tier = subscriptionTier else { return "No plan" }
+        let firstLetter: String = tier.prefix(1).uppercased()
+        let remainder: Substring = tier.dropFirst()
+        return "\(firstLetter)\(remainder)"
+    }
 }

@@ -36,6 +36,7 @@ final class ConversationsViewController: UIViewController {
     enum Item: Hashable {
         case pinned(Conversation)
         case conversation(Conversation)
+        case sectionDivider(ConversationListGroup)
         case emptyCTA
         case filteredEmpty(String)
 
@@ -47,6 +48,9 @@ final class ConversationsViewController: UIViewController {
             case .conversation(let conversation):
                 hasher.combine("conversation")
                 hasher.combine(conversation.id)
+            case .sectionDivider(let group):
+                hasher.combine("sectionDivider")
+                hasher.combine(group)
             case .emptyCTA:
                 hasher.combine("emptyCTA")
             case .filteredEmpty(let message):
@@ -61,6 +65,8 @@ final class ConversationsViewController: UIViewController {
                 return lConv.id == rConv.id
             case let (.conversation(lConv), .conversation(rConv)):
                 return lConv.id == rConv.id
+            case let (.sectionDivider(lGroup), .sectionDivider(rGroup)):
+                return lGroup == rGroup
             case (.emptyCTA, .emptyCTA):
                 return true
             case let (.filteredEmpty(lMsg), .filteredEmpty(rMsg)):
@@ -88,6 +94,12 @@ final class ConversationsViewController: UIViewController {
     }()
     private lazy var dataSource: UICollectionViewDiffableDataSource<ConversationsSection, Item> = makeDataSource()
     private var currentState: State = .empty
+
+    /// Conversation-list sections the user has collapsed. Persisted so the
+    /// choice survives app relaunches.
+    private var collapsedGroups: Set<ConversationListGroup> = SectionCollapseStore.load() {
+        didSet { SectionCollapseStore.save(collapsedGroups) }
+    }
 
     // MARK: - Callbacks
 
@@ -341,22 +353,44 @@ final class ConversationsViewController: UIViewController {
         return conversation
     }
 
+    /// The conversations belonging to a collapsible list group, in the
+    /// order they appear in `unpinnedConversations`.
+    private func conversations(in group: ConversationListGroup) -> [Conversation] {
+        switch group {
+        case .admin:
+            return currentState.unpinnedConversations.filter { $0.goldilocksPinnedSection == .admin }
+        case .client:
+            return currentState.unpinnedConversations.filter { $0.goldilocksPinnedSection == .client }
+        case .chats:
+            return currentState.unpinnedConversations.filter { $0.goldilocksPinnedSection == nil }
+        }
+    }
+
+    /// Toggle a section between expanded and collapsed, then re-render.
+    private func toggleCollapse(_ group: ConversationListGroup) {
+        if collapsedGroups.contains(group) {
+            collapsedGroups.remove(group)
+        } else {
+            collapsedGroups.insert(group)
+        }
+        applySnapshot(animated: true, changedIds: [])
+    }
+
     private func makeDataSource() -> UICollectionViewDiffableDataSource<ConversationsSection, Item> {
         // Cell registration for list items
         let listCellRegistration = UICollectionView.CellRegistration<ConversationListItemCell, Conversation> { [weak self] cell, _, conversation in
             guard let self = self else { return }
             let fresh = self.freshConversation(for: conversation)
             let isSelected = self.currentState.selectedConversationId == fresh.id
-            // Show the "Pinned" divider only on the last *pinned-to-top*
-            // Goldilocks group in the list, so the divider sits between the
-            // pinned-Goldilocks block and the rest of the conversations.
-            // For admins, that's just the Admins row; for clients, it's
-            // Advisory + Reports. Admin's own Advisory/Reports flow with
-            // recency-sorted conversations below the divider.
-            let lastGoldilocksId = self.currentState.unpinnedConversations
-                .last(where: { $0.isPinnedGoldilocksGroup })?.id
-            let showsPinnedDivider = (fresh.id == lastGoldilocksId)
-            cell.configure(with: fresh, isSelected: isSelected, showsPinnedDivider: showsPinnedDivider)
+            cell.configure(with: fresh, isSelected: isSelected)
+        }
+
+        // Cell registration for the tappable section dividers.
+        let dividerCellRegistration = UICollectionView.CellRegistration<SectionDividerCell, ConversationListGroup> { [weak self] cell, _, group in
+            guard let self = self else { return }
+            let count = self.conversations(in: group).count
+            let isCollapsed = self.collapsedGroups.contains(group)
+            cell.configure(group: group, count: count, isCollapsed: isCollapsed)
         }
 
         // Cell registration for pinned items
@@ -388,6 +422,13 @@ final class ConversationsViewController: UIViewController {
                     using: listCellRegistration,
                     for: indexPath,
                     item: conversation
+                )
+
+            case .sectionDivider(let group):
+                return collectionView.dequeueConfiguredReusableCell(
+                    using: dividerCellRegistration,
+                    for: indexPath,
+                    item: group
                 )
 
             case .emptyCTA:
@@ -433,22 +474,31 @@ final class ConversationsViewController: UIViewController {
                 snapshot.appendItems([.emptyCTA], toSection: .list)
             }
 
-            let listItems = currentState.unpinnedConversations.map { Item.conversation($0) }
-            snapshot.appendItems(listItems, toSection: .list)
+            // Each non-empty group is introduced by a tappable divider;
+            // its conversations follow unless the group is collapsed.
+            for group in ConversationListGroup.allCases {
+                let convos = conversations(in: group)
+                guard !convos.isEmpty else { continue }
+                snapshot.appendItems([.sectionDivider(group)], toSection: .list)
+                if !collapsedGroups.contains(group) {
+                    snapshot.appendItems(convos.map { Item.conversation($0) }, toSection: .list)
+                }
+            }
         }
 
         dataSource.apply(snapshot, animatingDifferences: animated)
 
-        // Reconfigure changed items from the diff plus *all* Goldilocks
-        // groups — the latter is needed because their `showsPinnedDivider`
-        // flag depends on the position-of-last-Goldilocks across the list,
-        // and the diff datasource doesn't know that flag changed when only
-        // a sibling Goldilocks group was added/removed.
+        // Reconfigure changed conversations from the diff, plus *all*
+        // section dividers — a divider's count and collapsed chevron live
+        // outside its item identity, so the diff datasource can't see them
+        // change when a sibling row is added or removed.
         var applied = dataSource.snapshot()
         let itemsToReconfigure = applied.itemIdentifiers.filter { item in
             switch item {
             case .pinned(let c), .conversation(let c):
-                return changedIds.contains(c.id) || c.isGoldilocksGroup
+                return changedIds.contains(c.id)
+            case .sectionDivider:
+                return true
             case .emptyCTA, .filteredEmpty:
                 return false
             }
@@ -479,7 +529,7 @@ final class ConversationsViewController: UIViewController {
                 switch item {
                 case .pinned(let conversation), .conversation(let conversation):
                     conversationId = conversation.id
-                case .emptyCTA, .filteredEmpty:
+                case .sectionDivider, .emptyCTA, .filteredEmpty:
                     conversationId = nil
                 }
 
@@ -507,7 +557,7 @@ final class ConversationsViewController: UIViewController {
             switch item {
             case .pinned(let c), .conversation(let c):
                 matchesId = c.id == conversation.id
-            case .emptyCTA, .filteredEmpty:
+            case .sectionDivider, .emptyCTA, .filteredEmpty:
                 matchesId = false
             }
             if matchesId, let indexPath = dataSource.indexPath(for: item) {
@@ -634,13 +684,19 @@ extension ConversationsViewController: UICollectionViewDelegate {
         switch item {
         case .pinned(let conversation), .conversation(let conversation):
             return conversation
-        case .emptyCTA, .filteredEmpty:
+        case .sectionDivider, .emptyCTA, .filteredEmpty:
             return nil
         }
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
+
+        if let item = dataSource.itemIdentifier(for: indexPath),
+           case .sectionDivider(let group) = item {
+            toggleCollapse(group)
+            return
+        }
 
         guard let conversation = conversation(for: indexPath) else { return }
         onSelectConversation?(conversation)

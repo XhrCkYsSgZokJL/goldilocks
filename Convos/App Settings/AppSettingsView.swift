@@ -82,28 +82,26 @@ struct AppSettingsView: View {
 
     @ViewBuilder
     private var subscriptionSection: some View {
-        if !GoldilocksSession.shared.isAdmin {
-            Section {
-                NavigationLink {
-                    SubscriptionView(session: session)
-                } label: {
-                    HStack {
-                        Image(systemName: "creditcard.fill")
-                            .foregroundStyle(.colorTextPrimary)
+        Section {
+            NavigationLink {
+                SubscriptionView(session: session)
+            } label: {
+                HStack {
+                    Image(systemName: "creditcard.fill")
+                        .foregroundStyle(.colorTextPrimary)
 
-                        Text("Subscription")
-                            .foregroundStyle(.colorTextPrimary)
+                    Text("Subscription")
+                        .foregroundStyle(.colorTextPrimary)
 
-                        Spacer()
+                    Spacer()
 
-                        Text(currentPlanLabel)
-                            .foregroundStyle(.colorTextSecondary)
-                    }
+                    Text(currentPlanLabel)
+                        .foregroundStyle(.colorTextSecondary)
                 }
-                .listRowInsets(.init(top: 0, leading: DesignConstants.Spacing.step4x, bottom: 0, trailing: 10.0))
-            } footer: {
-                Text("Your Goldilocks Digital plan")
             }
+            .listRowInsets(.init(top: 0, leading: DesignConstants.Spacing.step4x, bottom: 0, trailing: 10.0))
+        } footer: {
+            Text("Your Goldilocks Digital plan")
         }
     }
 
@@ -146,8 +144,11 @@ struct AppSettingsView: View {
                     .padding(.horizontal, DesignConstants.Spacing.step2x)
                     .listRowBackground(Color.clear)
                     .alert("Upgrade to Admin", isPresented: $showingUpgradePrompt) {
-                        TextField("10-digit code", text: $upgradeCode)
+                        TextField("1234-5678-9012-3456", text: $upgradeCode)
                             .keyboardType(.numberPad)
+                            .onChange(of: upgradeCode) { _, newValue in
+                                upgradeCode = formatAdminCode(newValue)
+                            }
                         Button("Cancel", role: .cancel) { upgradeCode = "" }
                         Button("Upgrade", action: submitUpgradeCode)
                     } message: {
@@ -338,7 +339,8 @@ struct AppSettingsView: View {
     }
 
     private func submitUpgradeCode() {
-        let code = upgradeCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Send the canonical digits — the field carries grouping dashes.
+        let code: String = String(upgradeCode.filter { $0.isNumber })
         upgradeCode = ""
         Task {
             let success = await GoldilocksSession.shared.upgradeToAdmin(session: session, code: code)
@@ -347,6 +349,20 @@ struct AppSettingsView: View {
                 : "Upgrade failed — check the code and try again."
             showingUpgradeResult = true
         }
+    }
+
+    /// Group raw input into the dashed admin-code format
+    /// ("1234-5678-9012-3456"). Strips non-digits and caps at 16 digits.
+    private func formatAdminCode(_ raw: String) -> String {
+        let digits: String = String(raw.filter { $0.isNumber }.prefix(16))
+        var groups: [String] = []
+        var index = digits.startIndex
+        while index < digits.endIndex {
+            let end = digits.index(index, offsetBy: 4, limitedBy: digits.endIndex) ?? digits.endIndex
+            groups.append(String(digits[index..<end]))
+            index = end
+        }
+        return groups.joined(separator: "-")
     }
 
     private func openExternalURL(_ urlString: String) {
@@ -386,6 +402,9 @@ struct SubscriptionView: View {
     @State private var isSending: Bool = false
     @State private var sendResultMessage: String?
     @State private var showingSendResult: Bool = false
+    @State private var isSyncingSubscription: Bool = false
+    @State private var subscriptionResultMessage: String?
+    @State private var showingSubscriptionResult: Bool = false
     @State private var paymentMethod: PaymentMethod = .card
 
     var body: some View {
@@ -421,6 +440,11 @@ struct SubscriptionView: View {
         } message: {
             Text(sendResultMessage ?? "")
         }
+        .alert("Subscription", isPresented: $showingSubscriptionResult) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(subscriptionResultMessage ?? "")
+        }
     }
 
     @ViewBuilder
@@ -447,7 +471,7 @@ struct SubscriptionView: View {
             }
             .pickerStyle(.segmented)
 
-            let syncAction = { plan.markSubscriptionSynced() }
+            let syncAction: () -> Void = { Task { await performSubscriptionSync() } }
             Button(action: syncAction) {
                 HStack {
                     Spacer()
@@ -456,7 +480,7 @@ struct SubscriptionView: View {
                     Spacer()
                 }
             }
-            .disabled(!canSyncSubscription)
+            .disabled(!canSyncSubscription || isSyncingSubscription)
         } header: {
             Text("Payment method")
         }
@@ -543,13 +567,28 @@ struct SubscriptionView: View {
     private func sendRoster() async {
         isSending = true
         do {
-            try await plan.sendRosterToAdvisory(session: session)
+            try await plan.sendRosterToChannel(session: session)
             sendResultMessage = "Your people list was posted to your Advisory chat."
         } catch {
             sendResultMessage = error.localizedDescription
         }
         isSending = false
         showingSendResult = true
+    }
+
+    private func performSubscriptionSync() async {
+        let wasCreate: Bool = !plan.hasSubscription
+        isSyncingSubscription = true
+        do {
+            try await plan.syncSubscription(session: session)
+            subscriptionResultMessage = wasCreate
+                ? "Your subscription was created successfully."
+                : "Your subscription was updated."
+        } catch {
+            subscriptionResultMessage = "Couldn't save your subscription: \(error.localizedDescription)"
+        }
+        isSyncingSubscription = false
+        showingSubscriptionResult = true
     }
 
     private var canSendToAdvisory: Bool {

@@ -515,6 +515,10 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         try await apiClient.downgradeGoldilocksAdmin()
     }
 
+    public func setGoldilocksSubscriptionTier(_ tier: GoldilocksSubscriptionTier) async throws {
+        try await apiClient.setGoldilocksSubscriptionTier(tier: tier.rawValue)
+    }
+
     public func fetchGoldilocksAdminInboxIds() async throws -> [String] {
         let response = try await apiClient.fetchGoldilocksAdmins()
         return response.inboxes.map { $0.inboxId }
