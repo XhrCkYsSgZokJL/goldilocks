@@ -86,11 +86,9 @@ export class ReportsAgent {
   private async reconcileInner(): Promise<void> {
     // Reports is a per-client feed, role-agnostic. Every client gets one,
     // including those who later upgrade to admin — an admin is just a
-    // client whose inbox is also on the admin allowlist. iOS hides an
-    // admin's *own* Reports from their sidebar (the `isAdmin && role ==
-    // 'reports'` exclusion in GoldilocksSession); when they downgrade,
-    // that exclusion lifts and the still-active Reports row reappears.
-    // So the agent never special-cases admins here.
+    // client whose inbox is also on the admin allowlist. iOS shows the
+    // admin's own Reports in their sidebar alongside the cross-admin
+    // groups, so the agent never special-cases admins here.
     const orphans = await db
       .select({
         clientId: clients.id,
@@ -242,9 +240,8 @@ export class ReportsAgent {
       log(`[reports] client_registered: Reports for ${payload.inboxId.slice(0, 8)}… already exists, skipping`);
       return;
     }
-    // Reports is role-agnostic — every client gets one. iOS hides an
-    // admin's own Reports from their sidebar; downgrading reveals it
-    // again. The agent doesn't special-case admins.
+    // Reports is role-agnostic — every client gets one, admins included.
+    // The agent doesn't special-case admins.
     await this.createReportsFor(payload);
   }
 

@@ -8,7 +8,7 @@
 // calls re-verify on every /v2/me hit.
 
 import type { FastifyInstance } from 'fastify';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { z } from 'zod';
 import { and, eq, isNotNull, ne, sql } from 'drizzle-orm';
 import { config } from '../config.js';
@@ -135,6 +135,41 @@ export default async function meRoutes(app: FastifyInstance) {
   });
 
   // ---------------------------------------------------------------------
+  // POST /v2/me/subscription
+  // body: { tier: 'none' | 'light' | 'active' }
+  // Sets the caller's subscription plan, writing straight to
+  // `clients.subscription_tier` ('none' clears it back to NULL). This is
+  // the simulation hook behind the iOS "Create Subscription" button while
+  // Stripe billing is not yet wired up; the value drives the gold/blue
+  // subscription flag in the admin channels grid.
+  // returns: { subscriptionTier }
+  // ---------------------------------------------------------------------
+  app.post('/v2/me/subscription', async (req, reply) => {
+    const parsed = z.object({ tier: z.enum(['none', 'light', 'active']) }).safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
+    }
+    const deviceId = req.deviceId!;
+
+    const [device] = await db.select().from(devices).where(eq(devices.deviceId, deviceId)).limit(1);
+    if (!device?.inboxId) {
+      return reply.code(409).send({ error: 'device_not_registered' });
+    }
+
+    const nextTier = parsed.data.tier === 'none' ? null : parsed.data.tier;
+    const [updated] = await db
+      .update(clients)
+      .set({ subscriptionTier: nextTier })
+      .where(eq(clients.inboxId, device.inboxId))
+      .returning();
+    if (!updated) {
+      return reply.code(409).send({ error: 'client_missing' });
+    }
+
+    return reply.code(200).send({ subscriptionTier: updated.subscriptionTier });
+  });
+
+  // ---------------------------------------------------------------------
   // GET /v2/admins
   // Returns the inbox_ids of all admins. Clients use this list as the
   // group members when they create their Goldilocks channels — that's
@@ -226,7 +261,9 @@ export default async function meRoutes(app: FastifyInstance) {
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_body' });
     }
-    const code = parsed.data.code.trim();
+    // Codes are stored as plain digits; accept them typed with or without
+    // the "1234-5678-9012-3456" grouping dashes (or any other separators).
+    const code = parsed.data.code.replace(/\D/g, '');
 
     const deviceId = req.deviceId!;
     const [device] = await db.select().from(devices).where(eq(devices.deviceId, deviceId)).limit(1);
@@ -409,12 +446,15 @@ function generateNonce(): string {
 }
 
 /**
- * 10-digit numeric upgrade code. Numeric so it matches the iOS debug
- * area's numpad entry field. Only used by the dev self-promote paths —
- * real admin slots get their codes from the `admins` CLI, which checks
- * for uniqueness. Collisions here are astronomically unlikely and the
+ * 16-digit numeric upgrade code, stored as plain digits. Numeric so it
+ * matches the iOS numpad entry field, which displays it grouped as
+ * "1234-5678-9012-3456". Only used by the dev self-promote paths — real
+ * admin slots get their codes from the `admins` CLI, which checks for
+ * uniqueness. Collisions here are astronomically unlikely and the
  * inserts that use it are `onConflictDoNothing`.
  */
 function generateUpgradeCode(): string {
-  return String(Math.floor(Math.random() * 1e10)).padStart(10, '0');
+  // Two 8-digit halves so each stays within Number.MAX_SAFE_INTEGER.
+  const half = (): string => String(randomInt(0, 100_000_000)).padStart(8, '0');
+  return `${half()}${half()}`;
 }

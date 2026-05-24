@@ -341,7 +341,7 @@ function printAdmins(admins: AdminRow[]): void {
     const num = String(i + 1).padStart(2, ' ');
     const name = a.name.padEnd(16, ' ');
     const claimed = a.inbox_id ? `claimed ${a.inbox_id.slice(0, 12)}…` : `${DIM}unclaimed${RESET}`;
-    console.log(`  [${num}] ${name} code ${a.upgrade_code}  ${claimed}`);
+    console.log(`  [${num}] ${name} code ${formatCode(a.upgrade_code)}  ${claimed}`);
   });
   console.log('');
 }
@@ -353,12 +353,22 @@ function formatAdmins(admins: AdminRow[]): string[] {
     const num = String(i + 1).padStart(2, ' ');
     const name = a.name.padEnd(16, ' ');
     const claimed = a.inbox_id ? `claimed ${a.inbox_id.slice(0, 12)}…` : 'unclaimed';
-    return `[${num}] ${name} code ${a.upgrade_code}  ${claimed}`;
+    return `[${num}] ${name} code ${formatCode(a.upgrade_code)}  ${claimed}`;
   });
 }
 
 function generateCode(): string {
-  return String(randomInt(0, 10_000_000_000)).padStart(10, '0');
+  // 16 digits, built from two 8-digit halves so each stays within
+  // Number.MAX_SAFE_INTEGER. Stored as plain digits, no dashes.
+  const half = (): string => String(randomInt(0, 100_000_000)).padStart(8, '0');
+  return `${half()}${half()}`;
+}
+
+// Group an upgrade code into dash-separated blocks of 4 for display
+// ("1234567890123456" → "1234-5678-9012-3456"). Presentation only —
+// codes are stored and compared as plain digits.
+function formatCode(code: string): string {
+  return code.replace(/\D/g, '').replace(/(.{4})(?=.)/g, '$1-');
 }
 
 async function uniqueCode(client: pg.Client): Promise<string> {
@@ -1341,6 +1351,60 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
     runBash('Reset dev environment', 'dev-env.sh', ['reset'], 'systems', { preLines });
   };
 
+  // Bounce just the node processes so edited code is picked up, leaving
+  // Docker (db) and the simulator-log mirror untouched. The brief sleep
+  // gives the SIGTERM'd processes a moment to release their ports.
+  const devRestart = (): void => {
+    const preLines = [
+      'Stopping the backend server and agents…',
+      stopDevProcess('server'),
+      stopDevProcess('agent'),
+      '',
+    ];
+    startCommand({
+      title: 'Restart server + agents',
+      command: 'sleep',
+      args: ['1'],
+      returnTo: 'systems',
+      preLines,
+      finalize: async (code, append) => {
+        if (code !== 0) {
+          append('Restart cancelled — server and agents left stopped.');
+          return;
+        }
+        append('Starting the backend server and agents…');
+        append(startDevProcess('server', 'server:dev'));
+        append(startDevProcess('agent', 'agents:dev'));
+        append('');
+        append('Server and agents restarted.');
+      },
+    });
+  };
+
+  // pg_dump the dev Postgres container into ./backups. Custom format so it
+  // restores with pg_restore; the `dev-` prefix keeps these dumps out of
+  // the prod Backups restore picker.
+  const devBackup = (): void => {
+    const file = `dev-db-${timestamp()}.dump`;
+    const script = [
+      'mkdir -p backups',
+      `if docker compose -f docker-compose.yml exec -T goldilocks-db ` +
+        `pg_dump -U goldilocks -d goldilocks -Fc > "backups/${file}"; then`,
+      `  echo "Saved backups/${file}"`,
+      'else',
+      `  rm -f "backups/${file}"`,
+      '  echo "Backup failed — start the dev environment first."',
+      '  exit 1',
+      'fi',
+    ].join('\n');
+    startCommand({
+      title: 'Back up dev database',
+      command: 'bash',
+      args: ['-c', script],
+      returnTo: 'systems',
+    });
+  };
+
   // --- screen rendering ----------------------------------------------------
 
   // Each screen builds its own body element; renderScreen() selects the
@@ -1480,7 +1544,7 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
             }
             withDb((c) => addAdmin(c, trimmed))
               .then((code) => {
-                setNotice(`Added "${trimmed}" — upgrade code ${code}. Hand it to them to claim admin.`);
+                setNotice(`Added "${trimmed}" — upgrade code ${formatCode(code)}. Hand it to them to claim admin.`);
                 refresh();
               })
               .catch((err) => setNotice(`Failed: ${(err as Error).message}`));
@@ -1512,7 +1576,7 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
   if (screen === 'admin-remove') {
     const choices: Choice<AdminRow | null>[] = [
       ...(admins ?? []).map((a): Choice<AdminRow | null> => ({
-        label: `${a.name}  (code ${a.upgrade_code})`,
+        label: `${a.name}  (code ${formatCode(a.upgrade_code)})`,
         value: a,
       })),
       { label: 'Cancel', value: null },
@@ -1574,6 +1638,8 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
       if (v === 'back') go('dashboard');
       else if (v === 'up') devUp();
       else if (v === 'down') devDown();
+      else if (v === 'backup') devBackup();
+      else if (v === 'restart') devRestart();
       else if (v === 'reset') {
         setConfirmState({
           message: 'Stop everything and wipe the dev database, agent keys, and simulator installs?',
@@ -1592,6 +1658,8 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
           choices={[
             { label: 'Start', value: 'up', hint: 'node, db, migrations, server, agents' },
             { label: 'Stop', value: 'down', hint: 'stops everything; data is kept' },
+            { label: 'Backup', value: 'backup', hint: 'dump the dev database to backups/' },
+            { label: 'Restart', value: 'restart', hint: 'bounce server + agents to pick up code changes' },
             { label: 'Reset', value: 'reset', hint: 'stop, then wipe the dev db, keys, sims' },
             { label: 'Back', value: 'back' },
           ]}
@@ -1996,7 +2064,7 @@ async function adminsOneShot(args: string[]): Promise<void> {
         return;
       }
       const code = await addAdmin(c, name);
-      console.log(`${GREEN}+${RESET} added admin "${name}" — upgrade code ${BOLD}${code}${RESET}`);
+      console.log(`${GREEN}+${RESET} added admin "${name}" — upgrade code ${BOLD}${formatCode(code)}${RESET}`);
       return;
     }
     if (verb === 'remove') {
@@ -2007,7 +2075,7 @@ async function adminsOneShot(args: string[]): Promise<void> {
         return;
       }
       await removeAdmin(c, target.id);
-      console.log(`${RED}-${RESET} removed "${target.name}" (code ${target.upgrade_code} is now dead)`);
+      console.log(`${RED}-${RESET} removed "${target.name}" (code ${formatCode(target.upgrade_code)} is now dead)`);
       printAdmins(await loadAdmins(c));
       return;
     }

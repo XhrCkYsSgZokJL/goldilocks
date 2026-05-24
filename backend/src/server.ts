@@ -36,7 +36,7 @@ async function build() {
   await app.register(sensible);
   await app.register(helmet);
   // Global per-IP rate limit. Generous for normal app traffic, low enough
-  // that brute-forcing the 10-digit admin upgrade code is hopeless.
+  // that brute-forcing the 16-digit admin upgrade code is hopeless.
   await app.register(rateLimit, {
     max: 120,
     timeWindow: '1 minute',

@@ -248,6 +248,8 @@ export default async function channelRoutes(app: FastifyInstance) {
   // GET /v2/admin/channels
   // Admin-only. Returns every client's channels with the client_number
   // so the admin app can render "Advisory #55", "Reports #56" etc.
+  // `subscriptionTier` is the client's active plan (null = no plan) so
+  // the admin app can flag subscribed vs unsubscribed clients.
   // -------------------------------------------------------------------
   app.get('/v2/admin/channels', async (req, reply) => {
     const caller = await resolveCaller(req, reply);
@@ -261,6 +263,7 @@ export default async function channelRoutes(app: FastifyInstance) {
         clientId: clientChannels.clientId,
         clientNumber: clients.clientNumber,
         clientInboxId: clients.inboxId,
+        subscriptionTier: clients.subscriptionTier,
         role: clientChannels.role,
         xmtpGroupId: clientChannels.xmtpGroupId,
         status: clientChannels.status,
@@ -275,6 +278,7 @@ export default async function channelRoutes(app: FastifyInstance) {
       channels: rows.map((r) => ({
         clientNumber: r.clientNumber,
         clientInboxId: r.clientInboxId,
+        subscriptionTier: r.subscriptionTier ?? null,
         role: r.role,
         xmtpGroupId: r.xmtpGroupId,
         status: r.status,

@@ -70,7 +70,7 @@ repo — clone it next to this one.
    npm run cli -- --dev admins add <your-name>
    ```
 
-   Note the 10-digit upgrade code it prints.
+   Note the 16-digit upgrade code it prints (shown as 1234-5678-9012-3456).
 
 5. **Build the iOS app.** In the goldilocks-ios repo, build the
    **Convos (Local)** scheme and run it in a simulator — it talks to the
