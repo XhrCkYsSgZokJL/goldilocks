@@ -313,6 +313,22 @@ public enum ConvosAPI {
     public struct GoldilocksChannelsListResponse: Codable, Sendable {
         public let clientNumber: Int64
         public let channels: [GoldilocksChannel]
+        /// The roles every client should eventually have ("advisory",
+        /// "reports"). The agents provision channels asynchronously, so
+        /// `channels` can be a partial set right after registration —
+        /// this is the full target the client waits for. Optional so an
+        /// older backend that omits it still decodes.
+        public let expectedRoles: [String]?
+
+        public init(
+            clientNumber: Int64,
+            channels: [GoldilocksChannel],
+            expectedRoles: [String]? = nil
+        ) {
+            self.clientNumber = clientNumber
+            self.channels = channels
+            self.expectedRoles = expectedRoles
+        }
     }
 
     /// One row in the admin's view of all clients' channels. Admins use
@@ -326,13 +342,93 @@ public enum ConvosAPI {
         public let createdAt: String
         public let explodedAt: String?
         public let recreatedAt: String?
-        /// The client's active subscription plan ("light", "active",
-        /// "custom"), or nil when they have no plan.
-        public let subscriptionTier: String?
+        /// The client's current monthly spend in cents — drives the
+        /// Bronze/Silver/Gold membership tier shown in the admin view.
+        public let monthlyRateCents: Int
     }
 
     public struct GoldilocksAdminChannelsResponse: Codable, Sendable {
         public let channels: [GoldilocksAdminChannel]
+    }
+
+    // MARK: - Goldilocks billing (Stripe prepaid balance)
+
+    /// Body for `POST /v2/billing/checkout` — buy a block of coverage.
+    /// Seat counts are sent rather than an amount so the backend prices
+    /// the top-up server-side.
+    public struct GoldilocksCheckoutRequest: Codable, Sendable {
+        public let paymentMethod: String   // "card" | "crypto"
+        public let durationMonths: Int     // 1, 3 or 6
+        public let lightSeats: Int
+        public let activeSeats: Int
+
+        public init(paymentMethod: String, durationMonths: Int, lightSeats: Int, activeSeats: Int) {
+            self.paymentMethod = paymentMethod
+            self.durationMonths = durationMonths
+            self.lightSeats = lightSeats
+            self.activeSeats = activeSeats
+        }
+    }
+
+    public struct GoldilocksCheckoutResponse: Codable, Sendable {
+        /// Hosted Stripe Checkout URL the app opens in the browser.
+        public let checkoutUrl: String
+        /// Stripe Checkout Session id, for status reconciliation.
+        public let sessionId: String
+
+        public init(checkoutUrl: String, sessionId: String) {
+            self.checkoutUrl = checkoutUrl
+            self.sessionId = sessionId
+        }
+    }
+
+    /// Body for `POST /v2/billing/seats` — pushes the current seat mix so
+    /// the backend can re-settle the balance and move the coverage date.
+    public struct GoldilocksSeatsRequest: Codable, Sendable {
+        public let lightSeats: Int
+        public let activeSeats: Int
+
+        public init(lightSeats: Int, activeSeats: Int) {
+            self.lightSeats = lightSeats
+            self.activeSeats = activeSeats
+        }
+    }
+
+    /// The client's prepaid-balance state, from `/v2/billing/status` and
+    /// `/v2/billing/seats`.
+    public struct GoldilocksBillingStatusResponse: Codable, Sendable {
+        /// ISO-8601 instant coverage runs out; nil when there's no cover.
+        public let activeUntil: String?
+        /// Live prepaid balance in cents.
+        public let balanceCents: Int
+        /// Current monthly burn rate in cents (from the seat mix).
+        public let monthlyRateCents: Int
+        public let lightSeats: Int
+        public let activeSeats: Int
+
+        public init(
+            activeUntil: String?,
+            balanceCents: Int,
+            monthlyRateCents: Int,
+            lightSeats: Int,
+            activeSeats: Int
+        ) {
+            self.activeUntil = activeUntil
+            self.balanceCents = balanceCents
+            self.monthlyRateCents = monthlyRateCents
+            self.lightSeats = lightSeats
+            self.activeSeats = activeSeats
+        }
+    }
+
+    /// Result of `POST /v2/billing/cancel`.
+    public struct GoldilocksCancelResponse: Codable, Sendable {
+        /// How much was refunded to the card, in cents.
+        public let refundedCents: Int
+
+        public init(refundedCents: Int) {
+            self.refundedCents = refundedCents
+        }
     }
 
     // MARK: - Common Error Response

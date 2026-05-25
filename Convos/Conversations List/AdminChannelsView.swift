@@ -109,7 +109,7 @@ struct AdminChannelsView: View {
             Text("\(count) \(noun)")
                 .font(.caption)
                 .fontWeight(.semibold)
-                .foregroundStyle(Constant.subscribedAccent)
+                .foregroundStyle(.colorTextSecondary)
             Spacer()
         }
         .padding(.horizontal, DesignConstants.Spacing.step4x)
@@ -118,9 +118,11 @@ struct AdminChannelsView: View {
 
     private func channelRow(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
         let isExploded: Bool = channel.status == "exploded"
+        let isAdvisory: Bool = channel.role == "advisory"
         let subtitleColor: Color = isExploded ? .colorTextTertiary : .colorTextSecondary
         let rowOpacity: Double = isExploded ? 0.5 : 1.0
-        let tierColor: Color = channel.hasSubscription ? Constant.subscribedAccent : Constant.unsubscribedAccent
+        let tier: GoldilocksMembershipTier = GoldilocksMembershipTier(monthlyRateCents: channel.monthlyRateCents)
+        let tierColor: Color = isAdvisory ? tier.accentColor : .colorTextTertiary
         return HStack(spacing: DesignConstants.Spacing.step3x) {
             roleIcon(for: channel)
             VStack(alignment: .leading, spacing: 2) {
@@ -133,7 +135,7 @@ struct AdminChannelsView: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                Text(channel.subscriptionLabel)
+                Text(tier.displayName)
                     .font(.caption2)
                     .fontWeight(.semibold)
                     .foregroundStyle(tierColor)
@@ -149,8 +151,11 @@ struct AdminChannelsView: View {
         .padding(.vertical, DesignConstants.Spacing.stepX)
     }
 
+    /// Advisory rows carry the client's Bronze/Silver/Gold membership
+    /// colour; Reports rows stay neutral.
     private func rowBackground(for channel: ConvosAPI.GoldilocksAdminChannel) -> Color {
-        channel.hasSubscription ? Constant.subscribedRowTint : Constant.unsubscribedRowTint
+        guard channel.role == "advisory" else { return .clear }
+        return GoldilocksMembershipTier(monthlyRateCents: channel.monthlyRateCents).tintColor
     }
 
     private func roleIcon(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
@@ -168,17 +173,6 @@ struct AdminChannelsView: View {
                 .foregroundStyle(.colorFillPrimary)
         }
     }
-
-    private enum Constant {
-        /// Faint gold wash behind rows whose client has an active plan.
-        static let subscribedRowTint: Color = Color(red: 0.85, green: 0.65, blue: 0.13).opacity(0.16)
-        /// Faint blue wash behind rows whose client has no plan.
-        static let unsubscribedRowTint: Color = Color(red: 0.20, green: 0.48, blue: 0.95).opacity(0.12)
-        /// Gold used for the plan label on subscribed rows.
-        static let subscribedAccent: Color = Color(red: 0.70, green: 0.52, blue: 0.05)
-        /// Blue used for the plan label on unsubscribed rows.
-        static let unsubscribedAccent: Color = Color(red: 0.16, green: 0.40, blue: 0.85)
-    }
 }
 
 private extension ConvosAPI.GoldilocksAdminChannel {
@@ -194,17 +188,8 @@ private extension ConvosAPI.GoldilocksAdminChannel {
 
     var uniqueKey: String { "\(clientInboxId)-\(role)" }
 
-    /// True when the client is on a paid plan (any non-empty tier).
+    /// True when the client is on a paid plan — i.e. spending anything.
     var hasSubscription: Bool {
-        guard let tier = subscriptionTier, !tier.isEmpty else { return false }
-        return tier.lowercased() != "none"
-    }
-
-    /// Human-facing plan name shown on the admin row.
-    var subscriptionLabel: String {
-        guard hasSubscription, let tier = subscriptionTier else { return "No plan" }
-        let firstLetter: String = tier.prefix(1).uppercased()
-        let remainder: Substring = tier.dropFirst()
-        return "\(firstLetter)\(remainder)"
+        monthlyRateCents > 0
     }
 }

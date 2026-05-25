@@ -62,19 +62,31 @@ struct ConversationsView: View {
                 presentingAppSettings = true
             }
             Button(action: openMyInfo) {
-                goldilocksChip(icon: icon, label: label)
+                goldilocksChip(icon: icon, label: label, labelTint: .primary)
             }
             .buttonStyle(.plain)
 
-            if role == .client, let people = peopleChip {
-                let openSubscription = {
-                    appSettingsInitialRoute = .subscription
+            if role == .client {
+                let tier = membershipTier
+                let openMembership = {
+                    appSettingsInitialRoute = .membership
                     presentingAppSettings = true
                 }
-                Button(action: openSubscription) {
-                    goldilocksChip(icon: people.icon, label: people.label)
+                Button(action: openMembership) {
+                    goldilocksChip(icon: tier.iconName, label: tier.displayName, iconTint: tier.accentColor, labelTint: .primary)
                 }
                 .buttonStyle(.plain)
+
+                if GoldilocksSession.shared.hasPendingInvoice {
+                    let openInvoices = {
+                        appSettingsInitialRoute = nil
+                        presentingAppSettings = true
+                    }
+                    Button(action: openInvoices) {
+                        goldilocksChip(icon: "doc.text.fill", label: "Pending", labelTint: .primary)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
         .padding(.horizontal, DesignConstants.Spacing.step4x)
@@ -82,16 +94,20 @@ struct ConversationsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// A small capsule chip — used for the role badge and the people badge.
-    private func goldilocksChip(icon: String, label: String) -> some View {
+    /// A small capsule chip — used for the role badge and the tier badge.
+    /// `iconTint` and `labelTint` colour the icon and label separately;
+    /// both default to secondary for the neutral role chip, while the
+    /// tier chip tints only its icon and leaves the name as primary text.
+    private func goldilocksChip(icon: String, label: String, iconTint: Color = .secondary, labelTint: Color = .secondary) -> some View {
         return HStack(spacing: 4) {
             Image(systemName: icon)
                 .font(.caption2)
+                .foregroundStyle(iconTint)
             Text(label)
                 .font(.caption2)
                 .fontWeight(.medium)
+                .foregroundStyle(labelTint)
         }
-        .foregroundStyle(.secondary)
         .padding(.horizontal, DesignConstants.Spacing.step3x)
         .padding(.vertical, 4)
         // Liquid Glass capsule so the conversation rows show through /
@@ -99,14 +115,12 @@ struct ConversationsView: View {
         .glassEffect(.regular, in: Capsule())
     }
 
-    /// Icon + label for the chip shown beside the role chip — the number
-    /// of people on the client's subscription. Nil when the client hasn't
-    /// added anyone yet.
-    private var peopleChip: (icon: String, label: String)? {
-        let count = GoldilocksSeatPlan.shared.totalSeats
-        guard count > 0 else { return nil }
-        let noun: String = count == 1 ? "person" : "people"
-        return ("person.2.fill", "\(count) \(noun)")
+    /// The client's Bronze/Silver/Gold membership tier, shown as a chip
+    /// beside the role chip. Bronze is the free tier (no paid people),
+    /// Silver once anyone is on the Light plan, Gold once anyone is on
+    /// the Active plan.
+    private var membershipTier: GoldilocksMembershipTier {
+        GoldilocksMembershipTier(monthlyTotalDollars: GoldilocksSeatPlan.shared.monthlyTotal)
     }
 
     var filteredEmptyStateView: some View {

@@ -36,6 +36,12 @@ final class GoldilocksSession {
     private(set) var isRegistering: Bool = false
     private(set) var lastError: String?
 
+    /// Whether this client has an invoice awaiting payment. Placeholder:
+    /// invoices are not built yet, so this stays false until a real data
+    /// source (a backend field) sets it. Drives the "Pending" chip on the
+    /// conversations list.
+    var hasPendingInvoice: Bool = false
+
     /// Latched true once every expected Goldilocks channel (Advisory +
     /// Reports) has been confirmed present in the local database.
     /// `ensureGoldilocksChannelsPresent` no-ops once this is set.
@@ -175,22 +181,28 @@ final class GoldilocksSession {
         while Date() < deadline {
             attempt += 1
             do {
-                let perRoleIds = try await refreshOwnedChannels(session: session)
+                let owned = try await refreshOwnedChannels(session: session)
+                let perRoleIds = owned.perRoleIds
                 var missing = try await session.missingGoldilocksConversationIds(perRoleIds)
-                Log.info("[Goldilocks] ensureChannelsPresent attempt \(attempt): backend reports \(perRoleIds.count) channel(s), \(missing.count) missing in local DB")
+                let channelSummary = "\(perRoleIds.count) channel(s), \(missing.count) missing in local DB"
+                Log.info("[Goldilocks] ensureChannelsPresent attempt \(attempt): backend reports \(channelSummary), allRolesProvisioned=\(owned.allRolesProvisioned)")
 
-                if !perRoleIds.isEmpty, missing.isEmpty {
+                // Only latch setup as complete once every expected role has
+                // been provisioned by the backend *and* is present locally —
+                // never on a partial set the agents are still filling in
+                // (the registration-time race).
+                if owned.allRolesProvisioned, !perRoleIds.isEmpty, missing.isEmpty {
                     channelsConfirmed = true
-                    Log.info("[Goldilocks] ensureChannelsPresent: all \(perRoleIds.count) channel(s) present — setup complete")
+                    Log.info("[Goldilocks] ensureChannelsPresent: all \(perRoleIds.count) expected channel(s) present — setup complete")
                     return
                 }
 
                 // Land anything already waiting in the welcome queue.
                 await session.messagingService().sessionStateManager.requestDiscovery()
                 missing = try await session.missingGoldilocksConversationIds(perRoleIds)
-                if !perRoleIds.isEmpty, missing.isEmpty {
+                if owned.allRolesProvisioned, !perRoleIds.isEmpty, missing.isEmpty {
                     channelsConfirmed = true
-                    Log.info("[Goldilocks] ensureChannelsPresent: all \(perRoleIds.count) channel(s) present after discovery — setup complete")
+                    Log.info("[Goldilocks] ensureChannelsPresent: all \(perRoleIds.count) expected channel(s) present after discovery — setup complete")
                     return
                 }
 
@@ -227,10 +239,13 @@ final class GoldilocksSession {
 
     /// Fetch the backend's channel set, publish it to `GoldilocksOwnedChannels`
     /// (which drives the conversation-list staleness filter), and return the
-    /// per-role channel IDs (Advisory + Reports) that must be present locally.
-    private func refreshOwnedChannels(session: any SessionManagerProtocol) async throws -> [String] {
-        let serverChannels = try await session.listGoldilocksChannels()
-        let active = serverChannels.filter { $0.status == "active" }
+    /// per-role channel IDs plus whether every expected role (Advisory +
+    /// Reports) has actually been provisioned on the backend yet.
+    private func refreshOwnedChannels(
+        session: any SessionManagerProtocol
+    ) async throws -> (perRoleIds: [String], allRolesProvisioned: Bool) {
+        let response = try await session.listGoldilocksChannels()
+        let active = response.channels.filter { $0.status == "active" }
         let perRoleIds = active.compactMap { $0.xmtpGroupId }
         var ownedIds = perRoleIds
         if isAdmin {
@@ -250,7 +265,14 @@ final class GoldilocksSession {
             }
         }
         GoldilocksOwnedChannels.set(ownedIds)
-        return perRoleIds
+        // The backend provisions channels asynchronously; only treat setup
+        // as complete once every expected role has a group id. An older
+        // backend that omits `expectedRoles` yields an empty set, which is
+        // vacuously a subset — falling back to the prior behaviour.
+        let expectedRoles: Set<String> = Set(response.expectedRoles ?? [])
+        let provisionedRoles: Set<String> = Set(active.filter { $0.xmtpGroupId != nil }.map { $0.role })
+        let allRolesProvisioned: Bool = expectedRoles.isSubset(of: provisionedRoles)
+        return (perRoleIds: perRoleIds, allRolesProvisioned: allRolesProvisioned)
     }
 
     /// Promote this device's inbox to admin by submitting the secret

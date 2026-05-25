@@ -3,9 +3,9 @@ import ConvosCoreiOS
 import Foundation
 import Observation
 
-/// One person on the subscription. Each person occupies a single seat at
-/// their own plan tier (Light or Active). Entered by the client in the
-/// Subscription screen and pushed to their Advisory chat.
+/// One person on the plan. Each person occupies a single seat at their own
+/// plan tier (Light or Active). Entered by the client in the Subscription
+/// screen and pushed to their Advisory chat.
 struct SeatMember: Codable, Identifiable, Equatable {
     var id: UUID
     var name: String
@@ -43,25 +43,17 @@ struct SeatMember: Codable, Identifiable, Equatable {
     }
 }
 
-/// On-device store for the client's subscription people, persisted to
-/// UserDefaults. Each person is one seat; the monthly total is the sum of
-/// every person's plan tier.
-///
-/// Stage 1 is purely local — Stripe billing and backend sync are wired in
-/// later stages. For now this just holds the configuration so the
-/// Subscription screen is fully interactive.
+/// On-device store for the client's plan people, persisted to UserDefaults.
+/// Each person is one seat; the monthly total is the sum of every person's
+/// plan tier and sets the billing burn rate. Billing itself (the prepaid
+/// balance and coverage date) lives on the backend — this just holds the
+/// people list that drives the rate.
 @MainActor
 @Observable
 final class GoldilocksSeatPlan {
     static let shared: GoldilocksSeatPlan = GoldilocksSeatPlan()
 
     var members: [SeatMember] {
-        didSet { persist() }
-    }
-
-    /// The `email|tier` roster entries the active subscription covers,
-    /// sorted. `nil` until the client first creates a subscription.
-    private(set) var subscribedRoster: [String]? {
         didSet { persist() }
     }
 
@@ -93,9 +85,8 @@ final class GoldilocksSeatPlan {
         }
     }
 
-    /// The overall plan tier reported to the backend — Active when any
-    /// seat is on the Active plan, otherwise Light. This is the value the
-    /// admin channels grid reads to flag a client as subscribed.
+    /// The overall plan tier — Active when any seat is on the Active plan,
+    /// otherwise Light, or No plan when there are no people.
     var planTier: GoldilocksSubscriptionTier {
         if members.contains(where: { $0.tier == .active }) {
             return .active
@@ -106,11 +97,10 @@ final class GoldilocksSeatPlan {
     private init() {
         let snapshot = Self.loadSnapshot()
         self.members = snapshot?.members ?? []
-        self.subscribedRoster = snapshot?.subscribedRoster
         self.sentFingerprint = snapshot?.sentFingerprint
     }
 
-    // MARK: - Subscription sync
+    // MARK: - Roster fingerprint
 
     /// Canonical `email|tier` token for one person. Email is trimmed and
     /// lower-cased so capitalisation or stray spaces don't read as a change.
@@ -119,29 +109,9 @@ final class GoldilocksSeatPlan {
         return "\(email)|\(member.tier.rawValue)"
     }
 
-    /// The current people list as sorted `email|tier` tokens.
-    var currentRosterEntries: [String] {
-        members.map { rosterEntry(for: $0) }.sorted()
-    }
-
-    /// Fingerprint of the current people list.
+    /// Fingerprint of the current people list — sorted `email|tier` tokens.
     var currentFingerprint: String {
-        currentRosterEntries.joined(separator: "\n")
-    }
-
-    /// True once the client has created a subscription.
-    var hasSubscription: Bool {
-        subscribedRoster != nil
-    }
-
-    /// True when the subscription covers exactly the current people list.
-    var subscriptionMatches: Bool {
-        subscribedRoster?.joined(separator: "\n") == currentFingerprint
-    }
-
-    /// True when there's a subscription but the people list has drifted from it.
-    var subscriptionNeedsUpdate: Bool {
-        hasSubscription && !subscriptionMatches
+        members.map { rosterEntry(for: $0) }.sorted().joined(separator: "\n")
     }
 
     /// True when the current people list was already sent to Advisory.
@@ -149,32 +119,10 @@ final class GoldilocksSeatPlan {
         sentFingerprint == currentFingerprint
     }
 
-    /// Whether "Send to Advisory" is currently allowed: there are people, the
-    /// subscription matches them, and this exact list hasn't been sent yet.
+    /// Whether "Send to Advisory" is currently allowed: there are people
+    /// and this exact list hasn't been sent yet.
     var canSendToAdvisory: Bool {
-        !members.isEmpty && subscriptionMatches && !alreadySentCurrentRoster
-    }
-
-    /// True when this person isn't yet covered by the active subscription —
-    /// added or re-tiered since the last Create / Update Subscription.
-    func isPending(_ member: SeatMember) -> Bool {
-        guard let subscribedRoster else { return false }
-        return !subscribedRoster.contains(rosterEntry(for: member))
-    }
-
-    /// Record that the subscription now covers the current people list.
-    func markSubscriptionSynced() {
-        subscribedRoster = currentRosterEntries
-    }
-
-    /// Simulate a successful subscription purchase: push the plan tier to
-    /// the Goldilocks backend, then record the roster locally. The backend
-    /// tier is what the admin channels grid reads, so this is what makes a
-    /// simulated subscription show up there. The local roster is only
-    /// marked synced once the backend call succeeds.
-    func syncSubscription(session: any SessionManagerProtocol) async throws {
-        try await GoldilocksSession.shared.setSubscriptionTier(planTier, session: session)
-        markSubscriptionSynced()
+        !members.isEmpty && !alreadySentCurrentRoster
     }
 
     // MARK: - Roster delivery
@@ -222,7 +170,7 @@ final class GoldilocksSeatPlan {
 
     /// Compose the current people list and post it to the caller's own
     /// Advisory XMTP group. Independent of billing — the roster is just a
-    /// chat message, so this works before Stripe is wired up.
+    /// chat message.
     func sendRosterToChannel(session: any SessionManagerProtocol) async throws {
         let conversations: [Conversation] = try session
             .conversationsRepository(for: [.allowed, .unknown])
@@ -244,16 +192,11 @@ final class GoldilocksSeatPlan {
 
     private struct Snapshot: Codable {
         var members: [SeatMember]
-        var subscribedRoster: [String]?
         var sentFingerprint: String?
     }
 
     private func persist() {
-        let snapshot = Snapshot(
-            members: members,
-            subscribedRoster: subscribedRoster,
-            sentFingerprint: sentFingerprint
-        )
+        let snapshot = Snapshot(members: members, sentFingerprint: sentFingerprint)
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         UserDefaults.standard.set(data, forKey: Constant.storageKey)
     }

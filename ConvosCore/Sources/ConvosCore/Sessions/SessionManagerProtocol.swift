@@ -124,6 +124,26 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// which drives the subscription flag in the admin channels grid.
     func setGoldilocksSubscriptionTier(_ tier: GoldilocksSubscriptionTier) async throws
 
+    /// Create a Stripe Checkout Session to buy `durationMonths` of cover
+    /// and return the hosted URL to open in the browser. Seat counts are
+    /// sent so the backend prices the top-up itself.
+    func createGoldilocksCheckout(
+        paymentMethod: GoldilocksPaymentMethod,
+        durationMonths: Int,
+        lightSeats: Int,
+        activeSeats: Int
+    ) async throws -> ConvosAPI.GoldilocksCheckoutResponse
+
+    /// Fetch the caller's prepaid-balance state (`GET /v2/billing/status`).
+    func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+
+    /// Push the current seat mix so the backend re-settles the balance and
+    /// moves the coverage date (`POST /v2/billing/seats`).
+    func syncGoldilocksSeats(lightSeats: Int, activeSeats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+
+    /// Stop cover and refund the unused balance (`POST /v2/billing/cancel`).
+    func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse
+
     /// Fetch the inbox IDs of all admins (Goldilocks team). Used by the
     /// client app as the recipient list when creating Advisory/Reports.
     func fetchGoldilocksAdminInboxIds() async throws -> [String]
@@ -165,10 +185,10 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// freshly-created XMTP group, flipping status back to `'active'`.
     func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws
 
-    /// Fetch the calling client's channel rows from the backend. Used
-    /// by the auto-recover path to compare expected count against the
-    /// number of Goldilocks-managed conversations in local storage.
-    func listGoldilocksChannels() async throws -> [ConvosAPI.GoldilocksChannel]
+    /// Fetch the calling client's channel rows from the backend, plus
+    /// the `expectedRoles` set. Used by the auto-recover path to compare
+    /// the expected channels against what's present in local storage.
+    func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse
 
     /// Ask the backend to fire `channels_recover` NOTIFY for this
     /// client. The agent removes + re-adds us to each Advisory/Reports
@@ -220,6 +240,31 @@ extension SessionManagerProtocol {
         // No-op for mocks
     }
 
+    public func createGoldilocksCheckout(
+        paymentMethod: GoldilocksPaymentMethod,
+        durationMonths: Int,
+        lightSeats: Int,
+        activeSeats: Int
+    ) async throws -> ConvosAPI.GoldilocksCheckoutResponse {
+        throw GoldilocksAuth.AuthError.missingPrivateKey
+    }
+
+    public func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(
+            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, lightSeats: 0, activeSeats: 0
+        )
+    }
+
+    public func syncGoldilocksSeats(lightSeats: Int, activeSeats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(
+            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, lightSeats: 0, activeSeats: 0
+        )
+    }
+
+    public func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
+        ConvosAPI.GoldilocksCancelResponse(refundedCents: 0)
+    }
+
     public func fetchGoldilocksAdminInboxIds() async throws -> [String] {
         []
     }
@@ -245,7 +290,9 @@ extension SessionManagerProtocol {
     public func markGoldilocksChannelExploded(role: String) async throws {}
     public func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws {}
 
-    public func listGoldilocksChannels() async throws -> [ConvosAPI.GoldilocksChannel] { [] }
+    public func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse {
+        ConvosAPI.GoldilocksChannelsListResponse(clientNumber: 0, channels: [])
+    }
     public func recoverGoldilocksChannels() async throws {}
     public func goldilocksManagedConversationCount() async throws -> Int { 0 }
     public func missingGoldilocksConversationIds(_ xmtpGroupIds: [String]) async throws -> [String] { [] }

@@ -88,6 +88,12 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse
     func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse
     func recoverGoldilocksChannels() async throws
+
+    // Goldilocks billing (Stripe prepaid balance).
+    func createGoldilocksCheckout(_ request: ConvosAPI.GoldilocksCheckoutRequest) async throws -> ConvosAPI.GoldilocksCheckoutResponse
+    func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    func syncGoldilocksSeats(_ request: ConvosAPI.GoldilocksSeatsRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse
 }
 
 extension ConvosAPIClientProtocol {
@@ -99,6 +105,28 @@ extension ConvosAPIClientProtocol {
     /// implementation. The real `ConvosAPIClient` overrides this with the
     /// `POST /v2/me/subscription` network call.
     func setGoldilocksSubscriptionTier(tier: String) async throws {}
+
+    /// Default billing stubs so mock/stub conformers compile without their
+    /// own implementations. The real `ConvosAPIClient` overrides them.
+    func createGoldilocksCheckout(_ request: ConvosAPI.GoldilocksCheckoutRequest) async throws -> ConvosAPI.GoldilocksCheckoutResponse {
+        throw APIError.notImplementedInGoldilocks
+    }
+
+    func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(
+            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, lightSeats: 0, activeSeats: 0
+        )
+    }
+
+    func syncGoldilocksSeats(_ request: ConvosAPI.GoldilocksSeatsRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(
+            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, lightSeats: 0, activeSeats: 0
+        )
+    }
+
+    func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
+        ConvosAPI.GoldilocksCancelResponse(refundedCents: 0)
+    }
 }
 
 /// HTTP client for Convos backend API
@@ -799,6 +827,34 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode([String: String]())
         let _: EmptyResponse = try await performRequest(request)
+    }
+
+    // MARK: - Goldilocks billing
+
+    func createGoldilocksCheckout(_ checkout: ConvosAPI.GoldilocksCheckoutRequest) async throws -> ConvosAPI.GoldilocksCheckoutResponse {
+        var request = try authenticatedRequest(for: "v2/billing/checkout", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(checkout)
+        return try await performRequest(request)
+    }
+
+    func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        let request = try authenticatedRequest(for: "v2/billing/status", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func syncGoldilocksSeats(_ seats: ConvosAPI.GoldilocksSeatsRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        var request = try authenticatedRequest(for: "v2/billing/seats", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(seats)
+        return try await performRequest(request)
+    }
+
+    func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
+        var request = try authenticatedRequest(for: "v2/billing/cancel", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([String: String]())
+        return try await performRequest(request)
     }
 
     // MARK: - Helper Methods

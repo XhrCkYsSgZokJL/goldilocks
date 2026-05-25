@@ -519,6 +519,34 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         try await apiClient.setGoldilocksSubscriptionTier(tier: tier.rawValue)
     }
 
+    public func createGoldilocksCheckout(
+        paymentMethod: GoldilocksPaymentMethod,
+        durationMonths: Int,
+        lightSeats: Int,
+        activeSeats: Int
+    ) async throws -> ConvosAPI.GoldilocksCheckoutResponse {
+        let request = ConvosAPI.GoldilocksCheckoutRequest(
+            paymentMethod: paymentMethod.rawValue,
+            durationMonths: durationMonths,
+            lightSeats: lightSeats,
+            activeSeats: activeSeats
+        )
+        return try await apiClient.createGoldilocksCheckout(request)
+    }
+
+    public func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        try await apiClient.fetchGoldilocksBillingStatus()
+    }
+
+    public func syncGoldilocksSeats(lightSeats: Int, activeSeats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        let request = ConvosAPI.GoldilocksSeatsRequest(lightSeats: lightSeats, activeSeats: activeSeats)
+        return try await apiClient.syncGoldilocksSeats(request)
+    }
+
+    public func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
+        try await apiClient.cancelGoldilocksBilling()
+    }
+
     public func fetchGoldilocksAdminInboxIds() async throws -> [String] {
         let response = try await apiClient.fetchGoldilocksAdmins()
         return response.inboxes.map { $0.inboxId }
@@ -556,9 +584,8 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         _ = try await apiClient.recreateGoldilocksChannel(role: role, xmtpGroupId: xmtpGroupId)
     }
 
-    public func listGoldilocksChannels() async throws -> [ConvosAPI.GoldilocksChannel] {
-        let response = try await apiClient.listGoldilocksChannels()
-        return response.channels
+    public func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse {
+        try await apiClient.listGoldilocksChannels()
     }
 
     public func recoverGoldilocksChannels() async throws {

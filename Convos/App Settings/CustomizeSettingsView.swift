@@ -19,7 +19,7 @@ struct CustomizeSettingsView: View {
                         .font(.convosTitle)
                         .tracking(Font.convosTitleTracking)
                         .foregroundStyle(.colorTextPrimary)
-                    Text("Your new convos")
+                    Text("Your new conversations")
                         .font(.subheadline)
                         .foregroundStyle(.colorTextPrimary)
                 }
