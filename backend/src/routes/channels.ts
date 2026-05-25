@@ -13,6 +13,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { monthlyTotalCents } from '../billing/pricing.js';
 import { db } from '../db/client.js';
 import { adminInboxes, clients, clientChannels, devices } from '../db/schema.js';
 import { requireJwt } from '../middleware/jwt.js';
@@ -120,7 +121,7 @@ export default async function channelRoutes(app: FastifyInstance) {
 
   // -------------------------------------------------------------------
   // GET /v2/me/channels
-  // returns: { channels: [{role, xmtpGroupId, status, ...}] }
+  // returns: { clientNumber, expectedRoles, channels: [{role, ...}] }
   // -------------------------------------------------------------------
   app.get('/v2/me/channels', async (req, reply) => {
     const caller = await resolveCaller(req, reply);
@@ -133,6 +134,12 @@ export default async function channelRoutes(app: FastifyInstance) {
 
     return reply.code(200).send({
       clientNumber: caller.clientNumber,
+      // Every client is provisioned one channel per role (advisory +
+      // reports). The agents create those groups asynchronously after
+      // registration, so `channels` can briefly be a partial set — iOS
+      // reads `expectedRoles` to know the full target and avoid latching
+      // "setup complete" before every channel has landed.
+      expectedRoles: [...ROLE.options],
       channels: rows.map((r) => ({
         role: r.role,
         xmtpGroupId: r.xmtpGroupId,
@@ -248,8 +255,8 @@ export default async function channelRoutes(app: FastifyInstance) {
   // GET /v2/admin/channels
   // Admin-only. Returns every client's channels with the client_number
   // so the admin app can render "Advisory #55", "Reports #56" etc.
-  // `subscriptionTier` is the client's active plan (null = no plan) so
-  // the admin app can flag subscribed vs unsubscribed clients.
+  // `monthlyRateCents` is the client's current monthly spend, so the
+  // admin app can colour each chat by Bronze/Silver/Gold membership tier.
   // -------------------------------------------------------------------
   app.get('/v2/admin/channels', async (req, reply) => {
     const caller = await resolveCaller(req, reply);
@@ -263,7 +270,8 @@ export default async function channelRoutes(app: FastifyInstance) {
         clientId: clientChannels.clientId,
         clientNumber: clients.clientNumber,
         clientInboxId: clients.inboxId,
-        subscriptionTier: clients.subscriptionTier,
+        billingLightSeats: clients.billingLightSeats,
+        billingActiveSeats: clients.billingActiveSeats,
         role: clientChannels.role,
         xmtpGroupId: clientChannels.xmtpGroupId,
         status: clientChannels.status,
@@ -278,7 +286,7 @@ export default async function channelRoutes(app: FastifyInstance) {
       channels: rows.map((r) => ({
         clientNumber: r.clientNumber,
         clientInboxId: r.clientInboxId,
-        subscriptionTier: r.subscriptionTier ?? null,
+        monthlyRateCents: monthlyTotalCents(r.billingLightSeats, r.billingActiveSeats),
         role: r.role,
         xmtpGroupId: r.xmtpGroupId,
         status: r.status,

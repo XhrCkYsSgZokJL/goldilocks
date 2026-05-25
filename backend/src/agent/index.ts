@@ -11,14 +11,53 @@
 //
 // Run with `npm run agent:dev` (watcher) or `npm run agent:start` (built).
 
+import { sql } from 'drizzle-orm';
+import { db } from '../db/client.js';
 import { getOrCreateAgentIdentity } from './store.js';
 import { bootAgentClient } from './xmtp-runtime.js';
 import { AdminsAgent } from './admins-agent.js';
 import { ReportsAgent } from './reports-agent.js';
 import { startListener } from './listener.js';
 
+/**
+ * Block until Postgres accepts a query. The dev stack can start the
+ * agent before — or in parallel with — the database container, so on a
+ * cold boot the very first query (getOrCreateAgentIdentity) would hit
+ * ECONNREFUSED and the process would exit. Under `tsx watch` the watcher
+ * then keeps a dead shell alive, so nothing restarts the agent and no
+ * client ever gets its channels provisioned. Retry for ~60s so a normal
+ * container boot is absorbed silently; only give up if the database is
+ * genuinely unreachable.
+ */
+async function waitForDatabase(): Promise<void> {
+  const maxAttempts = 30;
+  const retryDelayMs = 2_000;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await db.execute(sql`select 1`);
+      if (attempt > 1) {
+        console.log(`[agent] database ready (after ${attempt} attempts)`);
+      }
+      return;
+    } catch (err) {
+      if (attempt === maxAttempts) {
+        throw new Error(
+          `database unreachable after ${maxAttempts} attempts: ${(err as Error).message}`,
+        );
+      }
+      console.log(
+        `[agent] database not ready, retrying in ${retryDelayMs / 1000}s ` +
+          `(attempt ${attempt}/${maxAttempts})…`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+}
+
 async function main(): Promise<void> {
   console.log('[agent] starting goldilocks-agent…');
+
+  await waitForDatabase();
 
   const adminsIdentity = await getOrCreateAgentIdentity('admins');
   const reportsIdentity = await getOrCreateAgentIdentity('reports');

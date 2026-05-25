@@ -66,6 +66,20 @@ const schema = z.object({
   // DEV-ONLY: when true, /v2/admin/promote-self is enabled. NEVER set this
   // in production — anyone with a JWT could grant themselves admin.
   GOLDILOCKS_ALLOW_SELF_PROMOTE: z.coerce.boolean().default(false),
+
+  // Stripe billing. All optional so the server still boots without them;
+  // the /v2/billing/* routes return 503 until a secret key is configured.
+  //   STRIPE_SECRET_KEY     — sk_test_… in dev, sk_live_… in production.
+  //   STRIPE_WEBHOOK_SECRET — whsec_… signing secret for /v2/stripe/webhook.
+  //                           In local dev this comes from `stripe listen`.
+  //   STRIPE_SUCCESS_URL /  — where Stripe redirects the browser after a
+  //   STRIPE_CANCEL_URL       checkout. Left blank, they default to the
+  //                           backend's own /v2/billing/return + /cancel
+  //                           landing pages derived from PUBLIC_BASE_URL.
+  STRIPE_SECRET_KEY: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  STRIPE_WEBHOOK_SECRET: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  STRIPE_SUCCESS_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
+  STRIPE_CANCEL_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
 });
 
 const parsed = schema.safeParse(process.env);

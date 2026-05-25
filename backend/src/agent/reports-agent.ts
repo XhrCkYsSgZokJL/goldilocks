@@ -310,7 +310,15 @@ export class ReportsAgent {
     // Diagnostic: the welcome is HPKE-sealed per installation, so a
     // pile-up of stale installations on this inbox is the prime suspect
     // when the client cannot decrypt it. Log the count + ids.
-    await logInboxInstallations(this.client, payload.inboxId, '[reports] diag:');
+    const installationCount = await logInboxInstallations(this.client, payload.inboxId, '[reports] diag:');
+    // Defer if the client's inbox has no XMTP installation yet: a group
+    // created now would have an undeliverable welcome. The reconcile
+    // orphan scan (the 60s tick or a user_active event) creates it once an
+    // installation has propagated. -1 means "couldn't read" — proceed.
+    if (installationCount === 0) {
+      log(`[reports] Reports #${payload.clientNumber} for ${payload.inboxId.slice(0, 8)}… deferred — inbox has 0 XMTP installations yet; will retry on the next reconcile.`);
+      return;
+    }
     log(`[reports] Creating Reports #${payload.clientNumber} for ${payload.inboxId.slice(0, 8)}…`);
     const name = reportsName(payload.clientNumber);
     const description = REPORTS_GROUP_DESCRIPTION;
@@ -443,25 +451,36 @@ async function refreshInboxStates(client: Client, inboxIds: string[]): Promise<v
 }
 
 /**
- * Log how many XMTP installations an inbox currently has. A welcome is
- * HPKE-sealed per installation; a pile-up of stale installations (from
- * repeated app reinstalls) is the prime suspect when a client cannot
- * decrypt the welcome for a freshly created group. Best-effort: the
- * node-sdk surface for this has shifted across versions.
+ * Log how many XMTP installations an inbox currently has, and return that
+ * count. A welcome is HPKE-sealed per installation; a pile-up of stale
+ * installations (from repeated app reinstalls) is the prime suspect when a
+ * client cannot decrypt the welcome for a freshly created group, and a
+ * count of 0 means a group created now would be undeliverable. Returns -1
+ * when the count can't be read (SDK surface missing / error) so callers
+ * can tell "unknown" apart from a genuine 0. Best-effort: the node-sdk
+ * surface for this has shifted across versions.
  */
-async function logInboxInstallations(client: Client, inboxId: string, label: string): Promise<void> {
+async function logInboxInstallations(client: Client, inboxId: string, label: string): Promise<number> {
   try {
     const c = client as any;
     const states = await c.preferences?.inboxStateFromInboxIds?.([inboxId], true);
     const state = Array.isArray(states) ? states[0] : states;
-    const installations = (state?.installations ?? []) as Array<{ id?: string }>;
+    if (!state) {
+      // SDK surface unavailable or no state returned. Report -1 ("unknown")
+      // so callers don't defer group creation on a read miss.
+      log(`${label} inbox ${inboxId.slice(0, 8)}… installation count unavailable`);
+      return -1;
+    }
+    const installations = (state.installations ?? []) as Array<{ id?: string }>;
     const ids = installations.map((i) => (i.id ?? '').slice(0, 8)).filter((s: string) => s.length > 0);
     log(`${label} inbox ${inboxId.slice(0, 8)}… has ${installations.length} XMTP installation(s): [${ids.join(', ')}]`);
     if (installations.length >= 8) {
       log(`${label} ⚠️ ${installations.length} installations is near/over XMTP's ~10-per-inbox limit — welcome delivery to the newest installation becomes unreliable. The inbox needs stale-installation revocation.`);
     }
+    return installations.length;
   } catch (err) {
     log(`${label} could not read inbox installations (non-fatal): ${(err as Error).message}`);
+    return -1;
   }
 }
 

@@ -12,6 +12,8 @@ import attachmentRoutes from './routes/attachments.js';
 import healthRoutes from './routes/health.js';
 import meRoutes from './routes/me.js';
 import channelRoutes from './routes/channels.js';
+import billingRoutes from './routes/billing.js';
+import stripeWebhookRoutes from './routes/stripe-webhook.js';
 
 async function build() {
   const app = Fastify({
@@ -72,6 +74,10 @@ async function build() {
       await api.register(channelRoutes);
       await api.register(notificationRoutes);
       await api.register(attachmentRoutes, { publicBaseUrl });
+      await api.register(billingRoutes, { publicBaseUrl });
+      // Registered as its own plugin so its raw-body parser (needed for
+      // Stripe signature verification) stays encapsulated.
+      await api.register(stripeWebhookRoutes);
 
       // Convos-compatible stubs we explicitly don't implement.
       // Returning 410 Gone makes failures explicit rather than mysteriously hanging.

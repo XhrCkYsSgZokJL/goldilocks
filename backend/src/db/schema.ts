@@ -1,4 +1,4 @@
-import { pgTable, pgEnum, text, timestamp, integer, primaryKey, jsonb, boolean, bigserial, uuid } from 'drizzle-orm/pg-core';
+import { pgTable, pgEnum, text, timestamp, integer, primaryKey, jsonb, boolean, bigserial, uuid, index } from 'drizzle-orm/pg-core';
 
 // One row per physical iOS device. The deviceId comes from the iOS app
 // (DeviceInfo.deviceIdentifier). We treat it as opaque.
@@ -109,7 +109,50 @@ export const clients = pgTable('clients', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   // Active subscription plan: 'light', 'active', or null for no plan.
   subscriptionTier: text('subscription_tier'),
+  // Prepaid-balance billing (see migration 012). stripeCustomerId is
+  // created on the client's first checkout and reused thereafter.
+  // billingBalanceCents is the prepaid balance; billingLightSeats /
+  // billingActiveSeats are the seat mix that sets the monthly burn rate;
+  // billingBalanceAsOf is when the balance was last settled. "Active
+  // until" is derived: billingBalanceAsOf + (balance / rate).
+  stripeCustomerId: text('stripe_customer_id'),
+  billingBalanceCents: integer('billing_balance_cents').notNull().default(0),
+  billingLightSeats: integer('billing_light_seats').notNull().default(0),
+  billingActiveSeats: integer('billing_active_seats').notNull().default(0),
+  billingBalanceAsOf: timestamp('billing_balance_as_of', { withTimezone: true }),
 });
+
+// Audit trail for Stripe Checkout Sessions — one row per top-up. Inserted
+// 'pending' by POST /v2/billing/checkout, flipped to 'completed' by the
+// Stripe webhook on checkout.session.completed. `amountCents` is added to
+// the client's prepaid balance; `refundedCents` tracks how much of it has
+// since been refunded (by POST /v2/billing/cancel).
+export const billingCheckouts = pgTable(
+  'billing_checkouts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    clientId: uuid('client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }),
+    stripeSessionId: text('stripe_session_id').notNull().unique(),
+    // The Stripe PaymentIntent — refunds are issued against it.
+    stripePaymentIntentId: text('stripe_payment_intent_id'),
+    // 'card' | 'crypto'. Only 'card' is wired up today.
+    paymentMethod: text('payment_method').notNull().default('card'),
+    // How many months of cover this top-up bought, at the rate below.
+    durationMonths: integer('duration_months'),
+    lightSeats: integer('light_seats').notNull().default(0),
+    activeSeats: integer('active_seats').notNull().default(0),
+    // Total the session charges, in cents, added to the prepaid balance.
+    amountCents: integer('amount_cents').notNull(),
+    // How much of `amountCents` has been refunded so far.
+    refundedCents: integer('refunded_cents').notNull().default(0),
+    currency: text('currency').notNull().default('usd'),
+    // 'pending' | 'completed' | 'expired'.
+    status: text('status').notNull().default('pending'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (t) => ({ clientIdx: index('billing_checkouts_client_idx').on(t.clientId) }),
+);
 
 // CLI-managed admin registry. The `npm run cli` tool creates one row
 // per admin with a human name and a uniquely-generated `upgrade_code`.

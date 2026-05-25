@@ -427,6 +427,85 @@ function formatClients(rows: ClientRow[]): string[] {
   });
 }
 
+// --- payments (Stripe config) ----------------------------------------------
+
+// Stripe billing is configured entirely through the .env file. The CLI's
+// Payments → Stripe screen reads and writes these four keys so they never
+// have to be hand-edited.
+const STRIPE_KEYS = {
+  secret: 'STRIPE_SECRET_KEY',
+  webhook: 'STRIPE_WEBHOOK_SECRET',
+  success: 'STRIPE_SUCCESS_URL',
+  cancel: 'STRIPE_CANCEL_URL',
+} as const;
+
+interface StripeConfig {
+  secretKey: string;
+  webhookSecret: string;
+  successUrl: string;
+  cancelUrl: string;
+}
+
+function readStripeConfig(): StripeConfig {
+  const env = readEnvFile();
+  return {
+    secretKey: env[STRIPE_KEYS.secret] ?? '',
+    webhookSecret: env[STRIPE_KEYS.webhook] ?? '',
+    successUrl: env[STRIPE_KEYS.success] ?? '',
+    cancelUrl: env[STRIPE_KEYS.cancel] ?? '',
+  };
+}
+
+// Write — or clear, when value is '' — a single key in the current .env
+// file, leaving every other line intact. Throws on write failure.
+function writeEnvKey(key: string, value: string): void {
+  const path = envFilePath();
+  const current = existsSync(path) ? readFileSync(path, 'utf8') : '';
+  writeFileSync(path, setEnvValue(current, key, value), { mode: 0o600 });
+}
+
+// 'test' / 'live' from the secret key prefix; 'none' when unset; 'unknown'
+// when the value doesn't look like a Stripe key.
+function stripeMode(secretKey: string): 'test' | 'live' | 'none' | 'unknown' {
+  if (!secretKey) return 'none';
+  if (/^(sk|rk)_test_/.test(secretKey)) return 'test';
+  if (/^(sk|rk)_live_/.test(secretKey)) return 'live';
+  return 'unknown';
+}
+
+// Show a secret as prefix + last 4 — recognisable but not exposed.
+function maskSecret(value: string): string {
+  if (!value) return 'not set';
+  if (value.length <= 12) return 'set';
+  return `${value.slice(0, 8)}…${value.slice(-4)}`;
+}
+
+// True once Stripe can actually run: a secret key and a webhook secret.
+function stripeReady(cfg: StripeConfig): boolean {
+  return cfg.secretKey !== '' && cfg.webhookSecret !== '';
+}
+
+// Panel lines describing the current Stripe config, plus a safety warning
+// when the key's mode and the environment disagree.
+function formatStripeConfig(cfg: StripeConfig): string[] {
+  const mode = stripeMode(cfg.secretKey);
+  const pad = (label: string): string => label.padEnd(15, ' ');
+  const lines: string[] = [];
+  lines.push(`${pad('Status')}${stripeReady(cfg) ? 'ready' : 'incomplete'}`);
+  lines.push(`${pad('Mode')}${mode}`);
+  lines.push(`${pad('Secret key')}${maskSecret(cfg.secretKey)}`);
+  lines.push(`${pad('Webhook secret')}${maskSecret(cfg.webhookSecret)}`);
+  lines.push(`${pad('Success URL')}${cfg.successUrl || '(default — backend /billing/return)'}`);
+  lines.push(`${pad('Cancel URL')}${cfg.cancelUrl || '(default — backend /billing/cancel)'}`);
+  if (mode === 'live' && ENV === 'dev') {
+    lines.push('', '⚠ live key in the dev environment — dev should use sk_test_….');
+  }
+  if (mode === 'test' && ENV === 'prod') {
+    lines.push('', '⚠ test key in production — production needs sk_live_….');
+  }
+  return lines;
+}
+
 // --- dev environment processes ---------------------------------------------
 
 // The backend server (server:dev) and agents (agents:dev) run as detached
@@ -465,6 +544,7 @@ const DEV_PROCESS_PATTERN: Record<string, string> = {
   server: 'src/server.ts',
   agent: 'src/agent/index.ts',
   simulator: 'mirror-sim-logs.sh',
+  stripe: 'stripe listen',
 };
 
 // SIGKILL every process whose command line contains `pattern`. Returns true
@@ -513,10 +593,10 @@ function reapDevProcess(name: string): boolean {
   return reaped || freed > 0;
 }
 
-// Spawn `npm run <script>` detached, logging to a fresh timestamped file
+// Spawn a detached background process, logging to a fresh timestamped file
 // under .dev-run/. Reaps stale stragglers first so `up` always starts clean.
 // Returns a human-readable result line.
-function startDevProcess(name: string, script: string): string {
+function startDevProcess(name: string, command: string, args: string[]): string {
   if (devProcessPid(name)) {
     return `${name} already running.`;
   }
@@ -527,7 +607,7 @@ function startDevProcess(name: string, script: string): string {
   mkdirSync(devRunDir(), { recursive: true });
   const logName = `${name}-${timestamp()}.log`;
   const log = openSync(join(devRunDir(), logName), 'w');
-  const child = spawn('npm', ['run', script], {
+  const child = spawn(command, args, {
     cwd: REPO_ROOT,
     detached: true,
     stdio: ['ignore', log, log],
@@ -540,6 +620,55 @@ function startDevProcess(name: string, script: string): string {
     return `✓ ${name} started (pid ${child.pid}, log: .dev-run/${logName})${note}`;
   }
   return `✗ failed to start ${name}`;
+}
+
+// --- stripe webhook listener (dev) -----------------------------------------
+//
+// In dev there is no public webhook endpoint — the Stripe CLI's
+// `stripe listen` opens an authenticated channel to Stripe and forwards
+// events to the local backend. The CLI manages it as a dev process so it
+// starts and stops with the rest of the environment.
+
+// True if the Stripe CLI binary is on PATH.
+function stripeCliInstalled(): boolean {
+  try {
+    return spawnSync('stripe', ['--version'], { stdio: 'ignore' }).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+// Fetch the Stripe CLI's webhook signing secret (stable per account) and
+// store it in .env as STRIPE_WEBHOOK_SECRET, so the backend can verify
+// webhook signatures without anyone copying whsec_… by hand. Returns a
+// human-readable result line.
+function syncStripeWebhookSecret(): string {
+  const cfg = readStripeConfig();
+  if (!cfg.secretKey) return 'Webhook secret: skipped — no Stripe secret key set.';
+  if (!stripeCliInstalled()) return 'Webhook secret: skipped — Stripe CLI not installed.';
+  const res = spawnSync('stripe', ['listen', '--api-key', cfg.secretKey, '--print-secret'], { encoding: 'utf8' });
+  if (res.status !== 0) {
+    const detail = (res.stderr ?? '').trim().split('\n')[0] ?? '';
+    return `Webhook secret: could not read it from the Stripe CLI${detail ? ` — ${detail}` : '.'}`;
+  }
+  const secret = (res.stdout ?? '').trim();
+  if (!secret.startsWith('whsec_')) return 'Webhook secret: the Stripe CLI did not return one.';
+  if (secret === cfg.webhookSecret) return 'Webhook secret: already up to date.';
+  writeEnvKey(STRIPE_KEYS.webhook, secret);
+  return '✓ Webhook secret synced into .env from the Stripe CLI.';
+}
+
+// Start `stripe listen` as a managed dev process, forwarding events to the
+// local backend. No-op (with a note) when Stripe isn't configured or the
+// CLI is missing.
+function startStripeListener(): string {
+  const cfg = readStripeConfig();
+  if (!cfg.secretKey) return 'Stripe webhook listener: skipped — set a secret key in Payments → Stripe.';
+  if (!stripeCliInstalled()) {
+    return 'Stripe webhook listener: skipped — install the Stripe CLI (brew install stripe/stripe-cli/stripe).';
+  }
+  const forwardTo = `localhost:${devServerPort()}/api/v2/stripe/webhook`;
+  return startDevProcess('stripe', 'stripe', ['listen', '--api-key', cfg.secretKey, '--forward-to', forwardTo]);
 }
 
 // Stop the named dev process: SIGTERM its group, then hunt down any straggler
@@ -582,12 +711,17 @@ async function dashboardStats(): Promise<StatItem[]> {
       capture('docker', ['compose', '-f', 'docker-compose.yml', 'ps', '-q', 'goldilocks-db'], REPO_ROOT),
       capture('docker', ['compose', '-f', 'dev/docker-compose.yml', '-p', 'convos-ios', 'ps', '-q'], iosRepoDir()),
     ]);
-    return [
+    const stats: StatItem[] = [
       { label: 'server', on: devProcessPid('server') !== null },
       { label: 'agents', on: devProcessPid('agent') !== null },
       { label: 'database', on: db.code === 0 && db.out.trim().length > 0 },
       { label: 'XMTP node', on: xmtp.code === 0 && xmtp.out.trim().length > 0 },
     ];
+    // The Stripe webhook listener only matters once Stripe is configured.
+    if (readStripeConfig().secretKey) {
+      stats.push({ label: 'stripe', on: devProcessPid('stripe') !== null });
+    }
+    return stats;
   }
   const [backend, agent, db, tunnel] = await Promise.all([
     composeServiceRunning('backend'),
@@ -1051,6 +1185,8 @@ function ConfirmView({
 interface InputState {
   prompt: string;
   value: string;
+  // When true, the entry is rendered as dots — used for secret keys.
+  mask?: boolean;
   onSubmit: (value: string) => void;
 }
 
@@ -1083,7 +1219,7 @@ function InputView({
       </Box>
       <Box>
         <Text color="cyan">{'> '}</Text>
-        <Text>{state.value}</Text>
+        <Text>{state.mask ? '•'.repeat(state.value.length) : state.value}</Text>
         <Text inverse> </Text>
       </Box>
       <Box marginTop={1}>
@@ -1320,10 +1456,14 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
           return;
         }
         append('');
+        // Sync the webhook secret before the server boots so it reads it.
+        append(syncStripeWebhookSecret());
+        append('');
         append('Starting the backend server, agents, and simulator-log mirror…');
-        append(startDevProcess('server', 'server:dev'));
-        append(startDevProcess('agent', 'agents:dev'));
-        append(startDevProcess('simulator', 'logs:sim'));
+        append(startDevProcess('server', 'npm', ['run', 'server:dev']));
+        append(startDevProcess('agent', 'npm', ['run', 'agents:dev']));
+        append(startDevProcess('simulator', 'npm', ['run', 'logs:sim']));
+        append(startStripeListener());
         append('');
         append('Dev environment is up.');
       },
@@ -1332,10 +1472,11 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
 
   const devDown = (): void => {
     const preLines = [
-      'Stopping the backend server, agents, and simulator-log mirror…',
+      'Stopping the backend server, agents, simulator-log mirror, and Stripe listener…',
       stopDevProcess('server'),
       stopDevProcess('agent'),
       stopDevProcess('simulator'),
+      stopDevProcess('stripe'),
       '',
     ];
     runBash('Stop dev environment', 'dev-env.sh', ['down'], 'systems', { preLines });
@@ -1346,6 +1487,7 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
       stopDevProcess('server'),
       stopDevProcess('agent'),
       stopDevProcess('simulator'),
+      stopDevProcess('stripe'),
       '',
     ];
     runBash('Reset dev environment', 'dev-env.sh', ['reset'], 'systems', { preLines });
@@ -1373,8 +1515,8 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
           return;
         }
         append('Starting the backend server and agents…');
-        append(startDevProcess('server', 'server:dev'));
-        append(startDevProcess('agent', 'agents:dev'));
+        append(startDevProcess('server', 'npm', ['run', 'server:dev']));
+        append(startDevProcess('agent', 'npm', ['run', 'agents:dev']));
         append('');
         append('Server and agents restarted.');
       },
@@ -1485,6 +1627,7 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
     const menu: Choice<string>[] = [
       { label: 'Admins', value: 'admins', hint: 'add / remove admin slots' },
       { label: 'Clients', value: 'clients', hint: 'view client plans' },
+      { label: 'Payments', value: 'payments', hint: 'Stripe keys + webhook config' },
     ];
     if (ENV === 'prod') {
       menu.push({ label: 'Deploy', value: 'deploy', hint: 'pull, preflight, build, migrate, restart' });
@@ -1628,6 +1771,178 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
           ]}
           onSelect={(v) => (v === 'back' ? go('dashboard') : refresh())}
         />
+      </Box>
+    );
+  }
+
+  // Payments — Stripe + crypto.
+  if (screen === 'payments') {
+    const onSelect = (v: string): void => {
+      if (v === 'back') go('dashboard');
+      else if (v === 'stripe') go('payments-stripe');
+      else if (v === 'crypto') go('payments-crypto');
+    };
+    return (
+      <Box flexDirection="column">
+        <Text bold>Payments</Text>
+        <Box marginTop={1} marginBottom={1}>
+          <Text dimColor>How clients pay. Stripe handles cards; crypto is not wired up yet.</Text>
+        </Box>
+        <SelectList
+          key="payments"
+          choices={[
+            { label: 'Stripe', value: 'stripe', hint: 'keys, webhook, checkout URLs' },
+            { label: 'Crypto', value: 'crypto', hint: 'no provider yet' },
+            { label: 'Back', value: 'back' },
+          ]}
+          onSelect={onSelect}
+        />
+      </Box>
+    );
+  }
+
+  // Payments — crypto (a dead end until a provider is chosen).
+  if (screen === 'payments-crypto') {
+    return (
+      <Box flexDirection="column">
+        <Text bold>Crypto payments</Text>
+        <Box marginTop={1}>
+          <Panel
+            title="Not available"
+            lines={[
+              'No crypto payment provider has been chosen yet.',
+              '',
+              'Crypto checkout is stubbed across the stack: the iOS',
+              'Subscription screen shows it as "coming soon", and the',
+              'backend rejects crypto checkout requests.',
+              '',
+              'There is nothing to configure here until a provider is picked.',
+            ]}
+          />
+        </Box>
+        <SectionLabel text="Actions" />
+        <SelectList
+          key="payments-crypto"
+          choices={[{ label: 'Back', value: 'back' }]}
+          onSelect={() => go('payments')}
+        />
+      </Box>
+    );
+  }
+
+  // Payments — Stripe config. Reads + writes the STRIPE_* keys in .env.
+  if (screen === 'payments-stripe') {
+    if (!envFileExists()) {
+      return (
+        <Box flexDirection="column">
+          <Text bold>Stripe</Text>
+          <Box marginTop={1} marginBottom={1}>
+            <Text color="yellow">{`No .env.${ENV} yet — run setup first (Settings → Run setup).`}</Text>
+          </Box>
+          <SelectList
+            key="payments-stripe-nofile"
+            choices={[{ label: 'Back', value: 'back' }]}
+            onSelect={() => go('payments')}
+          />
+        </Box>
+      );
+    }
+
+    const cfg = readStripeConfig();
+    const listenerRunning = ENV === 'dev' && devProcessPid('stripe') !== null;
+
+    const promptFor = (key: string, label: string, prompt: string, mask: boolean): void => {
+      setInputState({
+        prompt,
+        value: '',
+        mask,
+        onSubmit: (raw) => {
+          setInputState(null);
+          const value = raw.trim();
+          try {
+            writeEnvKey(key, value);
+            loadEnv({ path: envFilePath(), override: true });
+            setNotice(value ? `${label} saved to .env.${ENV}.` : `${label} cleared.`);
+            refresh();
+          } catch (err) {
+            setNotice(`Failed to save ${label}: ${(err as Error).message}`);
+          }
+        },
+      });
+    };
+
+    const onSelect = (v: string): void => {
+      if (v === 'back') go('payments');
+      else if (v === 'secret') {
+        promptFor(
+          STRIPE_KEYS.secret,
+          'Secret key',
+          `Stripe secret key — ${ENV === 'prod' ? 'sk_live_…' : 'sk_test_…'} (blank to clear):`,
+          true,
+        );
+      } else if (v === 'webhook') {
+        promptFor(
+          STRIPE_KEYS.webhook,
+          'Webhook secret',
+          'Stripe webhook signing secret — whsec_… (blank to clear):',
+          true,
+        );
+      } else if (v === 'success') {
+        promptFor(STRIPE_KEYS.success, 'Success URL', 'Checkout success URL (blank for the default):', false);
+      } else if (v === 'cancel') {
+        promptFor(STRIPE_KEYS.cancel, 'Cancel URL', 'Checkout cancel URL (blank for the default):', false);
+      } else if (v === 'dashboard') {
+        const url = ENV === 'prod'
+          ? 'https://dashboard.stripe.com/apikeys'
+          : 'https://dashboard.stripe.com/test/apikeys';
+        openInOS([url]);
+        setNotice('Opened the Stripe API keys page in your browser.');
+      } else if (v === 'listener') {
+        if (devProcessPid('stripe') !== null) {
+          setNotice(stopDevProcess('stripe'));
+        } else {
+          const secretNote = syncStripeWebhookSecret();
+          setNotice(`${secretNote}  ${startStripeListener()}`);
+        }
+        refresh();
+      }
+    };
+
+    const actions: Choice<string>[] = [
+      { label: 'Set secret key', value: 'secret', hint: 'sk_test_… / sk_live_…' },
+      { label: 'Set webhook secret', value: 'webhook', hint: 'whsec_…' },
+      { label: 'Set checkout success URL', value: 'success', hint: 'optional' },
+      { label: 'Set checkout cancel URL', value: 'cancel', hint: 'optional' },
+    ];
+    if (ENV === 'dev') {
+      actions.push({
+        label: listenerRunning ? 'Stop webhook listener' : 'Start webhook listener',
+        value: 'listener',
+        hint: listenerRunning ? 'stripe listen — running' : 'runs stripe listen',
+      });
+    }
+    actions.push({ label: 'Open Stripe dashboard', value: 'dashboard', hint: 'API keys page' });
+    actions.push({ label: 'Back', value: 'back' });
+
+    return (
+      <Box flexDirection="column">
+        <Text bold>Stripe</Text>
+        <Box marginTop={1}>
+          <Panel
+            title={`Configuration — .env.${ENV}`}
+            lines={formatStripeConfig(cfg)}
+            color={stripeReady(cfg) ? 'green' : 'yellow'}
+          />
+        </Box>
+        {ENV === 'dev' ? (
+          <Box marginTop={1}>
+            <Text dimColor>Webhook listener: </Text>
+            <Text color={listenerRunning ? 'green' : 'gray'}>{listenerRunning ? '● running' : '○ stopped'}</Text>
+            <Text dimColor>{`  →  localhost:${devServerPort()}/api/v2/stripe/webhook`}</Text>
+          </Box>
+        ) : null}
+        <SectionLabel text="Actions" />
+        <SelectList key="payments-stripe" choices={actions} onSelect={onSelect} />
       </Box>
     );
   }
@@ -2036,6 +2351,7 @@ Every subcommand needs it too:
   npm run cli -- --prod admins add <name>
   npm run cli -- --prod admins remove <name|number>
   npm run cli -- --dev|--prod clients list
+  npm run cli -- --dev|--prod payments status
   npm run cli -- --dev  stack up|down|reset|status
   npm run cli -- --prod stack deploy|status|up|down|backup
   npm run cli -- --prod stack logs|restart <service>
@@ -2097,6 +2413,24 @@ async function clientsOneShot(args: string[]): Promise<void> {
   });
 }
 
+// payments is config-only from the shell — `status` prints the current
+// Stripe config. Secret keys are set from the interactive CLI
+// (Payments → Stripe) so they are never echoed into shell history.
+function paymentsOneShot(args: string[]): void {
+  const verb = (args[0] ?? 'status').toLowerCase();
+  if (verb !== 'status') {
+    console.error('payments is config-only here — the subcommand is: payments status');
+    console.error('(set keys from the interactive CLI: Payments → Stripe.)');
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`${BOLD}Stripe${RESET}`);
+  for (const line of formatStripeConfig(readStripeConfig())) {
+    console.log(line ? `  ${line}` : '');
+  }
+  console.log('');
+}
+
 async function tunnelOneShot(args: string[]): Promise<void> {
   const verb = (args[0] ?? 'url').toLowerCase();
   if (verb === 'url') await bashInherit('tunnel-url.sh');
@@ -2114,17 +2448,21 @@ async function stackOneShot(args: string[]): Promise<void> {
   if (ENV === 'dev') {
     if (verb === 'up') {
       await bashInherit('dev-env.sh', ['up']);
-      console.log(startDevProcess('server', 'server:dev'));
-      console.log(startDevProcess('agent', 'agents:dev'));
+      console.log(syncStripeWebhookSecret());
+      console.log(startDevProcess('server', 'npm', ['run', 'server:dev']));
+      console.log(startDevProcess('agent', 'npm', ['run', 'agents:dev']));
+      console.log(startStripeListener());
     } else if (verb === 'down') {
       console.log(stopDevProcess('server'));
       console.log(stopDevProcess('agent'));
+      console.log(stopDevProcess('stripe'));
       await bashInherit('dev-env.sh', ['down']);
     } else if (verb === 'status') {
       await bashInherit('dev-env.sh', ['status']);
     } else if (verb === 'reset') {
       console.log(stopDevProcess('server'));
       console.log(stopDevProcess('agent'));
+      console.log(stopDevProcess('stripe'));
       await bashInherit('dev-env.sh', ['reset']);
     } else {
       console.error(`unknown: stack ${verb} — in --dev it is one of: up, down, reset, status`);
@@ -2166,6 +2504,9 @@ async function runOneShot(argv: string[]): Promise<void> {
       break;
     case 'clients':
       await clientsOneShot(rest);
+      break;
+    case 'payments':
+      paymentsOneShot(rest);
       break;
     case 'stack':
       await stackOneShot(rest);
