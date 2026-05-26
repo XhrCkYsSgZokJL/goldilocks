@@ -21,13 +21,13 @@ import SwiftUI
 //   - Subtitle - "Invited X ago by Y" in scoped mode when the member has a
 //     `joinedAt`; otherwise "Added X ago" from `contact.addedAt`
 //   - Pill below the subtitle - "You" for the current user's own card,
-//     the agent role label ("Assistant", "Verified by ...") for verified
+//     the agent role label ("Agent", "Verified by ...") for verified
 //     agents, otherwise nothing
 //   - Chat - hidden for the current user; disabled for verified agents
 //     (no DMs yet); calls `contactsWriter.upsertContact(...)` before
 //     opening the picker so a synthetic / non-yet-stored contact is
 //     promoted to a real one
-//   - Get skills / Learn about assistants - verified agents only, inline
+//   - Get skills / Learn about agents - verified agents only, inline
 //     in the action stack after Chat
 //   - Remove - scoped mode only, when the viewer is an admin
 //     (`canRemoveMembers`) and the tapped member is not the current user
@@ -459,7 +459,7 @@ private struct ContactDetailHeader: View {
 }
 
 /// Small capsule pill rendered below the subtitle. Used for the
-/// verified-agent role label ("Assistant", "Verified by ...") and for
+/// verified-agent role label ("Agent", "Verified by ...") and for
 /// the "You" indicator on the current user's own card - same shape so
 /// the spacing around the pill mirrors the surrounding label spacing
 /// regardless of which one is showing.
@@ -596,13 +596,13 @@ private struct ContactDetailActions: View {
             action: { openURL(AgentLinks.getSkillsURL) }
         )
         ContactDetailActionRow(
-            label: "Learn about assistants",
+            label: "Learn about agents",
             footer: "Capabilities, privacy and security",
             color: .colorTextPrimary,
             isDisabled: false,
-            accessibilityLabel: "Learn about assistants",
-            accessibilityIdentifier: "contact-detail-learn-about-assistants",
-            action: { openURL(AgentLinks.learnAboutAssistantsURL) }
+            accessibilityLabel: "Learn about agents",
+            accessibilityIdentifier: "contact-detail-learn-about-agents",
+            action: { openURL(AgentLinks.learnAboutAgentsURL) }
         )
     }
 
@@ -694,8 +694,8 @@ private struct ContactDetailActionRow: View {
 
 // MARK: - Share row (template-backed agents)
 
-/// Share row for a template-backed agent. Mirrors `ContactCardActionRow`'s
-/// pill-plus-footer shape, but wraps a SwiftUI `ShareLink` (which presents
+/// Share row for a template-backed agent. Mirrors `ContactDetailActionRow`'s
+/// capsule-plus-footer shape, but wraps a SwiftUI `ShareLink` (which presents
 /// the system share sheet) rather than a plain action button, since the
 /// share intent is fully handled by the system. Rendered only when the
 /// agent carries a template `publishedUrl`.
@@ -707,14 +707,12 @@ private struct ContactDetailShareRow: View {
         VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepX) {
             ShareLink(item: url) {
                 Text("Share")
-                    .font(.body.weight(.medium))
+                    .font(.body)
                     .foregroundStyle(.colorTextPrimary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, DesignConstants.Spacing.step4x)
-                    .padding(.horizontal, DesignConstants.Spacing.step3x)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12.0).fill(.colorFillMinimal)
-                    )
+                    .padding(.horizontal, DesignConstants.Spacing.step4x)
+                    .background(Capsule().fill(.colorFillMinimal))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Share \(contactDisplayName)")
@@ -722,7 +720,7 @@ private struct ContactDetailShareRow: View {
             Text("Share a link to add \(contactDisplayName) to a convo")
                 .font(.caption)
                 .foregroundStyle(.colorTextSecondary)
-                .padding(.horizontal, DesignConstants.Spacing.step3x)
+                .padding(.horizontal, DesignConstants.Spacing.step4x)
         }
     }
 }
@@ -730,43 +728,44 @@ private struct ContactDetailShareRow: View {
 // MARK: - Debug instance id row (internal builds only)
 
 /// Internal-build-only row surfacing the agent runtime's `instanceId`
-/// for log correlation. Tap to copy. Gated by the call site in
-/// `ContactDetailView` via `AppEnvironment.isInternalBuild`.
+/// for log correlation. Tap the row to copy the value. Gated by the call
+/// site in `ContactDetailView` via `AppEnvironment.isInternalBuild`.
+/// Mirrors the surrounding action-row shape (capsule + footer caption)
+/// so the dev affordance reads as part of the same row family rather
+/// than its own visual oddball.
 private struct ContactDetailDebugInstanceIdRow: View {
     let instanceId: String
 
     @State private var didCopy: Bool = false
 
     var body: some View {
-        let labelText: String = didCopy ? "Copied" : "Tap to copy"
+        let footerText: String = didCopy ? "Copied" : "Tap to copy"
         VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepX) {
             Button(action: copyToClipboard) {
-                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepX) {
-                    Text("Instance ID (dev)")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.colorTextSecondary)
+                HStack(spacing: DesignConstants.Spacing.step2x) {
+                    Text("Instance ID")
+                        .font(.body)
+                        .foregroundStyle(.colorTextPrimary)
+                    Spacer(minLength: DesignConstants.Spacing.step2x)
                     Text(instanceId)
                         .font(.system(.footnote, design: .monospaced))
-                        .foregroundStyle(.colorTextPrimary)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(2)
+                        .foregroundStyle(.colorTextSecondary)
+                        .lineLimit(1)
                         .truncationMode(.middle)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, DesignConstants.Spacing.step3x)
-                .padding(.horizontal, DesignConstants.Spacing.step3x)
-                .background(
-                    RoundedRectangle(cornerRadius: 12.0).fill(.colorFillMinimal)
-                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DesignConstants.Spacing.step4x)
+                .padding(.horizontal, DesignConstants.Spacing.step4x)
+                .background(Capsule().fill(.colorFillMinimal))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Instance ID, \(instanceId)")
             .accessibilityHint("Double tap to copy")
             .accessibilityIdentifier("contact-detail-debug-instance-id")
-            Text(labelText)
+            Text(footerText)
                 .font(.caption)
                 .foregroundStyle(.colorTextSecondary)
-                .padding(.horizontal, DesignConstants.Spacing.step3x)
+                .padding(.horizontal, DesignConstants.Spacing.step4x)
         }
     }
 
@@ -835,6 +834,7 @@ extension Contact {
         agentVerification: AgentVerification?,
         agentTemplateId: String? = nil,
         agentTemplatePublishedURL: String? = nil,
+        profileEmoji: String? = nil,
         agentInstanceId: String? = nil
     ) -> Contact {
         Contact(
@@ -850,6 +850,7 @@ extension Contact {
             agentVerification: agentVerification,
             agentTemplateId: agentTemplateId,
             agentTemplatePublishedURL: agentTemplatePublishedURL,
+            profileEmoji: profileEmoji,
             agentInstanceId: agentInstanceId
         )
     }
@@ -875,12 +876,15 @@ extension Contact {
     ) -> Contact {
         let templateId: String? = member.profile.agentTemplateId
         let templatePublishedURL: String? = member.profile.agentTemplatePublishedURL
+        let emoji: String? = member.profile.profileEmoji
         let instanceId: String? = member.profile.agentInstanceId
         if let stored = try? contactsRepository.fetchContact(inboxId: member.profile.inboxId) {
             return stored
                 .with(agentTemplateId: templateId)
                 .with(agentTemplatePublishedURL: templatePublishedURL)
+                .with(profileEmoji: emoji)
                 .with(agentInstanceId: instanceId)
+                .with(agentVerification: member.agentVerification)
         }
         return .synthetic(
             inboxId: member.profile.inboxId,
@@ -893,6 +897,7 @@ extension Contact {
             agentVerification: member.agentVerification,
             agentTemplateId: templateId,
             agentTemplatePublishedURL: templatePublishedURL,
+            profileEmoji: emoji,
             agentInstanceId: instanceId
         )
     }
@@ -922,7 +927,7 @@ extension Contact {
     NavigationStack {
         ContactDetailView(
             contact: .mock(
-                displayName: "Convos Assistant",
+                displayName: "Convos Agent",
                 agentVerification: .verified(.convos)
             ),
             contactsWriter: MockContactsWriter(),
