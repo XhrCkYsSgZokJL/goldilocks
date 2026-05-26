@@ -146,13 +146,28 @@ async function main(): Promise<void> {
         reportsAgent.recoverChannelsFor(event),
       ]);
     },
+    onPeopleListChanged: async (payload) => {
+      // A client's encrypted people list changed. Once the third-party
+      // service is defined, the agent will read the blob, decrypt it
+      // with the client's Advisory group key, diff the per-member
+      // `enabled` flags against what has been onboarded, and subscribe
+      // or unsubscribe each changed member. That integration is
+      // intentionally not built yet — only the trigger is wired.
+      console.log(`[agent] people_list_changed client=${payload.client_id.slice(0, 8)}… — third-party onboarding re-evaluation not yet wired (service undefined)`);
+    },
   });
 
-  // Graceful shutdown — stop LISTEN, then exit. The XMTP clients hold
-  // a SQLCipher connection that node-sdk will release on process exit.
+  // Auto-reply to clients who write into their Reports feed — Reports is
+  // a one-way notification channel with no human on the other side.
+  const stopAutoResponder = await reportsAgent.startAutoResponder();
+
+  // Graceful shutdown — stop LISTEN + the message stream, then exit. The
+  // XMTP clients hold a SQLCipher connection that node-sdk releases on
+  // process exit.
   const shutdown = async (signal: string) => {
     console.log(`[agent] received ${signal}, shutting down`);
     clearInterval(reconcileInterval);
+    try { await stopAutoResponder(); } catch {}
     try { await stopListener(); } catch {}
     process.exit(0);
   };

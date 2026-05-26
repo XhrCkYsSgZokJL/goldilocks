@@ -10,7 +10,7 @@
 // table + group ownership are in place.
 
 import { eq, and, lte, sql } from 'drizzle-orm';
-import { Client, Group, MetadataField, PermissionPolicy, PermissionUpdateType } from '@xmtp/node-sdk';
+import { Client, DecodedMessage, Group, GroupPermissionsOptions, MetadataField, PermissionPolicy, type PermissionPolicySet, PermissionUpdateType, isText } from '@xmtp/node-sdk';
 import { db } from '../db/client.js';
 import { clients, clientChannels, reportJobs } from '../db/schema.js';
 import type { AgentIdentity } from './store.js';
@@ -37,6 +37,34 @@ const RECOVER_MIN_INTERVAL_MS = 30_000;
 // fix it. Stop and log loudly instead of churning groups forever.
 const RECOVER_MAX_RECREATES = 3;
 const RECOVER_CAP_WINDOW_MS = 600_000;
+// One Reports auto-reply per group at most this often, so a burst of
+// client messages doesn't produce a wall of identical replies.
+const AUTO_REPLY_COOLDOWN_MS = 60_000;
+// Canned reply posted when a client writes into their Reports feed —
+// Reports is a one-way notification channel with no human reading it.
+const REPORTS_AUTO_REPLY =
+  'This is an automated channel that delivers reports and notifications to you. No one is monitoring messages sent here.';
+// Posted into a Reports group the first time it is provisioned, so the
+// feed opens with an explanation. Recreates do not repeat it.
+const REPORTS_INTRO_MESSAGE =
+  'Goldilocks Digital sends you reports and events to this group chat.';
+
+// Permission policy baked into the Reports group at creation time.
+// Same shape as the admins-agent's lock: name / description / image
+// edits pinned to super-admin so the client can't rename the feed or
+// swap its avatar. Mirrors `lockGroupMetadata` (which re-asserts the
+// same lock on every reconcile for groups that pre-date this).
+const LOCKED_METADATA_POLICY_SET: PermissionPolicySet = {
+  addMemberPolicy: PermissionPolicy.Allow,
+  removeMemberPolicy: PermissionPolicy.Admin,
+  addAdminPolicy: PermissionPolicy.SuperAdmin,
+  removeAdminPolicy: PermissionPolicy.SuperAdmin,
+  updateGroupNamePolicy: PermissionPolicy.SuperAdmin,
+  updateGroupDescriptionPolicy: PermissionPolicy.SuperAdmin,
+  updateGroupImageUrlSquarePolicy: PermissionPolicy.SuperAdmin,
+  updateMessageDisappearingPolicy: PermissionPolicy.Admin,
+  updateAppDataPolicy: PermissionPolicy.Allow,
+};
 
 export class ReportsAgent {
   constructor(
@@ -58,6 +86,9 @@ export class ReportsAgent {
 
   /** Recreate timestamps per clientId, used to cap recover-driven churn. */
   private readonly recreateHistory = new Map<string, number[]>();
+
+  /** Last auto-reply time per Reports group, to collapse message bursts. */
+  private readonly lastAutoReplyAt = new Map<string, number>();
 
   /** Recreates for this client within the cap window. */
   private recentRecreateCount(clientId: string): number {
@@ -104,7 +135,7 @@ export class ReportsAgent {
 
     log(`[reports] reconcile: ${orphans.length} client(s) need a Reports group`);
     for (const c of orphans) {
-      await this.createReportsFor(c);
+      await this.createReportsFor(c, true);
     }
 
     // Enforce metadata on all existing Reports groups, and recreate any
@@ -130,7 +161,7 @@ export class ReportsAgent {
           clientId: row.clientId,
           clientNumber: row.clientNumber,
           inboxId: row.clientInboxId,
-        });
+        }, false);
         continue;
       }
       // Post-explode: client is no longer in the MLS group. Reprovision
@@ -141,7 +172,7 @@ export class ReportsAgent {
           clientId: row.clientId,
           clientNumber: row.clientNumber,
           inboxId: row.clientInboxId,
-        });
+        }, false);
         continue;
       }
       log(`[reports]   Reports #${row.clientNumber} ${row.xmtpGroupId.slice(0, 8)}… refreshing installations`);
@@ -215,7 +246,7 @@ export class ReportsAgent {
       clientId: payload.clientId,
       clientNumber,
       inboxId: payload.inboxId,
-    });
+    }, false);
     await db
       .update(clientChannels)
       .set({ recreatedAt: sql`now()` })
@@ -242,7 +273,76 @@ export class ReportsAgent {
     }
     // Reports is role-agnostic — every client gets one, admins included.
     // The agent doesn't special-case admins.
-    await this.createReportsFor(payload);
+    await this.createReportsFor(payload, true);
+  }
+
+  /**
+   * Stream every message the agent can see and post a canned auto-reply
+   * whenever a client writes into their Reports feed — Reports is a
+   * one-way notification channel with no human on the other side.
+   * Returns a function that stops the stream.
+   *
+   * The agent's own messages (posted reports and the auto-reply itself)
+   * are skipped, so this can never loop.
+   */
+  async startAutoResponder(): Promise<() => Promise<void>> {
+    const stream = await this.client.conversations.streamAllMessages();
+    void (async () => {
+      try {
+        for await (const message of stream) {
+          try {
+            await this.handleIncomingMessage(message);
+          } catch (err) {
+            log(`[reports] auto-responder: failed handling a message: ${(err as Error).message}`);
+          }
+        }
+      } catch (err) {
+        log(`[reports] auto-responder stream ended: ${(err as Error).message}`);
+      }
+    })();
+    log('[reports] auto-responder listening on Reports groups');
+    return async () => {
+      try {
+        await stream.end();
+      } catch {
+        // stream already stopped
+      }
+    };
+  }
+
+  /**
+   * Post the canned auto-reply when a client writes into a Reports group.
+   * Ignores the agent's own messages, non-text content, and applies a
+   * per-group cooldown so a burst of messages gets a single reply.
+   */
+  private async handleIncomingMessage(message: DecodedMessage): Promise<void> {
+    if (message.senderInboxId === this.client.inboxId) return;
+    if (!isText(message)) return;
+    if ((message.content ?? '').trim() === '') return;
+
+    // Confirm the message landed in a Reports group. The agent is only
+    // ever a member of Reports groups, but stay strict about where the
+    // auto-reply fires.
+    const [channel] = await db
+      .select({ clientNumber: clients.clientNumber })
+      .from(clientChannels)
+      .innerJoin(clients, eq(clients.id, clientChannels.clientId))
+      .where(and(
+        eq(clientChannels.role, 'reports'),
+        eq(clientChannels.xmtpGroupId, message.conversationId),
+      ))
+      .limit(1);
+    if (!channel) return;
+
+    const now = Date.now();
+    const lastReply = this.lastAutoReplyAt.get(message.conversationId) ?? 0;
+    if (now - lastReply < AUTO_REPLY_COOLDOWN_MS) return;
+
+    const group = await this.tryLoadGroup(message.conversationId);
+    if (!group) return;
+    this.lastAutoReplyAt.set(message.conversationId, now);
+    await group.sendText(REPORTS_AUTO_REPLY);
+    log(`[reports] auto-replied to a client message in Reports #${channel.clientNumber}`);
   }
 
   // ---- private helpers -------------------------------------------------
@@ -303,7 +403,10 @@ export class ReportsAgent {
     // }
   }
 
-  private async createReportsFor(payload: { clientId: string; clientNumber: number; inboxId: string }): Promise<void> {
+  private async createReportsFor(
+    payload: { clientId: string; clientNumber: number; inboxId: string },
+    sendIntro: boolean,
+  ): Promise<void> {
     // Refresh client's identity state so the welcome encrypts to the
     // right installation. See AdminsAgent for why this matters.
     await refreshInboxStates(this.client, [payload.inboxId]);
@@ -328,6 +431,8 @@ export class ReportsAgent {
     const group = await this.client.conversations.createGroup([payload.inboxId], {
       groupName: name,
       groupDescription: description,
+      permissions: GroupPermissionsOptions.CustomPolicy,
+      customPermissionPolicySet: LOCKED_METADATA_POLICY_SET,
     });
     log(`[reports] Created Reports #${payload.clientNumber} group ${group.id.slice(0, 8)}… — welcome sent to ${payload.inboxId.slice(0, 8)}…`);
     // Defensive metadata write — createGroup options don't always stick.
@@ -349,6 +454,17 @@ export class ReportsAgent {
         target: [clientChannels.clientId, clientChannels.role],
         set: { xmtpGroupId: group.id, status: 'active' },
       });
+
+    // A genuine first provisioning posts an intro so the feed isn't
+    // empty when the client opens it. Recreates skip this.
+    if (sendIntro) {
+      try {
+        await group.sendText(REPORTS_INTRO_MESSAGE);
+        log(`[reports] Posted intro message to Reports #${payload.clientNumber}`);
+      } catch (err) {
+        log(`[reports] Reports #${payload.clientNumber} intro message failed: ${(err as Error).message}`);
+      }
+    }
   }
 }
 

@@ -130,43 +130,7 @@ export default async function meRoutes(app: FastifyInstance) {
       clientNumber: client.clientNumber,
       isAdmin: !!adminRow,
       inboxId: client.inboxId,
-      subscriptionTier: client.subscriptionTier,
     });
-  });
-
-  // ---------------------------------------------------------------------
-  // POST /v2/me/subscription
-  // body: { tier: 'none' | 'light' | 'active' }
-  // Sets the caller's subscription plan, writing straight to
-  // `clients.subscription_tier` ('none' clears it back to NULL). This is
-  // the simulation hook behind the iOS "Create Subscription" button while
-  // Stripe billing is not yet wired up; the value drives the gold/blue
-  // subscription flag in the admin channels grid.
-  // returns: { subscriptionTier }
-  // ---------------------------------------------------------------------
-  app.post('/v2/me/subscription', async (req, reply) => {
-    const parsed = z.object({ tier: z.enum(['none', 'light', 'active']) }).safeParse(req.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
-    }
-    const deviceId = req.deviceId!;
-
-    const [device] = await db.select().from(devices).where(eq(devices.deviceId, deviceId)).limit(1);
-    if (!device?.inboxId) {
-      return reply.code(409).send({ error: 'device_not_registered' });
-    }
-
-    const nextTier = parsed.data.tier === 'none' ? null : parsed.data.tier;
-    const [updated] = await db
-      .update(clients)
-      .set({ subscriptionTier: nextTier })
-      .where(eq(clients.inboxId, device.inboxId))
-      .returning();
-    if (!updated) {
-      return reply.code(409).send({ error: 'client_missing' });
-    }
-
-    return reply.code(200).send({ subscriptionTier: updated.subscriptionTier });
   });
 
   // ---------------------------------------------------------------------
@@ -328,7 +292,7 @@ export default async function meRoutes(app: FastifyInstance) {
   // ---------------------------------------------------------------------
   // POST /v2/me
   // body: { inboxId, siweMessage, signature }
-  // returns: { clientNumber, isAdmin, inboxId, subscriptionTier }
+  // returns: { clientNumber, isAdmin, inboxId }
   // ---------------------------------------------------------------------
   app.post('/v2/me', async (req, reply) => {
     const parsed = MeBody.safeParse(req.body);
@@ -431,7 +395,6 @@ export default async function meRoutes(app: FastifyInstance) {
       clientNumber: client.clientNumber,
       isAdmin: !!adminRow,
       inboxId: client.inboxId,
-      subscriptionTier: client.subscriptionTier,
     });
   });
 }

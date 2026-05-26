@@ -17,7 +17,6 @@ import { config } from '../config.js';
 import { db } from '../db/client.js';
 import { billingCheckouts, clients } from '../db/schema.js';
 import { getStripe, isStripeConfigured } from '../billing/stripe.js';
-import { tierForSeats } from '../billing/pricing.js';
 import { settle } from '../billing/balance.js';
 
 export default async function stripeWebhookRoutes(app: FastifyInstance) {
@@ -99,19 +98,16 @@ async function onCheckoutCompleted(session: Stripe.Checkout.Session, log: Fastif
   }
 
   // Settle the running balance at the old rate, then credit the top-up
-  // and switch to the seat mix the client checked out with.
+  // and switch to the seat count the client checked out with.
   const settled = settle(client);
   const customerId = stripeId(session.customer);
-  const tier = tierForSeats(checkout.lightSeats, checkout.activeSeats);
 
   await db
     .update(clients)
     .set({
       billingBalanceCents: settled.balanceCents + checkout.amountCents,
       billingBalanceAsOf: settled.asOf,
-      billingLightSeats: checkout.lightSeats,
-      billingActiveSeats: checkout.activeSeats,
-      subscriptionTier: tier,
+      billingSeats: checkout.seats,
       ...(customerId && !client.stripeCustomerId ? { stripeCustomerId: customerId } : {}),
     })
     .where(eq(clients.id, client.id));

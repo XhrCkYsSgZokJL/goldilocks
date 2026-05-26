@@ -17,14 +17,13 @@ export const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 // The billing fields this module reads off a `clients` row.
 export interface BalanceState {
   billingBalanceCents: number;
-  billingLightSeats: number;
-  billingActiveSeats: number;
+  billingSeats: number;
   billingBalanceAsOf: Date | null;
 }
 
-// Monthly burn rate, in cents, from the seat mix.
+// Monthly burn rate, in cents, from the seat count.
 export function monthlyRateCents(state: BalanceState): number {
-  return monthlyTotalCents(state.billingLightSeats, state.billingActiveSeats);
+  return monthlyTotalCents(state.billingSeats);
 }
 
 // The balance remaining at `at`, after draining the rate for the time

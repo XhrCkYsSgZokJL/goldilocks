@@ -9,6 +9,7 @@ const recordingHandlers = (): { handlers: ListenerHandlers; calls: Array<{ chann
     onClientRegistered: async (p) => { calls.push({ channel: 'client_registered', payload: p }); },
     onUserActive: async (p) => { calls.push({ channel: 'user_active', payload: p }); },
     onChannelsRecover: async (p) => { calls.push({ channel: 'channels_recover', payload: p }); },
+    onPeopleListChanged: async (p) => { calls.push({ channel: 'people_list_changed', payload: p }); },
   };
   return { handlers, calls };
 };
@@ -25,6 +26,19 @@ describe('listener.dispatch', () => {
     assert.ok(first);
     assert.equal(first.channel, 'channels_recover');
     assert.deepEqual(first.payload, { client_id: 'uuid-1', inbox_id: 'inbox-abc' });
+  });
+
+  it('routes people_list_changed to onPeopleListChanged with the parsed payload', async () => {
+    const { handlers, calls } = recordingHandlers();
+    const payload = JSON.stringify({ client_id: 'uuid-9' });
+
+    await dispatch('people_list_changed', payload, handlers);
+
+    assert.equal(calls.length, 1);
+    const first = calls[0];
+    assert.ok(first);
+    assert.equal(first.channel, 'people_list_changed');
+    assert.deepEqual(first.payload, { client_id: 'uuid-9' });
   });
 
   it('routes client_registered, admin_changed, user_active to their respective handlers', async () => {
@@ -55,6 +69,7 @@ describe('listener.dispatch', () => {
       onClientRegistered: async () => { throw new Error('handler exploded'); },
       onUserActive: async () => {},
       onChannelsRecover: async () => {},
+      onPeopleListChanged: async () => {},
     };
 
     // Should not throw — dispatch swallows handler errors and logs them.

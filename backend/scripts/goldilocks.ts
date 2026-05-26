@@ -469,19 +469,18 @@ async function adminsMenu(): Promise<void> {
 
 // --- clients (view only) ---------------------------------------------------
 
-// Client plans are chosen by clients in the iOS app; the CLI only views them.
-
-type Tier = 'light' | 'active';
+// Headcount + billing posture are owned by the iOS app; the CLI just lists
+// the rows so admins can see who registered.
 
 interface ClientRow {
   id: string;
   client_number: number;
-  subscription_tier: Tier | null;
+  billing_seats: number;
 }
 
 async function loadClients(client: pg.Client): Promise<ClientRow[]> {
   const res = await client.query<ClientRow>(
-    `SELECT id, client_number, subscription_tier
+    `SELECT id, client_number, billing_seats
        FROM clients
        ORDER BY client_number ASC`,
   );
@@ -496,8 +495,10 @@ function printClients(rows: ClientRow[]): void {
   }
   rows.forEach((c) => {
     const num = `#${c.client_number}`.padEnd(6, ' ');
-    const tier = c.subscription_tier ?? `${DIM}no plan${RESET}`;
-    console.log(`  ${num} ${tier}`);
+    const seats = c.billing_seats === 0
+      ? `${DIM}no seats${RESET}`
+      : `${c.billing_seats} seat${c.billing_seats === 1 ? '' : 's'}`;
+    console.log(`  ${num} ${seats}`);
   });
   console.log('');
 }

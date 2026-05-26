@@ -18,7 +18,7 @@
 // Advisory traffic). Documented as the trade-off of central management.
 
 import { eq, and, isNotNull, sql } from 'drizzle-orm';
-import { Client, Group, MetadataField, PermissionPolicy, PermissionUpdateType } from '@xmtp/node-sdk';
+import { Client, Group, GroupPermissionsOptions, MetadataField, PermissionPolicy, type PermissionPolicySet, PermissionUpdateType } from '@xmtp/node-sdk';
 import { db } from '../db/client.js';
 import {
   adminInboxes,
@@ -45,7 +45,32 @@ const ALERTS_GROUP_DESCRIPTION = 'Goldilocks Digital Audit Log';
 // shared brand copy — the per-client identifier already lives in the
 // name, no need to repeat it.
 const advisoryName = (clientNumber: number): string => `Advisory #${clientNumber}`;
+
+// Permission policy baked into every Goldilocks-owned group at creation
+// time. The three metadata fields (name / description / image) are
+// pinned to super-admin so the client (and any non-super-admin) can't
+// rename, redescribe, or re-avatar their channel. Everything else
+// follows the libxmtp permissive default — the agent does the heavy
+// lifting on member churn, but Allow is fine since these groups never
+// hand out admin to untrusted parties. The same policy is re-asserted
+// on every reconcile by `lockGroupMetadata` for groups that pre-date
+// this lock.
+const LOCKED_METADATA_POLICY_SET: PermissionPolicySet = {
+  addMemberPolicy: PermissionPolicy.Allow,
+  removeMemberPolicy: PermissionPolicy.Admin,
+  addAdminPolicy: PermissionPolicy.SuperAdmin,
+  removeAdminPolicy: PermissionPolicy.SuperAdmin,
+  updateGroupNamePolicy: PermissionPolicy.SuperAdmin,
+  updateGroupDescriptionPolicy: PermissionPolicy.SuperAdmin,
+  updateGroupImageUrlSquarePolicy: PermissionPolicy.SuperAdmin,
+  updateMessageDisappearingPolicy: PermissionPolicy.Admin,
+  updateAppDataPolicy: PermissionPolicy.Allow,
+};
 const ADVISORY_GROUP_DESCRIPTION = 'Goldilocks Digital Concierge';
+// Posted into a client's Advisory the first time it's provisioned, so the
+// group has a greeting waiting when they open it. Recreates don't repeat it.
+const ADVISORY_WELCOME_MESSAGE =
+  'Goldilocks Digital is here to help you secure your digital life. This is a group chat with the Advisory team. Please start by introducing yourself.';
 // Minimum gap between recreating the same channel. A recreate issues a
 // fresh welcome that takes a moment to reach the client; recreating
 // faster than this just churns dead groups.
@@ -138,7 +163,7 @@ export class AdminsAgent {
     if (orphans.length === 0) return;
     log(`[admins] backfill: ${orphans.length} client(s) need an Advisory group`);
     for (const c of orphans) {
-      await this.createAdvisoryFor(c, adminInboxIds);
+      await this.createAdvisoryFor(c, adminInboxIds, true);
     }
   }
 
@@ -204,6 +229,7 @@ export class AdminsAgent {
     await this.createAdvisoryFor(
       { clientId: payload.clientId, clientNumber, inboxId: payload.inboxId },
       adminInboxIds,
+      false,
     );
     await db
       .update(clientChannels)
@@ -232,7 +258,7 @@ export class AdminsAgent {
     }
 
     const adminInboxIds = await loadAdminInboxIds();
-    await this.createAdvisoryFor(payload, adminInboxIds);
+    await this.createAdvisoryFor(payload, adminInboxIds, true);
   }
 
   // ---- private helpers -------------------------------------------------
@@ -272,6 +298,8 @@ export class AdminsAgent {
       group = await this.client.conversations.createGroup(adminInboxIds, {
         groupName: ADMINS_GROUP_NAME,
         groupDescription: ADMINS_GROUP_DESCRIPTION,
+        permissions: GroupPermissionsOptions.CustomPolicy,
+        customPermissionPolicySet: LOCKED_METADATA_POLICY_SET,
       });
       // Defensive: the option-name shape for createGroup has shifted across
       // node-sdk versions, so the metadata may not have stuck. Always
@@ -348,6 +376,8 @@ export class AdminsAgent {
       group = await this.client.conversations.createGroup(adminInboxIds, {
         groupName: ALERTS_GROUP_NAME,
         groupDescription: ALERTS_GROUP_DESCRIPTION,
+        permissions: GroupPermissionsOptions.CustomPolicy,
+        customPermissionPolicySet: LOCKED_METADATA_POLICY_SET,
       });
       await this.enforceGroupMetadata(group, ALERTS_GROUP_NAME, ALERTS_GROUP_DESCRIPTION);
       await db.insert(serverGroups).values({
@@ -397,6 +427,7 @@ export class AdminsAgent {
         await this.createAdvisoryFor(
           { clientId: row.clientUuid, clientNumber: row.clientNumber, inboxId: row.clientInboxId },
           adminInboxIds,
+          false,
         );
         continue;
       }
@@ -408,6 +439,7 @@ export class AdminsAgent {
         await this.createAdvisoryFor(
           { clientId: row.clientUuid, clientNumber: row.clientNumber, inboxId: row.clientInboxId },
           adminInboxIds,
+          false,
         );
         continue;
       }
@@ -437,6 +469,7 @@ export class AdminsAgent {
   private async createAdvisoryFor(
     payload: { clientId: string; clientNumber: number; inboxId: string },
     adminInboxIds: string[],
+    sendWelcome: boolean,
   ): Promise<void> {
     // Members = client + all current admins. Agent is the creator so
     // it's automatically a member + super-admin.
@@ -468,6 +501,8 @@ export class AdminsAgent {
     const group = await this.client.conversations.createGroup(members, {
       groupName: name,
       groupDescription: description,
+      permissions: GroupPermissionsOptions.CustomPolicy,
+      customPermissionPolicySet: LOCKED_METADATA_POLICY_SET,
     });
     log(`[admins] Created Advisory #${payload.clientNumber} group ${group.id.slice(0, 8)}… — welcome sent to ${payload.inboxId.slice(0, 8)}…`);
     // Defensive metadata write — createGroup options don't always stick.
@@ -488,6 +523,17 @@ export class AdminsAgent {
         target: [clientChannels.clientId, clientChannels.role],
         set: { xmtpGroupId: group.id, status: 'active' },
       });
+
+    // A genuine first provisioning posts a welcome so the group isn't
+    // empty when the client opens it. Recreates (recover / orphan-heal)
+    // pass sendWelcome=false — the client has already been welcomed.
+    if (sendWelcome) {
+      await safe(
+        () => group.sendText(ADVISORY_WELCOME_MESSAGE),
+        `Advisory #${payload.clientNumber} welcome message`,
+      );
+      log(`[admins] Posted welcome message to Advisory #${payload.clientNumber}`);
+    }
   }
 
   /**

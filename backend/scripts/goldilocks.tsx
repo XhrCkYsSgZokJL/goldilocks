@@ -97,12 +97,10 @@ interface AdminRow {
   inbox_id: string | null;
 }
 
-type Tier = 'light' | 'active';
-
 interface ClientRow {
   id: string;
   client_number: number;
-  subscription_tier: Tier | null;
+  billing_seats: number;
 }
 
 interface BackupFile {
@@ -114,7 +112,9 @@ interface BackupFile {
 interface DashboardData {
   stats: StatItem[];
   installs: number | null;
-  subs: { light: number; active: number; none: number } | null;
+  /// Snapshot of the client base: total billable seats summed across
+  /// every client, plus how many clients hold any seats at all.
+  seats: { totalSeats: number; clientsWithSeats: number } | null;
   admins: number | null;
   tunnelUrl: string;
 }
@@ -393,10 +393,11 @@ async function removeAdmin(client: pg.Client, id: string): Promise<void> {
 
 // --- clients (view only) ---------------------------------------------------
 
-// Client plans are chosen by clients in the iOS app; the CLI only views them.
+// Headcount + billing posture are owned by the iOS app; the CLI just
+// reads the rows.
 async function loadClients(client: pg.Client): Promise<ClientRow[]> {
   const res = await client.query<ClientRow>(
-    `SELECT id, client_number, subscription_tier
+    `SELECT id, client_number, billing_seats
        FROM clients
        ORDER BY client_number ASC`,
   );
@@ -412,8 +413,10 @@ function printClients(rows: ClientRow[]): void {
   }
   rows.forEach((c) => {
     const num = `#${c.client_number}`.padEnd(6, ' ');
-    const tier = c.subscription_tier ?? `${DIM}no plan${RESET}`;
-    console.log(`  ${num} ${tier}`);
+    const seats = c.billing_seats === 0
+      ? `${DIM}no seats${RESET}`
+      : `${c.billing_seats} seat${c.billing_seats === 1 ? '' : 's'}`;
+    console.log(`  ${num} ${seats}`);
   });
   console.log('');
 }
@@ -422,8 +425,10 @@ function formatClients(rows: ClientRow[]): string[] {
   if (rows.length === 0) return ['(no clients registered yet)'];
   return rows.map((c) => {
     const num = `#${c.client_number}`.padEnd(6, ' ');
-    const tier = c.subscription_tier ?? 'no plan';
-    return `${num} ${tier}`;
+    const seats = c.billing_seats === 0
+      ? 'no seats'
+      : `${c.billing_seats} seat${c.billing_seats === 1 ? '' : 's'}`;
+    return `${num} ${seats}`;
   });
 }
 
@@ -741,7 +746,7 @@ async function dashboardStats(): Promise<StatItem[]> {
 async function collectDashboard(): Promise<DashboardData> {
   const stats = await dashboardStats().catch((): StatItem[] => []);
   let installs: number | null = null;
-  let subs: DashboardData['subs'] = null;
+  let seats: DashboardData['seats'] = null;
   let admins: number | null = null;
   try {
     const data = await withDb(async (c) => {
@@ -750,10 +755,9 @@ async function collectDashboard(): Promise<DashboardData> {
       return { cl, ad };
     });
     installs = data.cl.length;
-    subs = {
-      light: data.cl.filter((r) => r.subscription_tier === 'light').length,
-      active: data.cl.filter((r) => r.subscription_tier === 'active').length,
-      none: data.cl.filter((r) => !r.subscription_tier).length,
+    seats = {
+      totalSeats: data.cl.reduce((sum, r) => sum + r.billing_seats, 0),
+      clientsWithSeats: data.cl.filter((r) => r.billing_seats > 0).length,
     };
     admins = data.ad.length;
   } catch {
@@ -761,7 +765,7 @@ async function collectDashboard(): Promise<DashboardData> {
   }
   let tunnelUrl = '';
   if (ENV === 'prod') tunnelUrl = await getTunnelUrl().catch((): string => '');
-  return { stats, installs, subs, admins, tunnelUrl };
+  return { stats, installs, seats, admins, tunnelUrl };
 }
 
 // --- backups ---------------------------------------------------------------
@@ -1620,9 +1624,9 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
   if (screen === 'dashboard') {
     const metricCards = [
       { label: 'Installs', value: dash?.installs != null ? String(dash.installs) : '—' },
-      { label: 'No plan', value: dash?.subs ? String(dash.subs.none) : '—' },
-      { label: 'Light plan', value: dash?.subs ? String(dash.subs.light) : '—' },
-      { label: 'Active plan', value: dash?.subs ? String(dash.subs.active) : '—' },
+      { label: 'Total seats', value: dash?.seats ? String(dash.seats.totalSeats) : '—' },
+      { label: 'Clients w/ seats', value: dash?.seats ? String(dash.seats.clientsWithSeats) : '—' },
+      { label: 'Admins', value: dash?.admins != null ? String(dash.admins) : '—' },
     ];
     const menu: Choice<string>[] = [
       { label: 'Admins', value: 'admins', hint: 'add / remove admin slots' },

@@ -37,11 +37,16 @@ export interface ChannelsRecoverPayload {
   inbox_id: string;
 }
 
+export interface PeopleListChangedPayload {
+  client_id: string;        // uuid
+}
+
 export interface ListenerHandlers {
   onAdminChanged: (payload: AdminChangedPayload) => Promise<void>;
   onClientRegistered: (payload: ClientRegisteredPayload) => Promise<void>;
   onUserActive: (payload: UserActivePayload) => Promise<void>;
   onChannelsRecover: (payload: ChannelsRecoverPayload) => Promise<void>;
+  onPeopleListChanged: (payload: PeopleListChangedPayload) => Promise<void>;
 }
 
 /**
@@ -65,7 +70,8 @@ export async function startListener(handlers: ListenerHandlers): Promise<() => P
   await pgc.query('LISTEN client_registered');
   await pgc.query('LISTEN user_active');
   await pgc.query('LISTEN channels_recover');
-  console.log('[agent] LISTENing on admin_changed + client_registered + user_active + channels_recover');
+  await pgc.query('LISTEN people_list_changed');
+  console.log('[agent] LISTENing on admin_changed + client_registered + user_active + channels_recover + people_list_changed');
 
   return async () => {
     try { await pgc.query('UNLISTEN *'); } catch {}
@@ -93,6 +99,8 @@ export async function dispatch(channel: string, payload: string, handlers: Liste
       await handlers.onUserActive(parsed as UserActivePayload);
     } else if (channel === 'channels_recover') {
       await handlers.onChannelsRecover(parsed as ChannelsRecoverPayload);
+    } else if (channel === 'people_list_changed') {
+      await handlers.onPeopleListChanged(parsed as PeopleListChangedPayload);
     } else {
       console.warn(`[agent] notify: unknown channel ${channel}`);
     }

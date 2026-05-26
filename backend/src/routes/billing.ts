@@ -20,7 +20,7 @@ import { db } from '../db/client.js';
 import { billingCheckouts, clients, devices } from '../db/schema.js';
 import { requireJwt } from '../middleware/jwt.js';
 import { getStripe, isStripeConfigured } from '../billing/stripe.js';
-import { isAllowedDuration, monthlyTotalCents, tierForSeats } from '../billing/pricing.js';
+import { isAllowedDuration, monthlyTotalCents } from '../billing/pricing.js';
 import { activeUntil, liveBalanceCents, monthlyRateCents, settle } from '../billing/balance.js';
 import type Stripe from 'stripe';
 
@@ -29,13 +29,11 @@ const CheckoutBody = z.object({
   paymentMethod: z.enum(['card', 'crypto']),
   // Months of cover to buy: 1, 3 or 6.
   durationMonths: z.number().int(),
-  lightSeats: z.number().int().min(0).max(999),
-  activeSeats: z.number().int().min(0).max(999),
+  seats: z.number().int().min(0).max(999),
 });
 
 const SeatsBody = z.object({
-  lightSeats: z.number().int().min(0).max(999),
-  activeSeats: z.number().int().min(0).max(999),
+  seats: z.number().int().min(0).max(999),
 });
 
 export default async function billingRoutes(app: FastifyInstance, opts: { publicBaseUrl: string }) {
@@ -43,7 +41,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
 
   // ---------------------------------------------------------------------
   // POST /v2/billing/checkout — buy a block of cover (a balance top-up).
-  // body: { paymentMethod, durationMonths, lightSeats, activeSeats }
+  // body: { paymentMethod, durationMonths, seats }
   // returns: { checkoutUrl, sessionId }
   // ---------------------------------------------------------------------
   app.post('/v2/billing/checkout', { preHandler: requireJwt }, async (req, reply) => {
@@ -55,7 +53,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
     }
-    const { paymentMethod, durationMonths, lightSeats, activeSeats } = parsed.data;
+    const { paymentMethod, durationMonths, seats } = parsed.data;
 
     if (paymentMethod === 'crypto') {
       return reply.code(501).send({
@@ -66,7 +64,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
     if (!isAllowedDuration(durationMonths)) {
       return reply.code(400).send({ error: 'invalid_duration', message: 'durationMonths must be 1, 3 or 6.' });
     }
-    if (lightSeats + activeSeats < 1) {
+    if (seats < 1) {
       return reply.code(400).send({ error: 'no_seats', message: 'Add at least one person before buying cover.' });
     }
 
@@ -76,7 +74,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
     }
 
     const stripe = getStripe();
-    const amountCents = monthlyTotalCents(lightSeats, activeSeats) * durationMonths;
+    const amountCents = monthlyTotalCents(seats) * durationMonths;
 
     // Find-or-create the Stripe customer so a client's top-ups group
     // under one customer record.
@@ -94,8 +92,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
       inboxId: client.inboxId,
       paymentMethod,
       durationMonths: String(durationMonths),
-      lightSeats: String(lightSeats),
-      activeSeats: String(activeSeats),
+      seats: String(seats),
     };
 
     let session: Stripe.Checkout.Session;
@@ -135,8 +132,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
       stripeSessionId: session.id,
       paymentMethod,
       durationMonths,
-      lightSeats,
-      activeSeats,
+      seats,
       amountCents,
       currency: 'usd',
       status: 'pending',
@@ -158,33 +154,30 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
 
   // ---------------------------------------------------------------------
   // POST /v2/billing/seats — the client edited their people list. Settle
-  // the balance at the old rate, then store the new seat mix; the cover
-  // end date moves with no charge.
-  // body: { lightSeats, activeSeats }
+  // the balance at the old rate, then store the new seat count; the
+  // cover end date moves with no charge.
+  // body: { seats }
   // ---------------------------------------------------------------------
   app.post('/v2/billing/seats', { preHandler: requireJwt }, async (req, reply) => {
     const parsed = SeatsBody.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
     }
-    const { lightSeats, activeSeats } = parsed.data;
+    const { seats } = parsed.data;
 
     const client = await resolveClient(req.deviceId!);
     if (!client) {
       return reply.code(409).send({ error: 'client_missing' });
     }
 
-    // Settle at the current (old) rate, then switch to the new seat mix.
+    // Settle at the current (old) rate, then switch to the new seat count.
     const settled = settle(client);
-    const tier = settled.balanceCents > 0 ? tierForSeats(lightSeats, activeSeats) : null;
     const [updated] = await db
       .update(clients)
       .set({
         billingBalanceCents: settled.balanceCents,
         billingBalanceAsOf: settled.asOf,
-        billingLightSeats: lightSeats,
-        billingActiveSeats: activeSeats,
-        subscriptionTier: tier,
+        billingSeats: seats,
       })
       .where(eq(clients.id, client.id))
       .returning();
@@ -196,8 +189,12 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
 
   // ---------------------------------------------------------------------
   // POST /v2/billing/cancel — stop cover and refund the unused balance.
-  // Refunds run newest-checkout-first, so the charges touched are as
-  // recent as possible (well within Stripe's refund window).
+  //
+  // Coverage starts the moment a person is verified onto the plan, so
+  // every top-up is pro-rata only — there's no buyer's-remorse window.
+  // Refunds run newest-checkout-first against the live (settled)
+  // balance, so the charges touched are as recent as possible (well
+  // within Stripe's refund window).
   // returns: { refundedCents }
   // ---------------------------------------------------------------------
   app.post('/v2/billing/cancel', { preHandler: requireJwt }, async (req, reply) => {
@@ -210,10 +207,9 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
     }
 
     const settled = settle(client);
-    let toRefund = settled.balanceCents;
     let refundedTotal = 0;
 
-    if (toRefund > 0) {
+    if (settled.balanceCents > 0) {
       const stripe = getStripe();
       const refundable = await db
         .select()
@@ -225,11 +221,17 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
         ))
         .orderBy(desc(billingCheckouts.createdAt));
 
+      // Pro-rata budget: the unused balance still owed back, split
+      // across the refundable checkouts newest-first.
+      let proRataBudget = settled.balanceCents;
+
       for (const checkout of refundable) {
-        if (toRefund <= 0) break;
         const remaining = checkout.amountCents - checkout.refundedCents;
         if (remaining <= 0) continue;
-        const amount = Math.min(remaining, toRefund);
+        if (proRataBudget <= 0) break;
+
+        const amount = Math.min(remaining, proRataBudget);
+
         try {
           await stripe.refunds.create({
             payment_intent: checkout.stripePaymentIntentId as string,
@@ -244,15 +246,15 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
           .set({ refundedCents: checkout.refundedCents + amount })
           .where(eq(billingCheckouts.id, checkout.id));
         refundedTotal += amount;
-        toRefund -= amount;
+        proRataBudget = Math.max(0, proRataBudget - amount);
       }
     }
 
-    // Zero the balance and drop the plan flag whether or not every cent
-    // could be refunded — cover has ended either way.
+    // Zero the balance whether or not every cent could be refunded —
+    // cover has ended either way.
     await db
       .update(clients)
-      .set({ billingBalanceCents: 0, billingBalanceAsOf: settled.asOf, subscriptionTier: null })
+      .set({ billingBalanceCents: 0, billingBalanceAsOf: settled.asOf })
       .where(eq(clients.id, client.id));
 
     return reply.code(200).send({ refundedCents: refundedTotal });
@@ -285,16 +287,14 @@ function billingStatus(client: ClientRow): {
   activeUntil: string | null;
   balanceCents: number;
   monthlyRateCents: number;
-  lightSeats: number;
-  activeSeats: number;
+  seats: number;
 } {
   const until = activeUntil(client);
   return {
     activeUntil: until ? until.toISOString() : null,
     balanceCents: liveBalanceCents(client),
     monthlyRateCents: monthlyRateCents(client),
-    lightSeats: client.billingLightSeats,
-    activeSeats: client.billingActiveSeats,
+    seats: client.billingSeats,
   };
 }
 

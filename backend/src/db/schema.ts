@@ -107,18 +107,15 @@ export const clients = pgTable('clients', {
   clientNumber: bigserial('client_number', { mode: 'number' }).notNull().unique(),
   inboxId: text('inbox_id').notNull().unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  // Active subscription plan: 'light', 'active', or null for no plan.
-  subscriptionTier: text('subscription_tier'),
   // Prepaid-balance billing (see migration 012). stripeCustomerId is
   // created on the client's first checkout and reused thereafter.
-  // billingBalanceCents is the prepaid balance; billingLightSeats /
-  // billingActiveSeats are the seat mix that sets the monthly burn rate;
+  // billingBalanceCents is the prepaid balance; billingSeats is the
+  // billable headcount that sets the monthly burn rate;
   // billingBalanceAsOf is when the balance was last settled. "Active
   // until" is derived: billingBalanceAsOf + (balance / rate).
   stripeCustomerId: text('stripe_customer_id'),
   billingBalanceCents: integer('billing_balance_cents').notNull().default(0),
-  billingLightSeats: integer('billing_light_seats').notNull().default(0),
-  billingActiveSeats: integer('billing_active_seats').notNull().default(0),
+  billingSeats: integer('billing_seats').notNull().default(0),
   billingBalanceAsOf: timestamp('billing_balance_as_of', { withTimezone: true }),
 });
 
@@ -139,8 +136,7 @@ export const billingCheckouts = pgTable(
     paymentMethod: text('payment_method').notNull().default('card'),
     // How many months of cover this top-up bought, at the rate below.
     durationMonths: integer('duration_months'),
-    lightSeats: integer('light_seats').notNull().default(0),
-    activeSeats: integer('active_seats').notNull().default(0),
+    seats: integer('seats').notNull().default(0),
     // Total the session charges, in cents, added to the prepaid balance.
     amountCents: integer('amount_cents').notNull(),
     // How much of `amountCents` has been refunded so far.
@@ -246,4 +242,17 @@ export const reportJobs = pgTable('report_jobs', {
   postedAt: timestamp('posted_at', { withTimezone: true }),
   error: text('error'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Encrypted people list — see migration 013. The blob is AES-256-GCM
+// ciphertext; the key is the Advisory group's key and never reaches this
+// database, so a dump of this table is opaque. `version` drives
+// optimistic concurrency between the client and admin writers.
+export const clientPeopleList = pgTable('client_people_list', {
+  clientId: uuid('client_id').primaryKey().references(() => clients.id, { onDelete: 'cascade' }),
+  ciphertext: text('ciphertext').notNull(),
+  salt: text('salt').notNull(),
+  nonce: text('nonce').notNull(),
+  version: integer('version').notNull().default(1),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

@@ -12,6 +12,7 @@ import attachmentRoutes from './routes/attachments.js';
 import healthRoutes from './routes/health.js';
 import meRoutes from './routes/me.js';
 import channelRoutes from './routes/channels.js';
+import peopleListRoutes from './routes/people-list.js';
 import billingRoutes from './routes/billing.js';
 import stripeWebhookRoutes from './routes/stripe-webhook.js';
 
@@ -72,6 +73,7 @@ async function build() {
       await api.register(deviceRoutes);
       await api.register(meRoutes);
       await api.register(channelRoutes);
+      await api.register(peopleListRoutes);
       await api.register(notificationRoutes);
       await api.register(attachmentRoutes, { publicBaseUrl });
       await api.register(billingRoutes, { publicBaseUrl });

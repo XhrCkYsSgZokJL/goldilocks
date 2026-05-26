@@ -13,6 +13,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { liveBalanceCents } from '../billing/balance.js';
 import { monthlyTotalCents } from '../billing/pricing.js';
 import { db } from '../db/client.js';
 import { adminInboxes, clients, clientChannels, devices } from '../db/schema.js';
@@ -255,8 +256,9 @@ export default async function channelRoutes(app: FastifyInstance) {
   // GET /v2/admin/channels
   // Admin-only. Returns every client's channels with the client_number
   // so the admin app can render "Advisory #55", "Reports #56" etc.
-  // `monthlyRateCents` is the client's current monthly spend, so the
-  // admin app can colour each chat by Bronze/Silver/Gold membership tier.
+  // `monthlyRateCents` is the client's current monthly spend, and
+  // `coverageActive` says whether they hold a live prepaid balance — both
+  // feed the Bronze/Silver/Gold membership tier shown in the admin app.
   // -------------------------------------------------------------------
   app.get('/v2/admin/channels', async (req, reply) => {
     const caller = await resolveCaller(req, reply);
@@ -270,8 +272,9 @@ export default async function channelRoutes(app: FastifyInstance) {
         clientId: clientChannels.clientId,
         clientNumber: clients.clientNumber,
         clientInboxId: clients.inboxId,
-        billingLightSeats: clients.billingLightSeats,
-        billingActiveSeats: clients.billingActiveSeats,
+        billingBalanceCents: clients.billingBalanceCents,
+        billingSeats: clients.billingSeats,
+        billingBalanceAsOf: clients.billingBalanceAsOf,
         role: clientChannels.role,
         xmtpGroupId: clientChannels.xmtpGroupId,
         status: clientChannels.status,
@@ -286,7 +289,8 @@ export default async function channelRoutes(app: FastifyInstance) {
       channels: rows.map((r) => ({
         clientNumber: r.clientNumber,
         clientInboxId: r.clientInboxId,
-        monthlyRateCents: monthlyTotalCents(r.billingLightSeats, r.billingActiveSeats),
+        monthlyRateCents: monthlyTotalCents(r.billingSeats),
+        coverageActive: liveBalanceCents(r) > 0,
         role: r.role,
         xmtpGroupId: r.xmtpGroupId,
         status: r.status,
