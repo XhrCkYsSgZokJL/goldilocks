@@ -1,4 +1,5 @@
 import ConvosCore
+import Foundation
 import SwiftUI
 
 struct FeatureRowItem<AccessoryView: View>: View {
@@ -85,6 +86,16 @@ struct ConversationInfoView: View {
     @State private var metadataDebugText: String = "Loading…"
     @State private var showingRestoreInviteTagAlert: Bool = false
     @State private var restoreInviteTagText: String = ""
+    @State private var seatPlan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
+    @State private var advisoryCoverage: ConvosAPI.GoldilocksBillingStatusResponse?
+    @State private var selectedAdvisoryPerson: SeatMember?
+
+    /// Parses the backend's ISO-8601 `activeUntil` timestamp.
+    private static let coverageDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     private let maxMembersToShow: Int = 6
     private var displayedMembers: [ConversationMember] {
@@ -292,88 +303,111 @@ struct ConversationInfoView: View {
         }
     }
 
-    private var preferencesSection: some View {
-        Section {
-            FeatureRowItem(
-                imageName: nil,
-                symbolName: "bell.fill",
-                title: "Notifications",
-                subtitle: nil
-            ) {
-                Toggle("", isOn: $viewModel.notificationsEnabled)
-                    .labelsHidden()
-                    .accessibilityLabel("Notifications")
-                    .accessibilityValue(viewModel.notificationsEnabled ? "on" : "off")
-                    .accessibilityIdentifier("notifications-toggle")
-            }
+    /// True when this conversation is the viewer's own Advisory or Reports
+    /// chat — the two places the encrypted people list + coverage are
+    /// surfaced. Both channels carry the same information so the client
+    /// can review it from whichever chat they happen to have open.
+    private var isOwnGoldilocksClientChannel: Bool {
+        guard viewModel.conversation.goldilocksPinnedSection == .client else { return false }
+        let name: String = viewModel.conversation.name ?? ""
+        return name.hasPrefix("Advisory") || name.hasPrefix("Reports")
+    }
 
-            FeatureRowItem(
-                imageName: nil,
-                symbolName: "eye",
-                title: "Read receipts",
-                subtitle: "Let others know you've read"
-            ) {
-                Toggle("", isOn: Binding(
-                    get: { viewModel.sendReadReceipts },
-                    set: { viewModel.setSendReadReceipts($0) }
-                ))
-                .labelsHidden()
-                .allowsHitTesting(false)
+    /// Coverage end-date, decrypted-people-list, and billing roll-up.
+    /// Admin-only: clients manage their own roster from the Membership
+    /// screen instead of inside a chat. Limited to the viewer's own
+    /// Advisory / Reports chat because that's the only client list we
+    /// hold locally; an admin who wants to manage a different client
+    /// goes through `AdminChannelsView`.
+    @ViewBuilder
+    private var peopleAndCoverageSection: some View {
+        if isOwnGoldilocksClientChannel && GoldilocksConfig.role == .admin {
+            Section {
+                HStack {
+                    Text("Coverage")
+                        .foregroundStyle(.colorTextPrimary)
+                    Spacer()
+                    Text(coverageSummary)
+                        .font(.footnote)
+                        .foregroundStyle(.colorTextSecondary)
+                }
+                if seatPlan.members.isEmpty {
+                    Text("No people added yet.")
+                        .foregroundStyle(.colorTextSecondary)
+                } else {
+                    ForEach(seatPlan.members) { member in
+                        advisoryPersonRow(member)
+                    }
+                }
+            } header: {
+                Text("People & coverage")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.colorTextSecondary)
+            } footer: {
+                Text("Tap a person to view their info or toggle their coverage.")
+                    .font(.caption)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+            .sheet(item: $selectedAdvisoryPerson) { member in
+                AdvisoryPersonSheet(
+                    member: member,
+                    enabled: advisoryEnabledBinding(for: member.id)
+                )
+            }
+        }
+    }
+
+    /// One row per person. Name on the left, a "Disabled" pill under it
+    /// when off the bill, and a chevron on the right. Tapping opens the
+    /// person sheet — the row deliberately doesn't carry the toggle so
+    /// the primary action is unambiguous.
+    private func advisoryPersonRow(_ member: SeatMember) -> some View {
+        let name: String = member.name.isEmpty ? "Unnamed" : member.name
+        let tapAction = { selectedAdvisoryPerson = member }
+        return Button(action: tapAction) {
+            HStack(spacing: DesignConstants.Spacing.step2x) {
+                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                    Text(name)
+                        .font(.body)
+                        .foregroundStyle(.colorTextPrimary)
+                    if !member.enabled {
+                        Text("Disabled")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.colorTextTertiary)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.colorTextTertiary)
             }
             .contentShape(Rectangle())
-            .onTapGesture {
-                viewModel.setSendReadReceipts(!viewModel.sendReadReceipts)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Read receipts")
-            .accessibilityValue(viewModel.sendReadReceipts ? "on" : "off")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityIdentifier("convo-read-receipts-toggle")
-
-            FeatureRowItem(
-                imageName: nil,
-                symbolName: "eye.circle.fill",
-                title: "Reveal mode",
-                subtitle: "Blur incoming pics"
-            ) {
-                Toggle("", isOn: Binding(
-                    get: { !viewModel.autoRevealPhotos },
-                    set: { viewModel.setAutoReveal(!$0) }
-                ))
-                .labelsHidden()
-            }
-
-            FeatureRowItem(
-                imageName: nil,
-                symbolName: "eyeglasses",
-                title: "Peek-a-boo",
-                subtitle: "Blur when people peek"
-            ) {
-                SoonLabel()
-            }
-
-            FeatureRowItem(
-                imageName: nil,
-                symbolName: "tray.fill",
-                title: "Allow DMs",
-                subtitle: "From group members"
-            ) {
-                SoonLabel()
-            }
-
-            FeatureRowItem(
-                imageName: nil,
-                symbolName: "faceid",
-                title: "Require FaceID",
-                subtitle: "Or passcode"
-            ) {
-                SoonLabel()
-            }
-        } header: {
-            Text("Personal preferences")
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.colorTextSecondary)
         }
+        .buttonStyle(.plain)
+    }
+
+    /// Binding the AdvisoryPersonSheet's Toggle reads + writes through.
+    /// Looking the member up by id every read keeps the toggle in lock-
+    /// step with the seat plan even if the snapshot the sheet was
+    /// opened with goes stale.
+    private func advisoryEnabledBinding(for id: UUID) -> Binding<Bool> {
+        Binding(
+            get: { seatPlan.members.first(where: { $0.id == id })?.enabled ?? false },
+            set: { newValue in
+                guard let index = seatPlan.members.firstIndex(where: { $0.id == id }) else { return }
+                seatPlan.members[index].enabled = newValue
+                Task { await viewModel.saveGoldilocksPeopleList() }
+            }
+        )
+    }
+
+    private var coverageSummary: String {
+        guard let coverage = advisoryCoverage else { return "Loading…" }
+        guard let activeUntil = coverage.activeUntil,
+              let date = Self.coverageDateFormatter.date(from: activeUntil) else {
+            return "No active coverage"
+        }
+        return "Active until \(date.formatted(date: .abbreviated, time: .omitted))"
     }
 
     private var convoRulesSection: some View {
@@ -437,6 +471,8 @@ struct ConversationInfoView: View {
 
             membersSection
 
+            peopleAndCoverageSection
+
             assistantSection
 
             if FeatureFlags.shared.isCloudConnectionsEnabled,
@@ -457,7 +493,7 @@ struct ConversationInfoView: View {
                 }
             }
 
-            preferencesSection
+            ConversationPreferencesSection(viewModel: viewModel)
 
             convoRulesSection
 
@@ -594,6 +630,11 @@ struct ConversationInfoView: View {
                         connectionsViewModel = viewModel.makeConversationConnectionsViewModel()
                     }
                 }
+                .task {
+                    if isOwnGoldilocksClientChannel {
+                        advisoryCoverage = await viewModel.loadGoldilocksAdvisoryInfo()
+                    }
+                }
                 .alert("Restore invite tag", isPresented: $showingRestoreInviteTagAlert) {
                     TextField("Invite tag", text: $restoreInviteTagText)
                     Button("Cancel", role: .cancel) {
@@ -691,6 +732,139 @@ struct DebugLogsTextView: View {
                             proxy.scrollTo("logs", anchor: .bottom)
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+private struct ConversationPreferencesSection: View {
+    @Bindable var viewModel: ConversationViewModel
+
+    var body: some View {
+        Section {
+            FeatureRowItem(
+                imageName: nil,
+                symbolName: "bell.fill",
+                title: "Notifications",
+                subtitle: nil
+            ) {
+                Toggle("", isOn: $viewModel.notificationsEnabled)
+                    .labelsHidden()
+                    .accessibilityLabel("Notifications")
+                    .accessibilityValue(viewModel.notificationsEnabled ? "on" : "off")
+                    .accessibilityIdentifier("notifications-toggle")
+            }
+
+            FeatureRowItem(
+                imageName: nil,
+                symbolName: "eye",
+                title: "Read receipts",
+                subtitle: "Let others know you've read"
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { viewModel.sendReadReceipts },
+                    set: { viewModel.setSendReadReceipts($0) }
+                ))
+                .labelsHidden()
+                .allowsHitTesting(false)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                viewModel.setSendReadReceipts(!viewModel.sendReadReceipts)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Read receipts")
+            .accessibilityValue(viewModel.sendReadReceipts ? "on" : "off")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityIdentifier("convo-read-receipts-toggle")
+
+            FeatureRowItem(
+                imageName: nil,
+                symbolName: "eye.circle.fill",
+                title: "Reveal mode",
+                subtitle: "Blur incoming pics"
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { !viewModel.autoRevealPhotos },
+                    set: { viewModel.setAutoReveal(!$0) }
+                ))
+                .labelsHidden()
+            }
+
+            FeatureRowItem(
+                imageName: nil,
+                symbolName: "eyeglasses",
+                title: "Peek-a-boo",
+                subtitle: "Blur when people peek"
+            ) {
+                SoonLabel()
+            }
+
+            FeatureRowItem(
+                imageName: nil,
+                symbolName: "tray.fill",
+                title: "Allow DMs",
+                subtitle: "From group members"
+            ) {
+                SoonLabel()
+            }
+
+            FeatureRowItem(
+                imageName: nil,
+                symbolName: "faceid",
+                title: "Require FaceID",
+                subtitle: "Or passcode"
+            ) {
+                SoonLabel()
+            }
+        } header: {
+            Text("Personal preferences")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.colorTextSecondary)
+        }
+    }
+}
+
+/// Admin-side companion to the client's `MemberEditSheet`. Name and
+/// email are owned by the client (set when they verify the person), so
+/// both are read-only here. The one admin lever is the enabled toggle,
+/// which acts as a kill switch on the third-party subscription and the
+/// per-client billing rate.
+private struct AdvisoryPersonSheet: View {
+    @Environment(\.dismiss) private var dismiss: DismissAction
+
+    let member: SeatMember
+    @Binding var enabled: Bool
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    LabeledContent("Name") {
+                        Text(member.name.isEmpty ? "Unnamed" : member.name)
+                            .foregroundStyle(.colorTextSecondary)
+                    }
+                    LabeledContent("Email") {
+                        Text(member.email)
+                            .foregroundStyle(.colorTextSecondary)
+                    }
+                } footer: {
+                    Text("The client owns this person's name and email. Reach out to them if either needs to change.")
+                }
+
+                Section {
+                    Toggle("Enabled", isOn: $enabled)
+                } footer: {
+                    Text("Enabled people are subscribed to the service and count toward this client's monthly rate.")
+                }
+            }
+            .navigationTitle("Person")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    let doneAction = { dismiss() }
+                    Button("Done", action: doneAction)
                 }
             }
         }

@@ -54,6 +54,7 @@ final class AdminChannelsViewModel {
 
 struct AdminChannelsView: View {
     @State var viewModel: AdminChannelsViewModel
+    @State private var selectedAdvisory: SelectedClientAdvisory?
 
     var body: some View {
         Group {
@@ -69,6 +70,9 @@ struct AdminChannelsView: View {
         .background(.colorBackgroundSurfaceless)
         .task { await viewModel.refresh() }
         .refreshable { await viewModel.refresh() }
+        .sheet(item: $selectedAdvisory) { selected in
+            AdminClientPeopleListView(channel: selected.channel, session: viewModel.session)
+        }
     }
 
     private var emptyState: some View {
@@ -94,7 +98,7 @@ struct AdminChannelsView: View {
             planCountHeader
             List {
                 ForEach(viewModel.channels, id: \.uniqueKey) { channel in
-                    channelRow(for: channel)
+                    channelEntry(for: channel)
                         .listRowBackground(rowBackground(for: channel))
                 }
             }
@@ -116,12 +120,32 @@ struct AdminChannelsView: View {
         .padding(.vertical, DesignConstants.Spacing.step2x)
     }
 
+    /// An Advisory row is tappable — it opens the client's people list so
+    /// the admin can enable/disable members. Reports rows are inert.
+    @ViewBuilder
+    private func channelEntry(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
+        if channel.role == "advisory" {
+            let openAction: () -> Void = {
+                selectedAdvisory = SelectedClientAdvisory(id: channel.uniqueKey, channel: channel)
+            }
+            Button(action: openAction) {
+                channelRow(for: channel)
+            }
+            .buttonStyle(.plain)
+        } else {
+            channelRow(for: channel)
+        }
+    }
+
     private func channelRow(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
         let isExploded: Bool = channel.status == "exploded"
         let isAdvisory: Bool = channel.role == "advisory"
         let subtitleColor: Color = isExploded ? .colorTextTertiary : .colorTextSecondary
         let rowOpacity: Double = isExploded ? 0.5 : 1.0
-        let tier: GoldilocksMembershipTier = GoldilocksMembershipTier(monthlyRateCents: channel.monthlyRateCents)
+        let tier: GoldilocksMembershipTier = GoldilocksMembershipTier(
+            monthlyRateCents: channel.monthlyRateCents,
+            hasActiveCoverage: channel.coverageActive
+        )
         let tierColor: Color = isAdvisory ? tier.accentColor : .colorTextTertiary
         return HStack(spacing: DesignConstants.Spacing.step3x) {
             roleIcon(for: channel)
@@ -155,7 +179,11 @@ struct AdminChannelsView: View {
     /// colour; Reports rows stay neutral.
     private func rowBackground(for channel: ConvosAPI.GoldilocksAdminChannel) -> Color {
         guard channel.role == "advisory" else { return .clear }
-        return GoldilocksMembershipTier(monthlyRateCents: channel.monthlyRateCents).tintColor
+        let tier: GoldilocksMembershipTier = GoldilocksMembershipTier(
+            monthlyRateCents: channel.monthlyRateCents,
+            hasActiveCoverage: channel.coverageActive
+        )
+        return tier.tintColor
     }
 
     private func roleIcon(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
@@ -192,4 +220,10 @@ private extension ConvosAPI.GoldilocksAdminChannel {
     var hasSubscription: Bool {
         monthlyRateCents > 0
     }
+}
+
+/// Identifiable wrapper so a tapped Advisory row can drive `.sheet(item:)`.
+private struct SelectedClientAdvisory: Identifiable {
+    let id: String
+    let channel: ConvosAPI.GoldilocksAdminChannel
 }

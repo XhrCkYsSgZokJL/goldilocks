@@ -3,32 +3,43 @@ import ConvosCoreiOS
 import Foundation
 import Observation
 
-/// One person on the plan. Each person occupies a single seat at their own
-/// plan tier (Light or Active). Entered by the client in the Subscription
-/// screen and pushed to their Advisory chat.
+/// One person on the plan. There is a single Goldilocks plan today
+/// (`GoldilocksPlan.monthlyPricePerPerson` per person, per month) so each
+/// person is just one seat. Entry is gated by an email-code handshake
+/// against the person's email address; once verified, the person is
+/// added directly as `enabled`. Admins can still disable a person later
+/// as a kill switch for the third-party subscription.
 struct SeatMember: Codable, Identifiable, Equatable {
     var id: UUID
     var name: String
     var email: String
-    var phone: String
-    var tier: GoldilocksSubscriptionTier
+    /// Admin-controlled kill switch. Defaults to `true` for newly
+    /// verified people. When an admin disables a person the backend
+    /// unsubscribes them from the third-party service; flipping it back
+    /// on resubscribes.
+    var enabled: Bool
 
     init(
         id: UUID = UUID(),
         name: String = "",
         email: String = "",
-        phone: String = "",
-        tier: GoldilocksSubscriptionTier = .light
+        enabled: Bool = true
     ) {
         self.id = id
         self.name = name
         self.email = email
-        self.phone = phone
-        self.tier = tier
+        self.enabled = enabled
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, email, phone, tier
+        case id, name, email, enabled
+    }
+
+    /// Keys that don't map to a stored property, used only by the decoder
+    /// to detect legacy on-disk shapes. Kept separate from `CodingKeys`
+    /// so Swift's synthesized `encode(to:)` doesn't try to encode them.
+    private enum LegacyKeys: String, CodingKey {
+        case approvalStatus
     }
 
     init(from decoder: any Decoder) throws {
@@ -36,18 +47,29 @@ struct SeatMember: Codable, Identifiable, Equatable {
         self.id = try container.decode(UUID.self, forKey: .id)
         self.name = try container.decode(String.self, forKey: .name)
         self.email = try container.decode(String.self, forKey: .email)
-        self.phone = try container.decode(String.self, forKey: .phone)
-        // `tier` was added after the first on-device builds — default any
-        // person saved before then to Light so old data still loads.
-        self.tier = try container.decodeIfPresent(GoldilocksSubscriptionTier.self, forKey: .tier) ?? .light
+        // Legacy shapes carried an `approvalStatus` field and used
+        // `enabled` only as the admin's kill switch on top of an
+        // already-approved person. With the email-verification gate
+        // replacing admin approval, a legacy row's `enabled = false`
+        // usually meant "waiting on admin", not "deliberately turned
+        // off", so auto-enable everything that came in under the old
+        // schema. Rows written by the current code path have no
+        // `approvalStatus` key and their explicit `enabled` value wins.
+        let legacyContainer = try decoder.container(keyedBy: LegacyKeys.self)
+        let isLegacyRow: Bool = legacyContainer.contains(.approvalStatus)
+        if isLegacyRow {
+            self.enabled = true
+        } else {
+            self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        }
     }
 }
 
-/// On-device store for the client's plan people, persisted to UserDefaults.
-/// Each person is one seat; the monthly total is the sum of every person's
-/// plan tier and sets the billing burn rate. Billing itself (the prepaid
-/// balance and coverage date) lives on the backend — this just holds the
-/// people list that drives the rate.
+/// The client's plan people. The list is synced to the backend as an
+/// encrypted blob (see `loadFromBackend` / `saveToBackend`) and cached
+/// on-device in UserDefaults. Each person is one seat at
+/// `GoldilocksPlan.monthlyPricePerPerson` per month, and the billable
+/// seat count drives the billing burn rate.
 @MainActor
 @Observable
 final class GoldilocksSeatPlan {
@@ -57,78 +79,61 @@ final class GoldilocksSeatPlan {
         didSet { persist() }
     }
 
-    /// Fingerprint of the people list at the last successful send to the
-    /// Advisory chat. `nil` until the first send.
-    private(set) var sentFingerprint: String? {
+    /// Whether the client currently has active prepaid coverage (a
+    /// positive live balance). Cached from the billing status — a client
+    /// only counts as Silver or Gold while this is true. Persisted so the
+    /// tier shown at launch reflects the last known coverage state.
+    var coverageActive: Bool {
         didSet { persist() }
     }
 
-    /// Total people on the plan (one seat each).
+    /// The backend-stored version of the encrypted people list, used for
+    /// optimistic concurrency on save. Persisted so an offline launch can
+    /// still save against the right base version.
+    @ObservationIgnored private var listVersion: Int {
+        didSet { persist() }
+    }
+
+    /// The people list as it last stood on the backend (after a load or a
+    /// successful save). Lets `saveToBackend` skip a write when `members`
+    /// only changed because a load applied the backend's own copy.
+    @ObservationIgnored private var lastSyncedMembers: [SeatMember] = []
+
+    /// Total people on the plan, including any an admin has disabled.
+    /// Used for the people-count UI; not the billing rate.
     var totalSeats: Int {
         members.count
     }
 
-    /// Number of people on the Light tier.
-    var lightSeats: Int {
-        members.filter { $0.tier == .light }.count
+    /// Only enabled people count toward billing — disabled people sit on
+    /// the plan without driving cost or being subscribed to the
+    /// third-party service.
+    private var billableMembers: [SeatMember] {
+        members.filter { $0.enabled }
     }
 
-    /// Number of people on the Active tier.
-    var activeSeats: Int {
-        members.filter { $0.tier == .active }.count
+    /// Billable people on the plan. Drives the backend burn rate.
+    var billableSeatCount: Int {
+        billableMembers.count
     }
 
-    /// Monthly total in whole US dollars, summed across every person's tier.
+    /// Monthly total in whole US dollars: billable people times the single
+    /// per-person plan price. Disabled people are excluded.
     var monthlyTotal: Int {
-        members.reduce(0) { (sum: Int, member: SeatMember) -> Int in
-            sum + member.tier.monthlyPrice
-        }
-    }
-
-    /// The overall plan tier — Active when any seat is on the Active plan,
-    /// otherwise Light, or No plan when there are no people.
-    var planTier: GoldilocksSubscriptionTier {
-        if members.contains(where: { $0.tier == .active }) {
-            return .active
-        }
-        return members.isEmpty ? .noPlan : .light
+        billableSeatCount * GoldilocksPlan.monthlyPricePerPerson
     }
 
     private init() {
         let snapshot = Self.loadSnapshot()
         self.members = snapshot?.members ?? []
-        self.sentFingerprint = snapshot?.sentFingerprint
+        self.coverageActive = snapshot?.coverageActive ?? false
+        self.listVersion = snapshot?.listVersion ?? 0
     }
 
-    // MARK: - Roster fingerprint
+    // MARK: - Advisory lookup
 
-    /// Canonical `email|tier` token for one person. Email is trimmed and
-    /// lower-cased so capitalisation or stray spaces don't read as a change.
-    private func rosterEntry(for member: SeatMember) -> String {
-        let email = member.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return "\(email)|\(member.tier.rawValue)"
-    }
-
-    /// Fingerprint of the current people list — sorted `email|tier` tokens.
-    var currentFingerprint: String {
-        members.map { rosterEntry(for: $0) }.sorted().joined(separator: "\n")
-    }
-
-    /// True when the current people list was already sent to Advisory.
-    var alreadySentCurrentRoster: Bool {
-        sentFingerprint == currentFingerprint
-    }
-
-    /// Whether "Send to Advisory" is currently allowed: there are people
-    /// and this exact list hasn't been sent yet.
-    var canSendToAdvisory: Bool {
-        !members.isEmpty && !alreadySentCurrentRoster
-    }
-
-    // MARK: - Roster delivery
-
-    /// Errors surfaced when posting the roster to the Advisory chat.
-    enum RosterSendError: LocalizedError {
+    /// Error when the caller's own Advisory chat can't be resolved.
+    enum AdvisoryLookupError: LocalizedError {
         case advisoryChatNotFound
 
         var errorDescription: String? {
@@ -139,64 +144,125 @@ final class GoldilocksSeatPlan {
         }
     }
 
-    /// The people list rendered as a plain-text chat message.
-    var rosterMessageText: String {
-        let countWord: String = members.count == 1 ? "person" : "people"
-        var lines: [String] = []
-        lines.append("Subscription people list")
-        lines.append("\(members.count) \(countWord) — $\(monthlyTotal)/mo")
-        lines.append("")
-        for (index, member) in members.enumerated() {
-            let name: String = member.name.isEmpty ? "Unnamed" : member.name
-            lines.append("\(index + 1). \(name) (\(member.tier.displayName))")
-            if !member.email.isEmpty {
-                lines.append("   \(member.email)")
-            }
-            if !member.phone.isEmpty {
-                lines.append("   \(member.phone)")
-            }
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    /// True when `conversation` is the caller's own Advisory chat — the
-    /// chat the roster posts to. `goldilocksPinnedSection` resolves the
-    /// caller's own channels, so an admin (who belongs to many clients'
-    /// Advisories) still posts into their own.
-    private func isRosterDestination(_ conversation: Conversation) -> Bool {
+    /// True when `conversation` is the caller's own Advisory chat.
+    /// `goldilocksPinnedSection` resolves the caller's own channels, so an
+    /// admin (who belongs to many clients' Advisories) still matches only
+    /// their own.
+    private func isOwnAdvisory(_ conversation: Conversation) -> Bool {
         guard conversation.goldilocksPinnedSection == .client else { return false }
         return (conversation.name ?? "").hasPrefix("Advisory")
     }
 
-    /// Compose the current people list and post it to the caller's own
-    /// Advisory XMTP group. Independent of billing — the roster is just a
-    /// chat message.
-    func sendRosterToChannel(session: any SessionManagerProtocol) async throws {
+    // MARK: - Encrypted backend sync
+
+    /// Resolve the caller's own Advisory conversation, or throw if it
+    /// hasn't synced to this device yet.
+    private func advisoryConversation(session: any SessionManagerProtocol) throws -> Conversation {
         let conversations: [Conversation] = try session
             .conversationsRepository(for: [.allowed, .unknown])
             .fetchAll()
-        guard let destination = conversations.first(where: { (conversation: Conversation) -> Bool in
-            isRosterDestination(conversation)
-        }) else {
-            throw RosterSendError.advisoryChatNotFound
+        guard let advisory = conversations.first(where: { isOwnAdvisory($0) }) else {
+            throw AdvisoryLookupError.advisoryChatNotFound
         }
-        let writer = session.messagingService().messageWriter(
-            for: destination.id,
-            backgroundUploadManager: BackgroundUploadManager.shared
-        )
-        try await writer.send(text: rosterMessageText)
-        sentFingerprint = currentFingerprint
+        return advisory
+    }
+
+    /// Pull the encrypted people list from the backend and decrypt it with
+    /// the Advisory group's key. Best-effort: on any failure the on-device
+    /// cache is kept. If the backend has no list yet but the local cache
+    /// does, the cache is pushed up instead.
+    func loadFromBackend(session: any SessionManagerProtocol) async {
+        do {
+            let blob = try await session.fetchGoldilocksPeopleList()
+            guard blob.version > 0,
+                  let ciphertext = blob.ciphertext,
+                  let salt = blob.salt,
+                  let nonce = blob.nonce else {
+                // No list on the backend yet — seed it from the cache.
+                listVersion = blob.version
+                if members.isEmpty {
+                    lastSyncedMembers = members
+                } else {
+                    await saveToBackend(session: session)
+                }
+                return
+            }
+            let advisory: Conversation = try advisoryConversation(session: session)
+            let key: Data = try await session.groupEncryptionKey(forConversationId: advisory.id)
+            let loaded: [SeatMember] = try PeopleListCrypto.decrypt(
+                ciphertext: ciphertext, salt: salt, nonce: nonce, groupKey: key
+            )
+            members = loaded
+            lastSyncedMembers = loaded
+            listVersion = blob.version
+        } catch {
+            Log.warning("[Goldilocks] People list load failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Encrypt the current people list with the Advisory group's key and
+    /// store it on the backend. Best-effort: failures are logged and the
+    /// on-device cache is kept; the next load reconciles. Skips the write
+    /// when nothing has changed since the last sync. On a successful save,
+    /// adds and removes are also posted to the Advisory chat as audit
+    /// lines so the client and their admins share a chronological record.
+    func saveToBackend(session: any SessionManagerProtocol) async {
+        guard members != lastSyncedMembers else { return }
+        let previous: [SeatMember] = lastSyncedMembers
+        let snapshot: [SeatMember] = members
+        do {
+            let advisory: Conversation = try advisoryConversation(session: session)
+            let key: Data = try await session.groupEncryptionKey(forConversationId: advisory.id)
+            let blob: PeopleListCrypto.EncryptedBlob = try PeopleListCrypto.encrypt(snapshot, groupKey: key)
+            let newVersion: Int = try await session.saveGoldilocksPeopleList(
+                ciphertext: blob.ciphertext,
+                salt: blob.salt,
+                nonce: blob.nonce,
+                baseVersion: listVersion
+            )
+            lastSyncedMembers = snapshot
+            listVersion = newVersion
+            await postAuditLines(
+                GoldilocksPeopleAudit.clientDiffLines(old: previous, new: snapshot),
+                toConversationId: advisory.id,
+                session: session
+            )
+        } catch {
+            Log.warning("[Goldilocks] People list save failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Send each audit line into the given conversation, swallowing errors
+    /// so a transient send failure doesn't make the people-list save look
+    /// like it failed.
+    private func postAuditLines(
+        _ lines: [String],
+        toConversationId conversationId: String,
+        session: any SessionManagerProtocol
+    ) async {
+        guard !lines.isEmpty else { return }
+        let writer: any ConversationStateManagerProtocol = session
+            .messagingService()
+            .conversationStateManager(for: conversationId)
+        for line in lines {
+            do {
+                try await writer.send(text: line)
+            } catch {
+                Log.warning("[Goldilocks] Couldn't post audit line: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - Persistence
 
     private struct Snapshot: Codable {
         var members: [SeatMember]
-        var sentFingerprint: String?
+        var listVersion: Int?
+        var coverageActive: Bool?
     }
 
     private func persist() {
-        let snapshot = Snapshot(members: members, sentFingerprint: sentFingerprint)
+        let snapshot = Snapshot(members: members, listVersion: listVersion, coverageActive: coverageActive)
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         UserDefaults.standard.set(data, forKey: Constant.storageKey)
     }

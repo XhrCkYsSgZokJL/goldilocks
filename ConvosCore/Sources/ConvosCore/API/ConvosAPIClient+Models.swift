@@ -245,20 +245,15 @@ public enum ConvosAPI {
         public let clientNumber: Int64
         public let isAdmin: Bool
         public let inboxId: String
-        /// Active subscription plan ("light" | "active"), or nil if the
-        /// client has no plan.
-        public let subscriptionTier: String?
 
         public init(
             clientNumber: Int64,
             isAdmin: Bool,
-            inboxId: String,
-            subscriptionTier: String? = nil
+            inboxId: String
         ) {
             self.clientNumber = clientNumber
             self.isAdmin = isAdmin
             self.inboxId = inboxId
-            self.subscriptionTier = subscriptionTier
         }
     }
 
@@ -345,6 +340,9 @@ public enum ConvosAPI {
         /// The client's current monthly spend in cents — drives the
         /// Bronze/Silver/Gold membership tier shown in the admin view.
         public let monthlyRateCents: Int
+        /// Whether the client currently has active prepaid coverage. A
+        /// client only reaches Silver or Gold while this is true.
+        public let coverageActive: Bool
     }
 
     public struct GoldilocksAdminChannelsResponse: Codable, Sendable {
@@ -354,19 +352,17 @@ public enum ConvosAPI {
     // MARK: - Goldilocks billing (Stripe prepaid balance)
 
     /// Body for `POST /v2/billing/checkout` — buy a block of coverage.
-    /// Seat counts are sent rather than an amount so the backend prices
+    /// The seat count is sent rather than an amount so the backend prices
     /// the top-up server-side.
     public struct GoldilocksCheckoutRequest: Codable, Sendable {
         public let paymentMethod: String   // "card" | "crypto"
         public let durationMonths: Int     // 1, 3 or 6
-        public let lightSeats: Int
-        public let activeSeats: Int
+        public let seats: Int
 
-        public init(paymentMethod: String, durationMonths: Int, lightSeats: Int, activeSeats: Int) {
+        public init(paymentMethod: String, durationMonths: Int, seats: Int) {
             self.paymentMethod = paymentMethod
             self.durationMonths = durationMonths
-            self.lightSeats = lightSeats
-            self.activeSeats = activeSeats
+            self.seats = seats
         }
     }
 
@@ -382,15 +378,13 @@ public enum ConvosAPI {
         }
     }
 
-    /// Body for `POST /v2/billing/seats` — pushes the current seat mix so
+    /// Body for `POST /v2/billing/seats` — pushes the current seat count so
     /// the backend can re-settle the balance and move the coverage date.
     public struct GoldilocksSeatsRequest: Codable, Sendable {
-        public let lightSeats: Int
-        public let activeSeats: Int
+        public let seats: Int
 
-        public init(lightSeats: Int, activeSeats: Int) {
-            self.lightSeats = lightSeats
-            self.activeSeats = activeSeats
+        public init(seats: Int) {
+            self.seats = seats
         }
     }
 
@@ -401,23 +395,20 @@ public enum ConvosAPI {
         public let activeUntil: String?
         /// Live prepaid balance in cents.
         public let balanceCents: Int
-        /// Current monthly burn rate in cents (from the seat mix).
+        /// Current monthly burn rate in cents (from the seat count).
         public let monthlyRateCents: Int
-        public let lightSeats: Int
-        public let activeSeats: Int
+        public let seats: Int
 
         public init(
             activeUntil: String?,
             balanceCents: Int,
             monthlyRateCents: Int,
-            lightSeats: Int,
-            activeSeats: Int
+            seats: Int
         ) {
             self.activeUntil = activeUntil
             self.balanceCents = balanceCents
             self.monthlyRateCents = monthlyRateCents
-            self.lightSeats = lightSeats
-            self.activeSeats = activeSeats
+            self.seats = seats
         }
     }
 
@@ -428,6 +419,48 @@ public enum ConvosAPI {
 
         public init(refundedCents: Int) {
             self.refundedCents = refundedCents
+        }
+    }
+
+    /// The encrypted people-list blob, from `GET /v2/me/people-list`. The
+    /// blob fields are AES-256-GCM ciphertext (base64); they are nil when
+    /// the client has no list yet (version 0).
+    public struct GoldilocksPeopleListResponse: Codable, Sendable {
+        public let version: Int
+        public let ciphertext: String?
+        public let salt: String?
+        public let nonce: String?
+
+        public init(version: Int, ciphertext: String?, salt: String?, nonce: String?) {
+            self.version = version
+            self.ciphertext = ciphertext
+            self.salt = salt
+            self.nonce = nonce
+        }
+    }
+
+    /// Body for `PUT /v2/me/people-list` — the re-encrypted blob plus the
+    /// version it was edited from (optimistic concurrency).
+    public struct GoldilocksPeopleListSaveRequest: Codable, Sendable {
+        public let ciphertext: String
+        public let salt: String
+        public let nonce: String
+        public let baseVersion: Int
+
+        public init(ciphertext: String, salt: String, nonce: String, baseVersion: Int) {
+            self.ciphertext = ciphertext
+            self.salt = salt
+            self.nonce = nonce
+            self.baseVersion = baseVersion
+        }
+    }
+
+    /// Result of `PUT /v2/me/people-list` — the new stored version.
+    public struct GoldilocksPeopleListSaveResponse: Codable, Sendable {
+        public let version: Int
+
+        public init(version: Int) {
+            self.version = version
         }
     }
 

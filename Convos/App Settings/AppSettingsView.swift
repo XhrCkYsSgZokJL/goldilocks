@@ -73,7 +73,10 @@ struct AppSettingsView: View {
     }
 
     private var currentTierLabel: String {
-        GoldilocksMembershipTier(monthlyTotalDollars: GoldilocksSeatPlan.shared.monthlyTotal).displayName
+        GoldilocksMembershipTier(
+            activeMembers: GoldilocksSeatPlan.shared.billableSeatCount,
+            hasActiveCoverage: GoldilocksSeatPlan.shared.coverageActive
+        ).displayName
     }
 
     @ViewBuilder
@@ -118,7 +121,7 @@ struct AppSettingsView: View {
             }
             .listRowInsets(.init(top: 0, leading: DesignConstants.Spacing.step4x, bottom: 0, trailing: 10.0))
         } footer: {
-            Text("Invoices from Goldilocks Digital")
+            Text("Reserved for Diamond tier clients")
         }
     }
 
@@ -365,7 +368,7 @@ struct AppSettingsView: View {
             let success = await GoldilocksSession.shared.upgradeToAdmin(session: session, code: code)
             upgradeResultMessage = success
                 ? "You're now an admin. Relaunch the app for all changes to take effect."
-                : "Upgrade failed — check the code and try again."
+                : "Upgrade failed. Check the code and try again."
             showingUpgradeResult = true
         }
     }
@@ -422,10 +425,12 @@ struct MembershipView: View {
 
     @State private var plan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
     @State private var editingMember: SeatMember?
-    @State private var isAddingMember: Bool = false
-    @State private var isSending: Bool = false
-    @State private var sendResultMessage: String?
-    @State private var showingSendResult: Bool = false
+    @State private var showingAddPerson: Bool = false
+    @State private var newMemberName: String = ""
+    @State private var newMemberEmail: String = ""
+    @State private var pendingAdd: PendingAdd?
+    @State private var verifyResultMessage: String?
+    @State private var showingVerifyResult: Bool = false
     @State private var billingResultMessage: String?
     @State private var showingBillingResult: Bool = false
     @State private var showingCancelConfirm: Bool = false
@@ -453,9 +458,10 @@ struct MembershipView: View {
                 Task { await refreshBillingStatus() }
             }
             .onChange(of: plan.members) { _, _ in
-                Task { await syncSeats() }
+                Task { await savePeopleList() }
             }
             .task {
+                await plan.loadFromBackend(session: session)
                 await syncSeats()
             }
     }
@@ -467,34 +473,43 @@ struct MembershipView: View {
             coverageSection
             paymentSection
             pendingCheckoutSection
-            cancelSection
-            sendSection
         }
         .scrollContentBackground(.hidden)
         .background(.colorBackgroundRaisedSecondary)
         .navigationTitle("Membership")
         .toolbarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if !plan.members.isEmpty {
+                    EditButton()
+                }
+            }
+        }
         .sheet(item: $editingMember) { member in
-            SeatMemberEditorView(
+            MemberEditSheet(
                 member: member,
-                onDelete: {
-                    plan.members.removeAll { $0.id == member.id }
-                },
                 onSave: { updated in
                     guard let index = plan.members.firstIndex(where: { $0.id == updated.id }) else { return }
                     plan.members[index] = updated
+                },
+                onRemove: {
+                    plan.members.removeAll { $0.id == member.id }
                 }
             )
         }
-        .sheet(isPresented: $isAddingMember) {
-            SeatMemberEditorView(member: SeatMember()) { newMember in
-                plan.members.append(newMember)
-            }
+        .sheet(isPresented: $showingAddPerson) {
+            AddPersonSheet(
+                name: $newMemberName,
+                email: $newMemberEmail,
+                pendingAdd: $pendingAdd,
+                onAdded: handleVerifiedAdd,
+                onTooManyAttempts: handleTooManyAttempts
+            )
         }
-        .alert("Send to Advisory", isPresented: $showingSendResult) {
+        .alert("Verification", isPresented: $showingVerifyResult) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(sendResultMessage ?? "")
+            Text(verifyResultMessage ?? "")
         }
         .alert("Coverage", isPresented: $showingBillingResult) {
             Button("OK", role: .cancel) {}
@@ -510,8 +525,47 @@ struct MembershipView: View {
         }
     }
 
+    /// Verified-code success path. The new person is on the plan, the
+    /// form clears, and the Add Person sheet dismisses so the user lands
+    /// back on Membership and sees the new name in the list. The
+    /// dismissal + alert are deferred by a short delay so the inner
+    /// VerifyCodeSheet's dismiss animation finishes first — collapsing
+    /// two sheets in the same runloop tick on iOS 26 tears down the
+    /// whole settings sheet stack, bouncing the user back to the
+    /// conversation list.
+    private func handleVerifiedAdd(_ member: SeatMember) {
+        plan.members.append(member)
+        let addedLabel: String = member.name.isEmpty ? member.email : member.name
+        pendingAdd = nil
+        newMemberName = ""
+        newMemberEmail = ""
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            showingAddPerson = false
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            showVerifyResult("\(addedLabel) was added to your plan.")
+        }
+    }
+
+    /// Third wrong-code path. Drop the in-flight verification, close
+    /// the Add Person sheet, and surface a "send a fresh code" alert —
+    /// staggered for the same multi-sheet-collapse reason as the
+    /// success path.
+    private func handleTooManyAttempts() {
+        pendingAdd = nil
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            showingAddPerson = false
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            showVerifyResult("Too many incorrect codes. Tap Send verification code to send a fresh one.")
+        }
+    }
+
     private var tierSection: some View {
-        let tier: GoldilocksMembershipTier = GoldilocksMembershipTier(monthlyTotalDollars: plan.monthlyTotal)
+        let tier: GoldilocksMembershipTier = GoldilocksMembershipTier(
+            activeMembers: plan.billableSeatCount,
+            hasActiveCoverage: plan.coverageActive
+        )
         return Section {
             HStack(spacing: DesignConstants.Spacing.step2x) {
                 Image(systemName: tier.iconName)
@@ -529,23 +583,40 @@ struct MembershipView: View {
         }
     }
 
+    /// Visible whenever the client has a prepaid balance — even if they
+    /// have zero billable people right now (rate = 0). That "paused"
+    /// state still shows the row so the client can cancel + refund
+    /// instead of stranding the balance.
     @ViewBuilder
     private var coverageSection: some View {
-        Section {
-            HStack {
-                Text(coverageStatusText)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.colorTextPrimary)
-                Spacer()
-                let balance: Int = billingStatus?.balanceCents ?? 0
-                if balance > 0 {
-                    Text("$\(balance / 100) left")
-                        .font(.subheadline)
-                        .foregroundStyle(.colorTextSecondary)
+        if hasCoverageBalance {
+            Section {
+                let tapAction = { showingCancelConfirm = true }
+                Button(action: tapAction) {
+                    HStack(spacing: DesignConstants.Spacing.step2x) {
+                        Text(coverageStatusText)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.colorTextPrimary)
+                        Spacer()
+                        let balance: Int = billingStatus?.balanceCents ?? 0
+                        if balance > 0 {
+                            Text("$\(balance / 100) left")
+                                .font(.subheadline)
+                                .foregroundStyle(.colorTextSecondary)
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.colorTextTertiary)
+                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .disabled(isCancelling)
+            } header: {
+                Text("Coverage")
+            } footer: {
+                Text("Tap to close coverage and refund your unused balance to your card.")
             }
-        } header: {
-            Text("Coverage")
         }
     }
 
@@ -557,7 +628,7 @@ struct MembershipView: View {
             billingDetailRow
             checkoutButton
         } header: {
-            Text("Add coverage")
+            Text(isCoverageActive ? "Extend coverage" : "Add coverage")
         } footer: {
             paymentSectionFooter
         }
@@ -610,29 +681,8 @@ struct MembershipView: View {
     }
 
     private var paymentSectionFooter: some View {
-        Text("Adds \(prepaidDuration.displayName) of coverage. Editing your membership moves the coverage date.")
-    }
-
-    @ViewBuilder
-    private var cancelSection: some View {
-        if isCoverageActive {
-            Section {
-                let cancelAction: () -> Void = { showingCancelConfirm = true }
-                Button(role: .destructive, action: cancelAction) {
-                    HStack {
-                        Spacer()
-                        if isCancelling {
-                            ProgressView()
-                        } else {
-                            Text("Cancel coverage & refund")
-                                .font(.body.weight(.semibold))
-                        }
-                        Spacer()
-                    }
-                }
-                .disabled(isCancelling)
-            }
-        }
+        let verb: String = isCoverageActive ? "Extends" : "Adds"
+        return Text("\(verb) \(prepaidDuration.displayName) of coverage. Editing your membership moves the coverage date.")
     }
 
     @ViewBuilder
@@ -667,9 +717,10 @@ struct MembershipView: View {
 
     private var checkoutButtonLabel: String {
         if paymentMethod == .crypto {
-            return "Crypto Coming Soon"
+            return "Coming Soon"
         }
-        return "Add \(prepaidDuration.displayName)"
+        let verb: String = isCoverageActive ? "Extend" : "Add"
+        return "\(verb) \(prepaidDuration.displayName)"
     }
 
     private var canStartCheckout: Bool {
@@ -680,105 +731,144 @@ struct MembershipView: View {
         billingStatus?.activeUntil != nil
     }
 
+    /// True whenever there's an unused prepaid balance, including the
+    /// "paused" case where the client added cover, then removed every
+    /// billable person (so the rate dropped to zero and the balance
+    /// stopped burning). The Coverage section uses this so the client
+    /// can still cancel + refund instead of stranding the credit.
+    private var hasCoverageBalance: Bool {
+        (billingStatus?.balanceCents ?? 0) > 0
+    }
+
     private var coverageStatusText: String {
         guard let status = billingStatus else { return "Checking…" }
-        guard let activeUntil = status.activeUntil,
-              let date = Self.dateFormatter.date(from: activeUntil) else {
-            return "No active coverage"
+        if let activeUntil = status.activeUntil,
+           let date = Self.dateFormatter.date(from: activeUntil) {
+            return "Active until \(date.formatted(date: .abbreviated, time: .omitted))"
         }
-        return "Active until \(date.formatted(date: .abbreviated, time: .omitted))"
+        if (status.balanceCents) > 0 {
+            return "Paused"
+        }
+        return "No active coverage"
     }
 
     private var cancelConfirmMessage: String {
-        let refund: Int = (billingStatus?.balanceCents ?? 0) / 100
-        return "Coverage ends now and the unused $\(refund) is refunded to your card."
+        "Coverage ends now. Your unused balance is refunded to your card, pro-rata against your most recent top-ups."
     }
 
     @ViewBuilder
     private var peopleSection: some View {
         Section {
             if plan.members.isEmpty {
-                Text("No people added yet.")
+                Text("No people on your plan yet.")
                     .foregroundStyle(.colorTextSecondary)
             } else {
                 ForEach(plan.members) { member in
-                    let editAction = { editingMember = member }
-                    Button(action: editAction) {
-                        memberRow(member)
-                    }
+                    memberRow(member)
                 }
                 .onDelete(perform: deleteMembers)
+                .onMove(perform: moveMembers)
             }
-            let addAction = { isAddingMember = true }
-            Button(action: addAction) {
-                Label("Add person", systemImage: "plus.circle.fill")
-            }
-            .foregroundStyle(.colorFillPrimary)
+            addSomeoneRow
         } header: {
             Text("People")
+        } footer: {
+            Text("\(GoldilocksPlan.priceLabel). Tap a person to edit their name, swipe to remove, or long press a row to reorder.")
         }
     }
 
+    /// Bottom row of the People section. Tapping opens the Add Person
+    /// sheet. If a verification is already in flight (the sheet was
+    /// dismissed before it completed), the row labels itself
+    /// "Continue adding…" with a hint, so the user can pick up where
+    /// they left off.
+    private var addSomeoneRow: some View {
+        let title: String = pendingAdd != nil ? "Continue adding…" : "Add someone"
+        let subtitle: String? = pendingAdd?.email
+        let tapAction = { showingAddPerson = true }
+        return Button(action: tapAction) {
+            HStack(spacing: DesignConstants.Spacing.step2x) {
+                Image(systemName: "plus.circle.fill")
+                    .foregroundStyle(.colorFillPrimary)
+                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                    Text(title)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.colorTextPrimary)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.colorTextSecondary)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.colorTextTertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// One row per person. Tap opens a sheet to edit the name (email is
+    /// fixed once verified). Emails are deliberately not shown here so
+    /// the list reads as a clean roster of names.
     private func memberRow(_ member: SeatMember) -> some View {
         let displayName: String = member.name.isEmpty ? "Unnamed" : member.name
-        return HStack(spacing: DesignConstants.Spacing.step2x) {
-            Text(displayName)
-                .font(.body)
-                .foregroundStyle(.colorTextPrimary)
-            Spacer()
-            Text("\(member.tier.displayName) · \(member.tier.priceLabel)")
-                .font(.subheadline)
-                .foregroundStyle(.colorTextSecondary)
-            Image(systemName: "chevron.right")
-                .font(.footnote)
-                .foregroundStyle(.colorTextTertiary)
-        }
-    }
-
-    @ViewBuilder
-    private var sendSection: some View {
-        Section {
-            let sendAction: () -> Void = { Task { await sendRoster() } }
-            Button(action: sendAction) {
-                HStack {
-                    Spacer()
-                    if isSending {
-                        ProgressView()
-                    } else {
-                        Text("Send to Advisory")
-                            .font(.body.weight(.semibold))
+        let tapAction = { editingMember = member }
+        return Button(action: tapAction) {
+            HStack(spacing: DesignConstants.Spacing.step2x) {
+                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                    Text(displayName)
+                        .font(.body)
+                        .foregroundStyle(.colorTextPrimary)
+                    if !member.enabled {
+                        Text("Disabled")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.colorTextTertiary)
                     }
-                    Spacer()
                 }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.colorTextTertiary)
             }
-            .disabled(!canSendToAdvisory || isSending)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 
-    private func sendRoster() async {
-        isSending = true
-        do {
-            try await plan.sendRosterToChannel(session: session)
-            sendResultMessage = "Your people list was posted to your Advisory chat."
-        } catch {
-            sendResultMessage = error.localizedDescription
-        }
-        isSending = false
-        showingSendResult = true
+    private func showVerifyResult(_ message: String) {
+        verifyResultMessage = message
+        showingVerifyResult = true
     }
 
-    /// Push the current seat mix to the backend so it can re-settle the
+    /// Push the current seat count to the backend so it can re-settle the
     /// balance and recompute the coverage date. Runs on appear and whenever
     /// the people list changes.
     private func syncSeats() async {
         do {
             billingStatus = try await session.syncGoldilocksSeats(
-                lightSeats: plan.lightSeats,
-                activeSeats: plan.activeSeats
+                seats: plan.billableSeatCount
             )
+            cacheCoverageActive()
         } catch {
             Log.warning("[Goldilocks] Seat sync failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Cache "has active coverage" onto the seat plan so the membership
+    /// tier shown on other screens — the conversations-list chip and the
+    /// App Settings row — reflects whether coverage is actually active.
+    private func cacheCoverageActive() {
+        plan.coverageActive = (billingStatus?.balanceCents ?? 0) > 0
+    }
+
+    /// Persist a people-list edit — push the encrypted list to the backend,
+    /// then re-sync the billing seat counts.
+    private func savePeopleList() async {
+        await plan.saveToBackend(session: session)
+        await syncSeats()
     }
 
     /// Ask the backend for a Stripe Checkout Session and open the hosted
@@ -791,8 +881,7 @@ struct MembershipView: View {
             let response = try await session.createGoldilocksCheckout(
                 paymentMethod: paymentMethod,
                 durationMonths: prepaidDuration.months,
-                lightSeats: plan.lightSeats,
-                activeSeats: plan.activeSeats
+                seats: plan.billableSeatCount
             )
             if let url = URL(string: response.checkoutUrl) {
                 balanceBeforeCheckout = billingStatus?.balanceCents ?? 0
@@ -814,9 +903,10 @@ struct MembershipView: View {
         do {
             let status = try await session.fetchGoldilocksBillingStatus()
             billingStatus = status
+            cacheCoverageActive()
             if checkoutInitiated, status.balanceCents > balanceBeforeCheckout {
                 checkoutInitiated = false
-                showBillingResult("Payment confirmed — your coverage is active.")
+                showBillingResult("Your coverage is active.")
             }
         } catch {
             // Transient failures are expected while a payment settles; the
@@ -832,6 +922,7 @@ struct MembershipView: View {
         do {
             let result = try await session.cancelGoldilocksBilling()
             billingStatus = try await session.fetchGoldilocksBillingStatus()
+            cacheCoverageActive()
             showBillingResult("Coverage cancelled. $\(result.refundedCents / 100) refunded to your card.")
         } catch {
             showBillingResult("Couldn't cancel coverage: \(error.localizedDescription)")
@@ -844,70 +935,74 @@ struct MembershipView: View {
         showingBillingResult = true
     }
 
-    private var canSendToAdvisory: Bool {
-        plan.canSendToAdvisory
-    }
-
     private func deleteMembers(at offsets: IndexSet) {
         plan.members.remove(atOffsets: offsets)
     }
+
+    /// Client-side cosmetic reorder. The new order rides along in the
+    /// encrypted blob the next time `plan.saveToBackend` runs (because
+    /// `members` is the array being persisted), but the backend never
+    /// reads or acts on order — it's purely the client's preferred
+    /// arrangement.
+    private func moveMembers(from source: IndexSet, to destination: Int) {
+        plan.members.move(fromOffsets: source, toOffset: destination)
+    }
 }
 
-/// Sheet for adding or editing the person who fills a subscription seat.
-struct SeatMemberEditorView: View {
+/// Modal editor for a person already on the plan. The email is fixed at
+/// verification time and rendered read-only here; only the display name
+/// is editable. A confirmation dialog gates the destructive remove.
+private struct MemberEditSheet: View {
     @Environment(\.dismiss) private var dismiss: DismissAction
 
-    @State private var draft: SeatMember
-    private let onSave: (SeatMember) -> Void
-    private let onDelete: (() -> Void)?
+    let member: SeatMember
+    let onSave: (SeatMember) -> Void
+    let onRemove: () -> Void
+
+    @State private var name: String
+    @State private var showingRemoveConfirm: Bool = false
 
     init(
         member: SeatMember,
-        onDelete: (() -> Void)? = nil,
-        onSave: @escaping (SeatMember) -> Void
+        onSave: @escaping (SeatMember) -> Void,
+        onRemove: @escaping () -> Void
     ) {
-        _draft = State(initialValue: member)
-        self.onDelete = onDelete
+        self.member = member
         self.onSave = onSave
+        self.onRemove = onRemove
+        self._name = State(initialValue: member.name)
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Name", text: $draft.name)
-                        .textContentType(.name)
-                    TextField("Email", text: $draft.email)
-                        .textContentType(.emailAddress)
-                        .keyboardType(.emailAddress)
-                        .textInputAutocapitalization(.never)
-                    TextField("Phone (optional)", text: $draft.phone)
-                        .textContentType(.telephoneNumber)
-                        .keyboardType(.phonePad)
+                    LabeledContent("Name") {
+                        TextField("Name", text: $name)
+                            .textContentType(.name)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(.colorTextPrimary)
+                    }
+                    LabeledContent("Email") {
+                        Text(member.email)
+                            .foregroundStyle(.colorTextSecondary)
+                    }
+                } footer: {
+                    Text("The email is set when the person is verified and can't be changed.")
                 }
                 Section {
-                    Picker("Plan", selection: $draft.tier) {
-                        ForEach(Self.tierOptions, id: \.self) { tier in
-                            Text(tier.displayName).tag(tier)
+                    let removeAction = { showingRemoveConfirm = true }
+                    Button(role: .destructive, action: removeAction) {
+                        HStack {
+                            Spacer()
+                            Text("Remove from plan")
+                                .font(.body.weight(.semibold))
+                            Spacer()
                         }
-                    }
-                    .pickerStyle(.segmented)
-                } header: {
-                    Text("Plan")
-                } footer: {
-                    Text("Light is $100/mo. Active is $200/mo.")
-                }
-                if let onDelete {
-                    Section {
-                        let deleteAction = {
-                            onDelete()
-                            dismiss()
-                        }
-                        Button("Remove person from plan", role: .destructive, action: deleteAction)
                     }
                 }
             }
-            .navigationTitle("Person")
+            .navigationTitle("Edit person")
             .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -915,18 +1010,303 @@ struct SeatMemberEditorView: View {
                     Button("Cancel", action: cancelAction)
                 }
                 ToolbarItem(placement: .confirmationAction) {
+                    let trimmed: String = name.trimmingCharacters(in: .whitespaces)
                     let saveAction = {
-                        onSave(draft)
+                        var updated: SeatMember = member
+                        updated.name = trimmed
+                        onSave(updated)
                         dismiss()
                     }
                     Button("Save", action: saveAction)
-                        .disabled(draft.name.isEmpty || draft.email.isEmpty)
+                        .disabled(trimmed.isEmpty || trimmed == member.name)
                 }
+            }
+            .confirmationDialog(
+                "Remove \(member.name) from your plan?",
+                isPresented: $showingRemoveConfirm,
+                titleVisibility: .visible
+            ) {
+                let removeAction = {
+                    onRemove()
+                    dismiss()
+                }
+                Button("Remove", role: .destructive, action: removeAction)
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("They'll stop counting toward your coverage and be unsubscribed from the service.")
+            }
+        }
+    }
+}
+
+/// Modal that hosts the two-stage Add Person flow. The form (name,
+/// email, "Send verification code") lives here; tapping Send presents
+/// `VerifyCodeSheet` on top. Dismissing the verify sheet (swipe down)
+/// keeps the in-flight `PendingAdd`, and this sheet swaps the form's
+/// final row for "Enter code" + "Cancel code" so the user can resume
+/// or abandon the verification.
+private struct AddPersonSheet: View {
+    @Environment(\.dismiss) private var dismiss: DismissAction
+
+    @Binding var name: String
+    @Binding var email: String
+    @Binding var pendingAdd: PendingAdd?
+    let onAdded: (SeatMember) -> Void
+    let onTooManyAttempts: () -> Void
+
+    @State private var showingCodeEntry: Bool = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    nameField
+                    emailField
+                    if pendingAdd != nil {
+                        enterCodeButton
+                        cancelCodeButton
+                    } else {
+                        sendCodeButton
+                    }
+                } footer: {
+                    Text(footerText)
+                }
+            }
+            .navigationTitle("Add a person")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    let doneAction = { dismiss() }
+                    Button("Done", action: doneAction)
+                }
+            }
+            .sheet(isPresented: $showingCodeEntry) {
+                VerifyCodeSheet(
+                    pendingAdd: $pendingAdd,
+                    onVerified: { member in
+                        showingCodeEntry = false
+                        onAdded(member)
+                    },
+                    onTooManyAttempts: {
+                        showingCodeEntry = false
+                        onTooManyAttempts()
+                    }
+                )
             }
         }
     }
 
-    private static let tierOptions: [GoldilocksSubscriptionTier] = [.light, .active]
+    private var nameField: some View {
+        TextField("Name", text: $name)
+            .textContentType(.name)
+            .disabled(pendingAdd != nil)
+    }
+
+    private var emailField: some View {
+        TextField("Email", text: $email)
+            .textContentType(.emailAddress)
+            .keyboardType(.emailAddress)
+            .textInputAutocapitalization(.never)
+            .disabled(pendingAdd != nil)
+    }
+
+    private var sendCodeButton: some View {
+        let trimmedName: String = name.trimmingCharacters(in: .whitespaces)
+        let trimmedEmail: String = email.trimmingCharacters(in: .whitespaces)
+        let canSend: Bool = !trimmedName.isEmpty && !trimmedEmail.isEmpty
+        let sendAction = {
+            guard canSend else { return }
+            // Real email send is a stub until the mailer ships; the
+            // verify sheet trusts the static `EmailCodeVerification`
+            // code so QA + early testers can complete the flow.
+            pendingAdd = PendingAdd(name: trimmedName, email: trimmedEmail)
+            showingCodeEntry = true
+        }
+        return Button(action: sendAction) {
+            HStack {
+                Spacer()
+                Text("Send verification code")
+                    .font(.body.weight(.semibold))
+                Spacer()
+            }
+        }
+        .disabled(!canSend)
+    }
+
+    private var enterCodeButton: some View {
+        let reopenAction = { showingCodeEntry = true }
+        return Button(action: reopenAction) {
+            HStack {
+                Spacer()
+                Text("Enter code")
+                    .font(.body.weight(.semibold))
+                Spacer()
+            }
+        }
+    }
+
+    private var cancelCodeButton: some View {
+        let cancelAction = { pendingAdd = nil }
+        return Button(role: .destructive, action: cancelAction) {
+            HStack {
+                Spacer()
+                Text("Cancel code")
+                Spacer()
+            }
+        }
+    }
+
+    private var footerText: String {
+        if let pending = pendingAdd {
+            return "We sent a 6-digit code to \(pending.email). Tap Enter code to verify."
+        }
+        return "We'll email a 6-digit code so you can confirm this person before adding them to your plan."
+    }
+}
+
+/// Compact modal for the code entry itself. Big centered monospaced
+/// field, auto-submits the instant the user enters the sixth digit:
+///   * Correct → calls `onVerified` with the new `SeatMember`.
+///   * Wrong, with tries remaining → shows a "didn't match — N tries
+///     left" alert and clears the field; the sheet stays open.
+///   * Wrong, last try → calls `onTooManyAttempts`.
+///
+/// The caller's parent ("MembershipView") owns the success / too-many
+/// alerts so they appear after this sheet (and the Add Person sheet
+/// behind it) dismiss.
+private struct VerifyCodeSheet: View {
+    @Environment(\.dismiss) private var dismiss: DismissAction
+
+    @Binding var pendingAdd: PendingAdd?
+    let onVerified: (SeatMember) -> Void
+    let onTooManyAttempts: () -> Void
+
+    @State private var alertMessage: String?
+    @State private var showingAlert: Bool = false
+    @FocusState private var codeFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            verifyBody
+                .navigationTitle("Verify person")
+                .toolbarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        let cancelAction = { dismiss() }
+                        Button("Cancel", action: cancelAction)
+                    }
+                }
+                .alert("Verification", isPresented: $showingAlert) {
+                    Button("OK", role: .cancel) { codeFocused = true }
+                } message: {
+                    Text(alertMessage ?? "")
+                }
+                .onAppear { codeFocused = true }
+        }
+        .presentationDetents([.fraction(0.4), .medium])
+        .presentationDragIndicator(.visible)
+    }
+
+    @ViewBuilder
+    private var verifyBody: some View {
+        if let pending = pendingAdd {
+            VStack(alignment: .center, spacing: DesignConstants.Spacing.step2x) {
+                Text("Enter the 6-digit code we emailed to")
+                    .font(.subheadline)
+                    .foregroundStyle(.colorTextSecondary)
+                Text(pending.email)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.colorTextPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.bottom, DesignConstants.Spacing.step2x)
+                codeField
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+            .padding(DesignConstants.Spacing.step4x)
+        } else {
+            Color.clear
+        }
+    }
+
+    private var codeField: some View {
+        TextField("", text: codeBinding, prompt: Text("000000").foregroundColor(.colorTextTertiary))
+            .keyboardType(.numberPad)
+            .textContentType(.oneTimeCode)
+            .font(.system(.largeTitle, design: .monospaced).weight(.semibold))
+            .multilineTextAlignment(.center)
+            .tracking(12)
+            .foregroundStyle(.colorTextPrimary)
+            .focused($codeFocused)
+            .padding(.vertical, DesignConstants.Spacing.step3x)
+    }
+
+    private var codeBinding: Binding<String> {
+        Binding(
+            get: { pendingAdd?.code ?? "" },
+            set: { newValue in
+                let digitsOnly: String = String(newValue.filter { $0.isNumber }.prefix(EmailCodeVerification.codeLength))
+                pendingAdd?.code = digitsOnly
+                if digitsOnly.count == EmailCodeVerification.codeLength {
+                    // Mutating @State during a Binding setter mid-render
+                    // is undefined; queue verify on the next tick so the
+                    // field commits the sixth digit first.
+                    Task { @MainActor in verifyCode() }
+                }
+            }
+        )
+    }
+
+    private func verifyCode() {
+        guard var pending = pendingAdd else { return }
+        if EmailCodeVerification.isValid(pending.code) {
+            let member: SeatMember = SeatMember(name: pending.name, email: pending.email)
+            onVerified(member)
+            return
+        }
+        pending.attemptsLeft -= 1
+        pending.code = ""
+        if pending.attemptsLeft <= 0 {
+            onTooManyAttempts()
+            return
+        }
+        pendingAdd = pending
+        let triesLeft: Int = pending.attemptsLeft
+        let triesLabel: String = triesLeft == 1 ? "1 try left" : "\(triesLeft) tries left"
+        alertMessage = "That code didn't match — \(triesLabel)."
+        showingAlert = true
+    }
+}
+
+/// In-flight Add Person flow: the user typed a name + email and tapped
+/// "Send code", but hasn't entered a valid 6-digit code yet. Held in
+/// `MembershipView` state so the user can dismiss the verify sheet
+/// (swipe down) and resume later without losing progress.
+private struct PendingAdd: Equatable {
+    var name: String
+    var email: String
+    var code: String = ""
+    /// How many wrong codes the user has left before the in-flight add
+    /// is dropped and they have to request a fresh code.
+    var attemptsLeft: Int = EmailCodeVerification.maxAttempts
+}
+
+/// Static 6-digit code used by the dev / QA Add Person flow until the
+/// real email send is wired up. Centralised here so the field validator
+/// and the verifier agree on the length, the accepted value, and the
+/// per-code attempt cap.
+private enum EmailCodeVerification {
+    static let codeLength: Int = 6
+    static let acceptedCode: String = "555555"
+    /// Attempts allowed per issued code before the in-flight add is
+    /// dropped — matches the rate-limiting that the real email flow
+    /// will enforce on the backend.
+    static let maxAttempts: Int = 3
+
+    static func isValid(_ code: String) -> Bool {
+        code == acceptedCode
+    }
 }
 
 #Preview {

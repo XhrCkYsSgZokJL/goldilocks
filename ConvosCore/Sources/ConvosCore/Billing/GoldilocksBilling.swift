@@ -37,14 +37,20 @@ public enum GoldilocksPrepaidDuration: Int, Codable, Sendable, Equatable, CaseIt
     }
 }
 
-/// The client's overall membership tier, set by how much they spend with
-/// us per month: Gold from $200/mo, Silver from $100/mo, Bronze below
-/// that (the free tier). Shown to the client on the Membership screen and
-/// used in the admin view to colour each client's Advisory chat.
+/// The client's overall membership tier. Silver and Gold both require
+/// active coverage (a positive prepaid balance). The tier is then set by
+/// the number of active members: one unlocks Silver, four unlock Gold
+/// (with priority reports). Shown on the Membership screen and used in
+/// the admin view to colour each client's Advisory chat.
 public enum GoldilocksMembershipTier: String, Codable, Sendable, Equatable, CaseIterable {
     case bronze
     case silver
     case gold
+
+    /// Active-member thresholds — one source of truth for the tier math
+    /// and the user-facing copy.
+    public static let silverMemberThreshold: Int = 1
+    public static let goldMemberThreshold: Int = 4
 
     /// Human-facing tier name.
     public var displayName: String {
@@ -55,27 +61,44 @@ public enum GoldilocksMembershipTier: String, Codable, Sendable, Equatable, Case
         }
     }
 
-    /// One-line explanation of how this tier is reached.
+    /// One-line explanation of how this tier is reached. Always names
+    /// both Silver and Gold thresholds so the client can see what it
+    /// takes to move up regardless of which tier they're on today.
     public var membershipDetail: String {
         switch self {
-        case .bronze: return "Bronze is the free plan. Add people to move up a tier."
-        case .silver: return "Silver applies once you're spending at least $100/mo."
-        case .gold: return "Gold applies once you're spending at least $200/mo."
+        case .bronze:
+            return "Bronze is the free plan. One active member unlocks Silver, and four unlock Gold with priority reports."
+        case .silver:
+            return "Silver applies with active coverage for one or more members. Reach four members for Gold with priority reports."
+        case .gold:
+            return "Gold delivers priority reports for plans with four or more active members."
         }
     }
 
-    /// The membership tier for a monthly spend in whole US dollars: Gold
-    /// from $200/mo, Silver from $100/mo, Bronze below that.
-    public init(monthlyTotalDollars dollars: Int) {
-        switch dollars {
-        case 200...: self = .gold
-        case 100...: self = .silver
-        default: self = .bronze
+    /// The membership tier for a given active-member count. Silver and
+    /// Gold require active coverage; without it the client is Bronze
+    /// regardless of headcount.
+    public init(activeMembers: Int, hasActiveCoverage: Bool) {
+        guard hasActiveCoverage else {
+            self = .bronze
+            return
+        }
+        if activeMembers >= Self.goldMemberThreshold {
+            self = .gold
+        } else if activeMembers >= Self.silverMemberThreshold {
+            self = .silver
+        } else {
+            self = .bronze
         }
     }
 
-    /// The membership tier for a monthly spend in cents.
-    public init(monthlyRateCents cents: Int) {
-        self.init(monthlyTotalDollars: cents / 100)
+    /// The membership tier inferred from the backend's reported monthly
+    /// rate in cents. Used by the admin grid, which knows the rate but
+    /// not the headcount directly. Reverses the per-person price set in
+    /// `GoldilocksPlan`.
+    public init(monthlyRateCents cents: Int, hasActiveCoverage: Bool) {
+        let perPerson: Int = GoldilocksPlan.monthlyPricePerPersonCents
+        let activeMembers: Int = perPerson > 0 ? cents / perPerson : 0
+        self.init(activeMembers: activeMembers, hasActiveCoverage: hasActiveCoverage)
     }
 }

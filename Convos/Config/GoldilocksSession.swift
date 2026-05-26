@@ -55,9 +55,6 @@ final class GoldilocksSession {
     var clientNumber: Int64? { identity?.clientNumber }
     var isAdmin: Bool { identity?.isAdmin ?? false }
 
-    /// Current subscription plan, or nil if the client has no plan yet.
-    var subscriptionTier: GoldilocksSubscriptionTier? { identity?.subscriptionTier }
-
     /// Effective role, derived from `isAdmin`. Observable: SwiftUI views
     /// reading this re-render when `identity` changes (e.g. after an
     /// admin upgrade).
@@ -319,18 +316,6 @@ final class GoldilocksSession {
             Log.error("[Goldilocks] Admin downgrade failed: \(error.localizedDescription)")
             return false
         }
-    }
-
-    /// Set this device's subscription plan on the Goldilocks backend, then
-    /// refresh the cached identity so `subscriptionTier` reflects it. Backs
-    /// the Subscription screen's Create/Update button, which simulates a
-    /// billing success while Stripe is not yet wired up. Re-throws on
-    /// failure so the caller can surface it.
-    func setSubscriptionTier(_ tier: GoldilocksSubscriptionTier, session: any SessionManagerProtocol) async throws {
-        try await session.setGoldilocksSubscriptionTier(tier)
-        let refreshed = try await session.refreshGoldilocksIdentity()
-        self.identity = refreshed
-        Log.info("[Goldilocks] Subscription tier set to \(tier.rawValue)")
     }
 
     /// Re-fetch /v2/admins. Called after registration and after any admin

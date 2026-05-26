@@ -72,7 +72,7 @@ struct DebugViewSection: View {
                         let ok = await GoldilocksSession.shared.downgradeFromAdmin(session: session)
                         roleChangeMessage = ok
                             ? "You're now a client. Relaunch the app for all changes to take effect."
-                            : "Downgrade failed — try again."
+                            : "Downgrade failed. Try again."
                         showingRoleChangeResult = true
                     }
                 }

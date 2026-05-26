@@ -77,7 +77,6 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func promoteSelfToAdminDev() async throws
     func upgradeGoldilocksAdmin(code: String) async throws
     func downgradeGoldilocksAdmin() async throws
-    func setGoldilocksSubscriptionTier(tier: String) async throws
     func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse
     func fetchGoldilocksAgents() async throws -> ConvosAPI.GoldilocksAgentsResponse
     func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse
@@ -94,17 +93,18 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse
     func syncGoldilocksSeats(_ request: ConvosAPI.GoldilocksSeatsRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
     func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse
+
+    // Goldilocks people list (encrypted blob).
+    func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse
+    func saveGoldilocksPeopleList(_ request: ConvosAPI.GoldilocksPeopleListSaveRequest) async throws -> ConvosAPI.GoldilocksPeopleListSaveResponse
+    func fetchAdminPeopleList(clientInboxId: String) async throws -> ConvosAPI.GoldilocksPeopleListResponse
+    func saveAdminPeopleList(clientInboxId: String, _ request: ConvosAPI.GoldilocksPeopleListSaveRequest) async throws -> ConvosAPI.GoldilocksPeopleListSaveResponse
 }
 
 extension ConvosAPIClientProtocol {
     func requestAgentJoin(slug: String, instructions: String) async throws -> ConvosAPI.AgentJoinResponse {
         try await requestAgentJoin(slug: slug, instructions: instructions, forceErrorCode: nil)
     }
-
-    /// Default no-op so mock/stub conformers don't each need their own
-    /// implementation. The real `ConvosAPIClient` overrides this with the
-    /// `POST /v2/me/subscription` network call.
-    func setGoldilocksSubscriptionTier(tier: String) async throws {}
 
     /// Default billing stubs so mock/stub conformers compile without their
     /// own implementations. The real `ConvosAPIClient` overrides them.
@@ -114,18 +114,34 @@ extension ConvosAPIClientProtocol {
 
     func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
         ConvosAPI.GoldilocksBillingStatusResponse(
-            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, lightSeats: 0, activeSeats: 0
+            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0
         )
     }
 
     func syncGoldilocksSeats(_ request: ConvosAPI.GoldilocksSeatsRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
         ConvosAPI.GoldilocksBillingStatusResponse(
-            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, lightSeats: 0, activeSeats: 0
+            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0
         )
     }
 
     func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
         ConvosAPI.GoldilocksCancelResponse(refundedCents: 0)
+    }
+
+    func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        ConvosAPI.GoldilocksPeopleListResponse(version: 0, ciphertext: nil, salt: nil, nonce: nil)
+    }
+
+    func saveGoldilocksPeopleList(_ request: ConvosAPI.GoldilocksPeopleListSaveRequest) async throws -> ConvosAPI.GoldilocksPeopleListSaveResponse {
+        ConvosAPI.GoldilocksPeopleListSaveResponse(version: request.baseVersion + 1)
+    }
+
+    func fetchAdminPeopleList(clientInboxId: String) async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        ConvosAPI.GoldilocksPeopleListResponse(version: 0, ciphertext: nil, salt: nil, nonce: nil)
+    }
+
+    func saveAdminPeopleList(clientInboxId: String, _ request: ConvosAPI.GoldilocksPeopleListSaveRequest) async throws -> ConvosAPI.GoldilocksPeopleListSaveResponse {
+        ConvosAPI.GoldilocksPeopleListSaveResponse(version: request.baseVersion + 1)
     }
 }
 
@@ -760,13 +776,6 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         let _: EmptyResponse = try await performRequest(request)
     }
 
-    func setGoldilocksSubscriptionTier(tier: String) async throws {
-        var request = try authenticatedRequest(for: "v2/me/subscription", method: "POST")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["tier": tier])
-        let _: EmptyResponse = try await performRequest(request)
-    }
-
     func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse {
         let request = try authenticatedRequest(for: "v2/admins", method: "GET")
         return try await performRequest(request)
@@ -854,6 +863,32 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         var request = try authenticatedRequest(for: "v2/billing/cancel", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode([String: String]())
+        return try await performRequest(request)
+    }
+
+    // MARK: - Goldilocks people list
+
+    func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        let request = try authenticatedRequest(for: "v2/me/people-list", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func saveGoldilocksPeopleList(_ blob: ConvosAPI.GoldilocksPeopleListSaveRequest) async throws -> ConvosAPI.GoldilocksPeopleListSaveResponse {
+        var request = try authenticatedRequest(for: "v2/me/people-list", method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(blob)
+        return try await performRequest(request)
+    }
+
+    func fetchAdminPeopleList(clientInboxId: String) async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        let request = try authenticatedRequest(for: "v2/admin/clients/\(clientInboxId)/people-list", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func saveAdminPeopleList(clientInboxId: String, _ blob: ConvosAPI.GoldilocksPeopleListSaveRequest) async throws -> ConvosAPI.GoldilocksPeopleListSaveResponse {
+        var request = try authenticatedRequest(for: "v2/admin/clients/\(clientInboxId)/people-list", method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(blob)
         return try await performRequest(request)
     }
 

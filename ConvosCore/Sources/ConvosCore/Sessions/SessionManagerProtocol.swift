@@ -119,27 +119,21 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// the cross-admin groups + every Advisory on the next reconcile.
     func downgradeGoldilocksAdmin() async throws
 
-    /// Set the caller's subscription plan on the Goldilocks backend
-    /// (`POST /v2/me/subscription`). Writes `clients.subscription_tier`,
-    /// which drives the subscription flag in the admin channels grid.
-    func setGoldilocksSubscriptionTier(_ tier: GoldilocksSubscriptionTier) async throws
-
     /// Create a Stripe Checkout Session to buy `durationMonths` of cover
-    /// and return the hosted URL to open in the browser. Seat counts are
+    /// and return the hosted URL to open in the browser. The seat count is
     /// sent so the backend prices the top-up itself.
     func createGoldilocksCheckout(
         paymentMethod: GoldilocksPaymentMethod,
         durationMonths: Int,
-        lightSeats: Int,
-        activeSeats: Int
+        seats: Int
     ) async throws -> ConvosAPI.GoldilocksCheckoutResponse
 
     /// Fetch the caller's prepaid-balance state (`GET /v2/billing/status`).
     func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse
 
-    /// Push the current seat mix so the backend re-settles the balance and
-    /// moves the coverage date (`POST /v2/billing/seats`).
-    func syncGoldilocksSeats(lightSeats: Int, activeSeats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    /// Push the current seat count so the backend re-settles the balance
+    /// and moves the coverage date (`POST /v2/billing/seats`).
+    func syncGoldilocksSeats(seats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
 
     /// Stop cover and refund the unused balance (`POST /v2/billing/cancel`).
     func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse
@@ -206,6 +200,25 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// don't fire recover — count-based heuristics race with the
     /// welcome stream during launch and produce false positives.
     func missingGoldilocksConversationIds(_ xmtpGroupIds: [String]) async throws -> [String]
+
+    /// Fetch the caller's encrypted people-list blob (`GET /v2/me/people-list`).
+    func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse
+
+    /// Replace the caller's encrypted people-list blob (`PUT /v2/me/people-list`).
+    /// Returns the new stored version; throws on a version conflict.
+    func saveGoldilocksPeopleList(ciphertext: String, salt: String, nonce: String, baseVersion: Int) async throws -> Int
+
+    /// Resolve a conversation's group encryption key, creating it in the
+    /// group's MLS metadata if absent. Used to encrypt the people list
+    /// with the Advisory group's key.
+    func groupEncryptionKey(forConversationId conversationId: String) async throws -> Data
+
+    /// Admin: fetch a client's encrypted people-list blob by inbox id.
+    func fetchAdminPeopleList(clientInboxId: String) async throws -> ConvosAPI.GoldilocksPeopleListResponse
+
+    /// Admin: replace a client's encrypted people-list blob. Returns the
+    /// new stored version; throws on a version conflict.
+    func saveAdminPeopleList(clientInboxId: String, ciphertext: String, salt: String, nonce: String, baseVersion: Int) async throws -> Int
 }
 
 extension SessionManagerProtocol {
@@ -236,33 +249,48 @@ extension SessionManagerProtocol {
         // No-op for mocks
     }
 
-    public func setGoldilocksSubscriptionTier(_ tier: GoldilocksSubscriptionTier) async throws {
-        // No-op for mocks
-    }
-
     public func createGoldilocksCheckout(
         paymentMethod: GoldilocksPaymentMethod,
         durationMonths: Int,
-        lightSeats: Int,
-        activeSeats: Int
+        seats: Int
     ) async throws -> ConvosAPI.GoldilocksCheckoutResponse {
         throw GoldilocksAuth.AuthError.missingPrivateKey
     }
 
     public func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
         ConvosAPI.GoldilocksBillingStatusResponse(
-            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, lightSeats: 0, activeSeats: 0
+            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0
         )
     }
 
-    public func syncGoldilocksSeats(lightSeats: Int, activeSeats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+    public func syncGoldilocksSeats(seats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
         ConvosAPI.GoldilocksBillingStatusResponse(
-            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, lightSeats: 0, activeSeats: 0
+            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0
         )
     }
 
     public func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
         ConvosAPI.GoldilocksCancelResponse(refundedCents: 0)
+    }
+
+    public func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        ConvosAPI.GoldilocksPeopleListResponse(version: 0, ciphertext: nil, salt: nil, nonce: nil)
+    }
+
+    public func saveGoldilocksPeopleList(ciphertext: String, salt: String, nonce: String, baseVersion: Int) async throws -> Int {
+        baseVersion + 1
+    }
+
+    public func groupEncryptionKey(forConversationId conversationId: String) async throws -> Data {
+        throw ImageEncryptionError.missingEncryptionKey
+    }
+
+    public func fetchAdminPeopleList(clientInboxId: String) async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        ConvosAPI.GoldilocksPeopleListResponse(version: 0, ciphertext: nil, salt: nil, nonce: nil)
+    }
+
+    public func saveAdminPeopleList(clientInboxId: String, ciphertext: String, salt: String, nonce: String, baseVersion: Int) async throws -> Int {
+        baseVersion + 1
     }
 
     public func fetchGoldilocksAdminInboxIds() async throws -> [String] {

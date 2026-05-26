@@ -66,27 +66,27 @@ struct ConversationsView: View {
             }
             .buttonStyle(.plain)
 
-            if role == .client {
-                let tier = membershipTier
-                let openMembership = {
-                    appSettingsInitialRoute = .membership
+            // Admins are also clients with their own membership plan, so
+            // the tier + pending-invoice chips show in both roles.
+            let tier = membershipTier
+            let openMembership = {
+                appSettingsInitialRoute = .membership
+                presentingAppSettings = true
+            }
+            Button(action: openMembership) {
+                goldilocksChip(icon: tier.iconName, label: tier.displayName, iconTint: tier.accentColor, labelTint: .primary)
+            }
+            .buttonStyle(.plain)
+
+            if GoldilocksSession.shared.hasPendingInvoice {
+                let openInvoices = {
+                    appSettingsInitialRoute = nil
                     presentingAppSettings = true
                 }
-                Button(action: openMembership) {
-                    goldilocksChip(icon: tier.iconName, label: tier.displayName, iconTint: tier.accentColor, labelTint: .primary)
+                Button(action: openInvoices) {
+                    goldilocksChip(icon: "doc.text.fill", label: "Pending", labelTint: .primary)
                 }
                 .buttonStyle(.plain)
-
-                if GoldilocksSession.shared.hasPendingInvoice {
-                    let openInvoices = {
-                        appSettingsInitialRoute = nil
-                        presentingAppSettings = true
-                    }
-                    Button(action: openInvoices) {
-                        goldilocksChip(icon: "doc.text.fill", label: "Pending", labelTint: .primary)
-                    }
-                    .buttonStyle(.plain)
-                }
             }
         }
         .padding(.horizontal, DesignConstants.Spacing.step4x)
@@ -116,11 +116,14 @@ struct ConversationsView: View {
     }
 
     /// The client's Bronze/Silver/Gold membership tier, shown as a chip
-    /// beside the role chip. Bronze is the free tier (no paid people),
-    /// Silver once anyone is on the Light plan, Gold once anyone is on
-    /// the Active plan.
+    /// beside the role chip. Bronze is the free tier; Silver and Gold
+    /// require active coverage, set by the active-member count.
     private var membershipTier: GoldilocksMembershipTier {
-        GoldilocksMembershipTier(monthlyTotalDollars: GoldilocksSeatPlan.shared.monthlyTotal)
+        let plan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
+        return GoldilocksMembershipTier(
+            activeMembers: plan.billableSeatCount,
+            hasActiveCoverage: plan.coverageActive
+        )
     }
 
     var filteredEmptyStateView: some View {

@@ -515,21 +515,15 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         try await apiClient.downgradeGoldilocksAdmin()
     }
 
-    public func setGoldilocksSubscriptionTier(_ tier: GoldilocksSubscriptionTier) async throws {
-        try await apiClient.setGoldilocksSubscriptionTier(tier: tier.rawValue)
-    }
-
     public func createGoldilocksCheckout(
         paymentMethod: GoldilocksPaymentMethod,
         durationMonths: Int,
-        lightSeats: Int,
-        activeSeats: Int
+        seats: Int
     ) async throws -> ConvosAPI.GoldilocksCheckoutResponse {
         let request = ConvosAPI.GoldilocksCheckoutRequest(
             paymentMethod: paymentMethod.rawValue,
             durationMonths: durationMonths,
-            lightSeats: lightSeats,
-            activeSeats: activeSeats
+            seats: seats
         )
         return try await apiClient.createGoldilocksCheckout(request)
     }
@@ -538,13 +532,42 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         try await apiClient.fetchGoldilocksBillingStatus()
     }
 
-    public func syncGoldilocksSeats(lightSeats: Int, activeSeats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
-        let request = ConvosAPI.GoldilocksSeatsRequest(lightSeats: lightSeats, activeSeats: activeSeats)
+    public func syncGoldilocksSeats(seats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        let request = ConvosAPI.GoldilocksSeatsRequest(seats: seats)
         return try await apiClient.syncGoldilocksSeats(request)
     }
 
     public func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
         try await apiClient.cancelGoldilocksBilling()
+    }
+
+    public func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        try await apiClient.fetchGoldilocksPeopleList()
+    }
+
+    public func saveGoldilocksPeopleList(ciphertext: String, salt: String, nonce: String, baseVersion: Int) async throws -> Int {
+        let request = ConvosAPI.GoldilocksPeopleListSaveRequest(ciphertext: ciphertext, salt: salt, nonce: nonce, baseVersion: baseVersion)
+        let response = try await apiClient.saveGoldilocksPeopleList(request)
+        return response.version
+    }
+
+    public func groupEncryptionKey(forConversationId conversationId: String) async throws -> Data {
+        let inboxReady = try await messagingService().sessionStateManager.waitForInboxReadyResult()
+        guard let conversation = try await inboxReady.client.conversation(with: conversationId),
+              case .group(let group) = conversation else {
+            throw ImageEncryptionError.missingEncryptionKey
+        }
+        return try await group.ensureImageEncryptionKey()
+    }
+
+    public func fetchAdminPeopleList(clientInboxId: String) async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        try await apiClient.fetchAdminPeopleList(clientInboxId: clientInboxId)
+    }
+
+    public func saveAdminPeopleList(clientInboxId: String, ciphertext: String, salt: String, nonce: String, baseVersion: Int) async throws -> Int {
+        let request = ConvosAPI.GoldilocksPeopleListSaveRequest(ciphertext: ciphertext, salt: salt, nonce: nonce, baseVersion: baseVersion)
+        let response = try await apiClient.saveAdminPeopleList(clientInboxId: clientInboxId, request)
+        return response.version
     }
 
     public func fetchGoldilocksAdminInboxIds() async throws -> [String] {

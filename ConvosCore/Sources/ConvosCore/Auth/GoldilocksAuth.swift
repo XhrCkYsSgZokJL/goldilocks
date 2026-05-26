@@ -28,18 +28,15 @@ public enum GoldilocksAuth {
         public let clientNumber: Int64
         public let isAdmin: Bool
         public let inboxId: String
-        public let subscriptionTier: GoldilocksSubscriptionTier?
 
         public init(
             clientNumber: Int64,
             isAdmin: Bool,
-            inboxId: String,
-            subscriptionTier: GoldilocksSubscriptionTier? = nil
+            inboxId: String
         ) {
             self.clientNumber = clientNumber
             self.isAdmin = isAdmin
             self.inboxId = inboxId
-            self.subscriptionTier = subscriptionTier
         }
 
         /// Build an identity from the backend's `/v2/me` response.
@@ -47,8 +44,6 @@ public enum GoldilocksAuth {
             self.clientNumber = response.clientNumber
             self.isAdmin = response.isAdmin
             self.inboxId = response.inboxId
-            self.subscriptionTier = response.subscriptionTier
-                .flatMap(GoldilocksSubscriptionTier.init(rawValue:))
         }
     }
 
@@ -59,7 +54,7 @@ public enum GoldilocksAuth {
         public var errorDescription: String? {
             switch self {
             case .missingPrivateKey:
-                return "No XMTP private key available — keychain identity not loaded yet."
+                return "No XMTP private key available. Keychain identity not loaded yet."
             case .invalidSignatureLength(let n):
                 return "Unexpected signature length \(n) bytes (expected 64 or 65)."
             }
@@ -121,38 +116,16 @@ public enum GoldilocksAuth {
     }
 }
 
-/// The Goldilocks Digital subscription plans.
-public enum GoldilocksSubscriptionTier: String, Codable, Sendable, Equatable, CaseIterable {
-    /// "No plan" — the client is not subscribed (NULL on the backend).
-    /// Declared first so it sorts to the top of the plan list.
-    case noPlan = "none"
-    case light
-    case active
+/// The Goldilocks Digital plan. There is exactly one plan today, priced
+/// per person; the constants live here so iOS and the backend stay in
+/// step.
+public enum GoldilocksPlan {
+    /// Monthly price per person, in whole US dollars.
+    public static let monthlyPricePerPerson: Int = 125
 
-    /// Human-facing plan name.
-    public var displayName: String {
-        switch self {
-        case .light: return "Light"
-        case .active: return "Active"
-        case .noPlan: return "No plan"
-        }
-    }
+    /// Monthly price per person, in cents.
+    public static let monthlyPricePerPersonCents: Int = monthlyPricePerPerson * 100
 
-    /// Human-facing price.
-    public var priceLabel: String {
-        switch self {
-        case .light: return "$100/mo"
-        case .active: return "$200/mo"
-        case .noPlan: return "$0"
-        }
-    }
-
-    /// Monthly price per seat, in whole US dollars — used for seat totals.
-    public var monthlyPrice: Int {
-        switch self {
-        case .light: return 100
-        case .active: return 200
-        case .noPlan: return 0
-        }
-    }
+    /// Human-facing per-person price label.
+    public static let priceLabel: String = "$\(monthlyPricePerPerson)/mo per person"
 }

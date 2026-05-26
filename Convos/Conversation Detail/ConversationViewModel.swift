@@ -1670,6 +1670,20 @@ extension ConversationViewModel {
             return result
         }
     }
+
+    /// Goldilocks: refresh the encrypted people list and return the
+    /// caller's coverage status, for the Advisory chat info section.
+    func loadGoldilocksAdvisoryInfo() async -> ConvosAPI.GoldilocksBillingStatusResponse? {
+        await GoldilocksSeatPlan.shared.loadFromBackend(session: session)
+        return try? await session.fetchGoldilocksBillingStatus()
+    }
+
+    /// Goldilocks: persist the current people list. Wraps the
+    /// `GoldilocksSeatPlan.saveToBackend` call so the chat info view
+    /// doesn't need its own handle on the session.
+    func saveGoldilocksPeopleList() async {
+        await GoldilocksSeatPlan.shared.saveToBackend(session: session)
+    }
 }
 
 extension ConversationViewModel {
