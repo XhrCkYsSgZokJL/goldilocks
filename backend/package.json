@@ -11,6 +11,7 @@
     "agents:start": "node dist/agent/index.js",
     "build": "tsc -p tsconfig.json",
     "migrate": "DOTENV_CONFIG_PATH=.env.dev tsx src/db/migrate.ts",
+    "reset": "DOTENV_CONFIG_PATH=.env.dev tsx scripts/reset.ts",
     "cli": "tsx scripts/goldilocks.tsx",
     "spawn-two-sims": "bash scripts/spawn-two-sims.sh",
     "logs:sim": "bash scripts/mirror-sim-logs.sh",

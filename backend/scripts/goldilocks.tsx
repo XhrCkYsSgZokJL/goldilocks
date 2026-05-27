@@ -663,6 +663,202 @@ function syncStripeWebhookSecret(): string {
   return '✓ Webhook secret synced into .env from the Stripe CLI.';
 }
 
+// --- caddy https proxy (dev) -----------------------------------------------
+//
+// XMTP iOS rejects RemoteAttachments whose URL scheme isn't https. The dev
+// backend speaks plain http, so we run Caddy in front of it terminating
+// TLS on :4443 → forwarding to localhost:4000. Managed alongside server +
+// agents so the dev env comes up complete with one keystroke.
+
+// True if the caddy binary is on PATH.
+function caddyInstalled(): boolean {
+  try {
+    return spawnSync('caddy', ['version'], { stdio: 'ignore' }).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+// Absolute path to caddy on disk — needed because osascript's
+// `do shell script … with administrator privileges` runs under sudo
+// with a stripped PATH that doesn't include Homebrew's bin.
+function caddyBinPath(): string {
+  try {
+    const res = spawnSync('which', ['caddy'], { encoding: 'utf8' });
+    if (res.status === 0) {
+      const path = res.stdout.trim();
+      if (path) return path;
+    }
+  } catch {
+    // ignore
+  }
+  return 'caddy';
+}
+
+// Where Caddy persists its locally-issued root CA. Caddy writes this
+// the first time it boots with `tls internal`; the file is what we
+// hand to the macOS System keychain and the iOS Simulator keychain.
+function caddyRootCertPath(): string {
+  return join(
+    process.env.HOME ?? '',
+    'Library/Application Support/Caddy/pki/authorities/local/root.crt',
+  );
+}
+
+// True once Caddy's local root is in the macOS System keychain — the
+// trust store the iOS Simulator inherits.
+function caddyRootTrustedInSystemKeychain(): boolean {
+  try {
+    const res = spawnSync(
+      'security',
+      ['find-certificate', '-c', 'Caddy Local Authority', '/Library/Keychains/System.keychain'],
+      { stdio: 'ignore' },
+    );
+    return res.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+// Wait briefly for Caddy to lay down its root CA on disk after starting.
+async function waitForCaddyRoot(timeoutMs: number = 5000): Promise<boolean> {
+  const path = caddyRootCertPath();
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return true;
+    await sleep(200);
+  }
+  return existsSync(path);
+}
+
+// Install Caddy's root CA into the macOS System keychain. Needs sudo, so
+// we route it through `osascript … with administrator privileges` to get
+// macOS's GUI password prompt — the ink dashboard owns the TTY and can't
+// drive an interactive `sudo` itself. Idempotent: a no-op once trusted.
+async function trustCaddyRootInSystemKeychain(append: (line: string) => void): Promise<void> {
+  if (!caddyInstalled()) {
+    append('Caddy trust: skipped — caddy not installed.');
+    return;
+  }
+  const haveRoot = await waitForCaddyRoot();
+  if (!haveRoot) {
+    append('Caddy trust: root CA not on disk yet — skipping (start Caddy first).');
+    return;
+  }
+  if (caddyRootTrustedInSystemKeychain()) {
+    append('Caddy trust: already installed in macOS System keychain.');
+    return;
+  }
+  append('Caddy trust: installing root CA into macOS System keychain…');
+  append('  ↳ macOS will ask for your password (one-time per machine).');
+  const caddy = caddyBinPath();
+  const script =
+    `do shell script "${caddy.replace(/"/g, '\\"')} trust" ` +
+    `with administrator privileges ` +
+    `with prompt "Goldilocks dev needs to trust Caddy's local root CA so the iOS Simulator can fetch attachments over HTTPS."`;
+  const res = spawnSync('osascript', ['-e', script], { encoding: 'utf8' });
+  if (res.status === 0) {
+    append('✓ Caddy root installed in macOS System keychain.');
+    return;
+  }
+  const detail = (res.stderr ?? '').trim().split('\n')[0] ?? '';
+  if (/User canceled|-128/.test(detail)) {
+    append('Caddy trust: cancelled. Run `caddy trust` manually to enable HTTPS for iOS.');
+  } else {
+    append(`Caddy trust: failed${detail ? ` — ${detail}` : '.'}`);
+  }
+}
+
+// UDID of a booted iOS Simulator, or null when none is running.
+function bootedSimulatorUdid(): string | null {
+  try {
+    const res = spawnSync(
+      'xcrun',
+      ['simctl', 'list', 'devices', 'booted', '-j'],
+      { encoding: 'utf8' },
+    );
+    if (res.status !== 0) return null;
+    const parsed = JSON.parse(res.stdout) as { devices?: Record<string, { udid?: string }[]> };
+    for (const list of Object.values(parsed.devices ?? {})) {
+      for (const dev of list ?? []) {
+        if (dev.udid) return dev.udid;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+// Install Caddy's root CA into the booted iOS Simulator's keychain. The
+// simulator has its own keychain separate from the host's System
+// keychain — even `caddy trust` won't reach it, so the simulator rejects
+// our cert with -1200/-9807/-9838 until we add it here. Idempotent and
+// password-free; safe to re-run on every start.
+//
+// After installing, we also bounce `trustd` inside the simulator —
+// add-root-cert writes to the trust store, but trustd caches its view
+// of that store and only re-reads it on launch. Without the kick the
+// simulator can still reject the cert until next reboot.
+function trustCaddyForBootedSimulator(append: (line: string) => void): void {
+  const root = caddyRootCertPath();
+  if (!existsSync(root)) {
+    append('Simulator trust: skipped — Caddy root CA not on disk yet.');
+    return;
+  }
+  if (!bootedSimulatorUdid()) {
+    append('Simulator trust: skipped — no iOS Simulator is booted.');
+    return;
+  }
+  const res = spawnSync(
+    'xcrun',
+    ['simctl', 'keychain', 'booted', 'add-root-cert', root],
+    { encoding: 'utf8' },
+  );
+  if (res.status !== 0) {
+    const detail = (res.stderr ?? '').trim().split('\n')[0] ?? '';
+    append(`Simulator trust: failed${detail ? ` — ${detail}` : '.'}`);
+    return;
+  }
+  append('✓ Caddy root installed in the booted iOS Simulator keychain.');
+
+  // Force trustd to drop its cache so the new root is honored now,
+  // not on the next sim reboot. `launchctl kickstart -k system/<svc>`
+  // stops and restarts the service inside the simulator.
+  const kick = spawnSync(
+    'xcrun',
+    ['simctl', 'spawn', 'booted', 'launchctl', 'kickstart', '-k', 'system/com.apple.trustd'],
+    { encoding: 'utf8' },
+  );
+  if (kick.status === 0) {
+    append('✓ Simulator trustd kicked — new root takes effect immediately.');
+  } else {
+    // Non-fatal: cert is installed, just may need a sim reboot to apply.
+    append('Simulator trustd kick: not available — reboot the simulator if iOS still rejects the cert.');
+  }
+}
+
+// Start Caddy as a managed dev process, using ./dev/Caddyfile. No-op
+// (with a note) when caddy isn't installed.
+function startCaddy(): string {
+  if (!caddyInstalled()) {
+    return 'Caddy https proxy: skipped — install Caddy (brew install caddy) to enable HTTPS for iOS RemoteAttachments.';
+  }
+  const caddyfile = join(REPO_ROOT, 'dev', 'Caddyfile');
+  return startDevProcess('caddy', 'caddy', ['run', '--config', caddyfile, '--adapter', 'caddyfile']);
+}
+
+// Start Caddy and then install its root CA into the macOS System
+// keychain and the booted iOS Simulator's keychain. Combines the three
+// steps the dev flow needs into one call so start/restart never leave
+// iOS in a "rejects the cert" state.
+async function startAndTrustCaddy(append: (line: string) => void): Promise<void> {
+  append(startCaddy());
+  if (!caddyInstalled()) return;
+  await trustCaddyRootInSystemKeychain(append);
+  trustCaddyForBootedSimulator(append);
+}
+
 // Start `stripe listen` as a managed dev process, forwarding events to the
 // local backend. No-op (with a note) when Stripe isn't configured or the
 // CLI is missing.
@@ -722,6 +918,11 @@ async function dashboardStats(): Promise<StatItem[]> {
       { label: 'database', on: db.code === 0 && db.out.trim().length > 0 },
       { label: 'XMTP node', on: xmtp.code === 0 && xmtp.out.trim().length > 0 },
     ];
+    // The Caddy https proxy only matters when it's installed; otherwise
+    // the dev env can still run with http (just no RemoteAttachments).
+    if (caddyInstalled()) {
+      stats.push({ label: 'caddy', on: devProcessPid('caddy') !== null });
+    }
     // The Stripe webhook listener only matters once Stripe is configured.
     if (readStripeConfig().secretKey) {
       stats.push({ label: 'stripe', on: devProcessPid('stripe') !== null });
@@ -1467,6 +1668,7 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
         append(startDevProcess('server', 'npm', ['run', 'server:dev']));
         append(startDevProcess('agent', 'npm', ['run', 'agents:dev']));
         append(startDevProcess('simulator', 'npm', ['run', 'logs:sim']));
+        await startAndTrustCaddy(append);
         append(startStripeListener());
         append('');
         append('Dev environment is up.');
@@ -1476,10 +1678,11 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
 
   const devDown = (): void => {
     const preLines = [
-      'Stopping the backend server, agents, simulator-log mirror, and Stripe listener…',
+      'Stopping the backend server, agents, simulator-log mirror, Caddy, and Stripe listener…',
       stopDevProcess('server'),
       stopDevProcess('agent'),
       stopDevProcess('simulator'),
+      stopDevProcess('caddy'),
       stopDevProcess('stripe'),
       '',
     ];
@@ -1491,38 +1694,41 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
       stopDevProcess('server'),
       stopDevProcess('agent'),
       stopDevProcess('simulator'),
+      stopDevProcess('caddy'),
       stopDevProcess('stripe'),
       '',
     ];
     runBash('Reset dev environment', 'dev-env.sh', ['reset'], 'systems', { preLines });
   };
 
-  // Bounce just the node processes so edited code is picked up, leaving
-  // Docker (db) and the simulator-log mirror untouched. The brief sleep
-  // gives the SIGTERM'd processes a moment to release their ports.
+  // Bounce just the node processes + Caddy so edited code is picked up,
+  // leaving Docker (db) and the simulator-log mirror untouched. The brief
+  // sleep gives the SIGTERM'd processes a moment to release their ports.
   const devRestart = (): void => {
     const preLines = [
-      'Stopping the backend server and agents…',
+      'Stopping the backend server, agents, and Caddy…',
       stopDevProcess('server'),
       stopDevProcess('agent'),
+      stopDevProcess('caddy'),
       '',
     ];
     startCommand({
-      title: 'Restart server + agents',
+      title: 'Restart server + agents + caddy',
       command: 'sleep',
       args: ['1'],
       returnTo: 'systems',
       preLines,
       finalize: async (code, append) => {
         if (code !== 0) {
-          append('Restart cancelled — server and agents left stopped.');
+          append('Restart cancelled — server, agents, and Caddy left stopped.');
           return;
         }
-        append('Starting the backend server and agents…');
+        append('Starting the backend server, agents, and Caddy…');
         append(startDevProcess('server', 'npm', ['run', 'server:dev']));
         append(startDevProcess('agent', 'npm', ['run', 'agents:dev']));
+        await startAndTrustCaddy(append);
         append('');
-        append('Server and agents restarted.');
+        append('Server, agents, and Caddy restarted.');
       },
     });
   };
@@ -2455,10 +2661,12 @@ async function stackOneShot(args: string[]): Promise<void> {
       console.log(syncStripeWebhookSecret());
       console.log(startDevProcess('server', 'npm', ['run', 'server:dev']));
       console.log(startDevProcess('agent', 'npm', ['run', 'agents:dev']));
+      await startAndTrustCaddy((line) => console.log(line));
       console.log(startStripeListener());
     } else if (verb === 'down') {
       console.log(stopDevProcess('server'));
       console.log(stopDevProcess('agent'));
+      console.log(stopDevProcess('caddy'));
       console.log(stopDevProcess('stripe'));
       await bashInherit('dev-env.sh', ['down']);
     } else if (verb === 'status') {
@@ -2466,6 +2674,7 @@ async function stackOneShot(args: string[]): Promise<void> {
     } else if (verb === 'reset') {
       console.log(stopDevProcess('server'));
       console.log(stopDevProcess('agent'));
+      console.log(stopDevProcess('caddy'));
       console.log(stopDevProcess('stripe'));
       await bashInherit('dev-env.sh', ['reset']);
     } else {

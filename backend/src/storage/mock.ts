@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { PresignedUpload, RenewResult, StorageProvider } from './provider.js';
+import type { DirectUpload, PresignedUpload, RenewResult, StorageProvider } from './provider.js';
 
 // In-dev mock that returns a fake upload URL pointing at an internal
 // endpoint and a fake asset URL. Useful when you don't want to spend
@@ -15,6 +15,20 @@ export class MockStorageProvider implements StorageProvider {
     return {
       objectKey,
       uploadUrl: `${this.publicBaseUrl}/v2/_mock-upload/${objectKey}`,
+      assetUrl: `${this.publicBaseUrl}/v2/_mock-asset/${objectKey}`,
+    };
+  }
+
+  async uploadBytes(_args: {
+    bytes: Buffer;
+    filename: string;
+    contentType: string;
+  }): Promise<DirectUpload> {
+    // Bytes are intentionally discarded — the mock asset URL points at a
+    // no-op endpoint, matching the presigned-flow behaviour above.
+    const objectKey = `mock-${randomUUID()}`;
+    return {
+      objectKey,
       assetUrl: `${this.publicBaseUrl}/v2/_mock-asset/${objectKey}`,
     };
   }

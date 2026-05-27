@@ -115,6 +115,16 @@ export class ReportsAgent {
   }
 
   private async reconcileInner(): Promise<void> {
+    // Pull this inbox's groups from the network into the local store
+    // before reconciling. Same rationale as in admins-agent — without
+    // this, a freshly-booted agent treats every existing group as
+    // orphaned because the cache is empty.
+    try {
+      await this.client.conversations.sync();
+    } catch (err) {
+      log(`[reports] reconcile pre-sync failed (continuing anyway): ${(err as Error).message}`);
+    }
+
     // Reports is a per-client feed, role-agnostic. Every client gets one,
     // including those who later upgrade to admin — an admin is just a
     // client whose inbox is also on the admin allowlist. iOS shows the

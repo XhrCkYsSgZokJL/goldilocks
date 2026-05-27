@@ -22,6 +22,14 @@ export interface RenewResult {
   error?: string;
 }
 
+/** Result of a direct server-side upload. */
+export interface DirectUpload {
+  /** Server-issued opaque key for the stored object. */
+  objectKey: string;
+  /** Full URL the recipient GETs the file from. */
+  assetUrl: string;
+}
+
 export interface StorageProvider {
   /**
    * Issue a presigned upload destination.
@@ -41,6 +49,23 @@ export interface StorageProvider {
     },
     baseUrl?: string,
   ): Promise<PresignedUpload>;
+
+  /**
+   * Direct server-side upload, for code paths that already hold the
+   * bytes in memory (e.g. the reports-agent picking up PDFs out of a
+   * local watch directory). The local provider also uses this from the
+   * lighthouse-upload route handler. `baseUrl` lets the local provider
+   * build a stable asset URL — providers that store off-host (IPFS, S3)
+   * ignore it.
+   */
+  uploadBytes(
+    args: {
+      bytes: Buffer;
+      filename: string;
+      contentType: string;
+    },
+    baseUrl?: string,
+  ): Promise<DirectUpload>;
 
   /**
    * Extend the lifetime of stored objects (e.g. re-pin to IPFS,

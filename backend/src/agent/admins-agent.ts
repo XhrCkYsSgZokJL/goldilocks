@@ -132,6 +132,18 @@ export class AdminsAgent {
   }
 
   private async reconcileInner(): Promise<void> {
+    // Pull this inbox's groups from the network into the local store
+    // before any "is this group missing?" decision. Without this, a
+    // freshly-booted agent (or one whose local SQLCipher store was
+    // wiped) sees an empty cache and treats every existing group as
+    // orphaned — which in turn triggers a recreate that fails with
+    // MissingSequenceId because the group already exists on-network.
+    try {
+      await this.client.conversations.sync();
+    } catch (err) {
+      log(`[admins] reconcile pre-sync failed (continuing anyway): ${(err as Error).message}`);
+    }
+
     const adminInboxIds = await loadAdminInboxIds();
     log(`[admins] reconcile: ${adminInboxIds.length} admin(s) in DB`);
 
@@ -424,11 +436,20 @@ export class AdminsAgent {
         // row and recreate from scratch — the new group lands the next
         // time onClientRegistered is invoked or via an explicit replay.
         log(`[admins] Advisory #${row.clientNumber} group ${row.xmtpGroupId.slice(0, 8)}… orphaned. Recreating.`);
-        await this.createAdvisoryFor(
-          { clientId: row.clientUuid, clientNumber: row.clientNumber, inboxId: row.clientInboxId },
-          adminInboxIds,
-          false,
-        );
+        try {
+          await this.createAdvisoryFor(
+            { clientId: row.clientUuid, clientNumber: row.clientNumber, inboxId: row.clientInboxId },
+            adminInboxIds,
+            false,
+          );
+        } catch (err) {
+          // A recreate can fail with MissingSequenceId when the group
+          // still exists on-network but our local cache is empty — the
+          // sync at the top of reconcileInner should normally prevent
+          // this, but be defensive so one wedged row doesn't kill the
+          // whole reconcile pass.
+          log(`[admins] Advisory #${row.clientNumber} recreate failed (skipping this pass): ${(err as Error).message}`);
+        }
         continue;
       }
       // The client may have exploded their Advisory or otherwise removed
@@ -436,11 +457,15 @@ export class AdminsAgent {
       // fresh Advisory for them — same recovery path as a missing group.
       if (await clientNoLongerMember(group, row.clientInboxId)) {
         log(`[admins] Advisory #${row.clientNumber} ${row.xmtpGroupId.slice(0, 8)}… client no longer a member (exploded?). Recreating.`);
-        await this.createAdvisoryFor(
-          { clientId: row.clientUuid, clientNumber: row.clientNumber, inboxId: row.clientInboxId },
-          adminInboxIds,
-          false,
-        );
+        try {
+          await this.createAdvisoryFor(
+            { clientId: row.clientUuid, clientNumber: row.clientNumber, inboxId: row.clientInboxId },
+            adminInboxIds,
+            false,
+          );
+        } catch (err) {
+          log(`[admins] Advisory #${row.clientNumber} recreate failed (skipping this pass): ${(err as Error).message}`);
+        }
         continue;
       }
       await this.enforceGroupMetadata(

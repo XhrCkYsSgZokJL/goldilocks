@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
-import type { PresignedUpload, RenewResult, StorageProvider } from './provider.js';
+import type { DirectUpload, PresignedUpload, RenewResult, StorageProvider } from './provider.js';
 
 // Local-disk storage. Attachment bytes are written to a directory on the
 // box (a Docker volume in production) and served back by this backend.
@@ -73,6 +73,21 @@ export class LocalStorageProvider implements StorageProvider {
   async writeBytes(objectKey: string, bytes: Buffer): Promise<void> {
     await mkdir(this.storageDir, { recursive: true });
     await writeFile(this.filePath(objectKey), bytes);
+  }
+
+  async uploadBytes(
+    args: { bytes: Buffer; filename: string; contentType: string },
+    baseUrl?: string,
+  ): Promise<DirectUpload> {
+    if (!baseUrl) {
+      throw new Error('LocalStorageProvider.uploadBytes requires a baseUrl');
+    }
+    const objectKey = `local-${randomUUID()}`;
+    await this.writeBytes(objectKey, args.bytes);
+    return {
+      objectKey,
+      assetUrl: this.assetUrlFor(baseUrl, objectKey),
+    };
   }
 
   async readBytes(objectKey: string): Promise<Buffer | null> {

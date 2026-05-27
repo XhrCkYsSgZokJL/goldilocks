@@ -1,4 +1,4 @@
-import type { PresignedUpload, RenewResult, StorageProvider } from './provider.js';
+import type { DirectUpload, PresignedUpload, RenewResult, StorageProvider } from './provider.js';
 import { config } from '../config.js';
 
 // Lighthouse-backed storage.
@@ -67,15 +67,21 @@ export class LighthouseStorageProvider implements StorageProvider {
     };
   }
 
-  async uploadBytes(bytes: Buffer, filename: string): Promise<{ cid: string; assetUrl: string }> {
+  async uploadBytes(args: {
+    bytes: Buffer;
+    filename: string;
+    contentType: string;
+  }): Promise<DirectUpload> {
     if (!this.apiKey) {
       throw new Error('LIGHTHOUSE_API_KEY not configured');
     }
 
     // Use Lighthouse's HTTP API directly to avoid SDK Node-version quirks.
-    // POST multipart to https://node.lighthouse.storage/api/v0/add
+    // POST multipart to https://node.lighthouse.storage/api/v0/add. The
+    // IPFS CID becomes the storage provider's `objectKey` — content-
+    // addressed, so the same bytes always produce the same key.
     const form = new FormData();
-    form.append('file', new Blob([bytes]), filename);
+    form.append('file', new Blob([args.bytes], { type: args.contentType }), args.filename);
 
     const resp = await fetch('https://node.lighthouse.storage/api/v0/add', {
       method: 'POST',
@@ -88,7 +94,7 @@ export class LighthouseStorageProvider implements StorageProvider {
     }
     const data = (await resp.json()) as { Hash: string; Name: string; Size: string };
     return {
-      cid: data.Hash,
+      objectKey: data.Hash,
       assetUrl: `${this.ipfsGateway}/${data.Hash}`,
     };
   }

@@ -32,6 +32,11 @@ const schema = z.object({
   // Docker this is a mounted volume; locally it defaults under the CWD.
   LOCAL_STORAGE_DIR: z.string().default('./.attachments'),
 
+  // Directory the reports-agent watches for finished PDF reports the
+  // operator wants to ship to clients. Files dropped into this directory
+  // are picked up automatically; see src/agent/reports-watcher.ts.
+  REPORTS_DIR: z.string().default('./reports'),
+
   CORS_ORIGIN: z.string().default('*'),
 
   // SIWE auth — domain + URI baked into challenge messages so signatures

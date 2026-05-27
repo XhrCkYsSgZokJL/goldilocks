@@ -111,12 +111,16 @@ export default async function attachmentRoutes(app: FastifyInstance, opts: { pub
       return reply.code(400).send({ error: 'empty_body' });
     }
 
-    const { cid, assetUrl } = await storage.uploadBytes(buf, ticket.filename);
+    const { objectKey, assetUrl } = await storage.uploadBytes({
+      bytes: buf,
+      filename: ticket.filename,
+      contentType: ticket.contentType,
+    });
 
     await db
       .insert(attachments)
       .values({
-        objectKey: cid,
+        objectKey,
         uploadedBy: ticket.uploadedBy ?? null,
         contentType: ticket.contentType,
         filename: ticket.filename,
@@ -124,7 +128,9 @@ export default async function attachmentRoutes(app: FastifyInstance, opts: { pub
       })
       .onConflictDoNothing();
 
-    return reply.code(200).send({ cid, assetUrl });
+    // Keep `cid` in the response — existing iOS callers read that name;
+    // it's just the lighthouse CID by another name.
+    return reply.code(200).send({ cid: objectKey, assetUrl });
   });
 
   // PUT /v2/_local-upload?ticket=...  — upload handler for LocalStorageProvider

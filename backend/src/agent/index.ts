@@ -18,6 +18,7 @@ import { bootAgentClient } from './xmtp-runtime.js';
 import { AdminsAgent } from './admins-agent.js';
 import { ReportsAgent } from './reports-agent.js';
 import { startListener } from './listener.js';
+import { startReportsWatcher } from './reports-watcher.js';
 
 /**
  * Block until Postgres accepts a query. The dev stack can start the
@@ -75,8 +76,16 @@ async function main(): Promise<void> {
   const reportsAgent = new ReportsAgent(reportsClient, reportsIdentity);
 
   // Catch up on anything that happened while the process was down.
-  await adminsAgent.reconcile();
-  await reportsAgent.reconcile();
+  // Wrap each in try/catch so a bad initial reconcile (e.g. a wedged
+  // group, MLS sequence drift after the local store was wiped) doesn't
+  // crash the entire process before the listener + watcher come up.
+  // The periodic tick below retries them on a 60s cadence.
+  try { await adminsAgent.reconcile(); } catch (err) {
+    console.warn('[agent] initial admins reconcile failed (will retry):', (err as Error).message);
+  }
+  try { await reportsAgent.reconcile(); } catch (err) {
+    console.warn('[agent] initial reports reconcile failed (will retry):', (err as Error).message);
+  }
 
   // Periodic reconcile tick. Runs every 60s as a self-healing safety
   // net for client-side state drift the agent can't observe directly:
@@ -161,12 +170,18 @@ async function main(): Promise<void> {
   // a one-way notification channel with no human on the other side.
   const stopAutoResponder = await reportsAgent.startAutoResponder();
 
+  // File-drop ingestion: PDFs in REPORTS_DIR with filenames like
+  // "<clientNumber>-<title>.pdf" are encrypted and posted to that
+  // client's Reports group, then moved to reports/sent/ on success.
+  const stopReportsWatcher = await startReportsWatcher({ client: reportsClient });
+
   // Graceful shutdown — stop LISTEN + the message stream, then exit. The
   // XMTP clients hold a SQLCipher connection that node-sdk releases on
   // process exit.
   const shutdown = async (signal: string) => {
     console.log(`[agent] received ${signal}, shutting down`);
     clearInterval(reconcileInterval);
+    try { stopReportsWatcher(); } catch {}
     try { await stopAutoResponder(); } catch {}
     try { await stopListener(); } catch {}
     process.exit(0);
