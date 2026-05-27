@@ -98,7 +98,7 @@ struct AdminClientPeopleListView: View {
     }
 
     private func memberRow(_ member: SeatMember) -> some View {
-        let name: String = member.name.isEmpty ? "Unnamed" : member.name
+        let name: String = member.displayName
         let isSaving: Bool = savingMemberIds.contains(member.id)
         let isExpanded: Bool = expandedMemberId == member.id
         let rowOpacity: Double = member.enabled ? 1.0 : 0.6
@@ -117,15 +117,35 @@ struct AdminClientPeopleListView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            if isExpanded && !member.email.isEmpty {
-                Text(member.email)
-                    .font(.caption)
-                    .foregroundStyle(.colorTextSecondary)
-                    .padding(.top, DesignConstants.Spacing.stepHalf)
+            if isExpanded {
+                expandedDetail(for: member)
             }
         }
         .padding(.vertical, DesignConstants.Spacing.stepX)
         .opacity(rowOpacity)
+    }
+
+    @ViewBuilder
+    private func expandedDetail(for member: SeatMember) -> some View {
+        VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+            ForEach(member.emails) { email in
+                let suffix: String = email.verified ? "" : " (unverified)"
+                Text("\(email.label.displayName): \(email.address)\(suffix)")
+                    .font(.caption)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+            if !member.phone.isEmpty {
+                Text("Phone: \(member.phone)")
+                    .font(.caption)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+            if !member.address.isEmpty {
+                Text(member.address.singleLine)
+                    .font(.caption)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+        }
+        .padding(.top, DesignConstants.Spacing.stepHalf)
     }
 
     @ViewBuilder

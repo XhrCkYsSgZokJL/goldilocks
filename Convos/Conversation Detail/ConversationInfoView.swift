@@ -362,7 +362,7 @@ struct ConversationInfoView: View {
     /// person sheet — the row deliberately doesn't carry the toggle so
     /// the primary action is unambiguous.
     private func advisoryPersonRow(_ member: SeatMember) -> some View {
-        let name: String = member.name.isEmpty ? "Unnamed" : member.name
+        let name: String = member.displayName
         let tapAction = { selectedAdvisoryPerson = member }
         return Button(action: tapAction) {
             HStack(spacing: DesignConstants.Spacing.step2x) {
@@ -840,24 +840,15 @@ private struct AdvisoryPersonSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    LabeledContent("Name") {
-                        Text(member.name.isEmpty ? "Unnamed" : member.name)
-                            .foregroundStyle(.colorTextSecondary)
-                    }
-                    LabeledContent("Email") {
-                        Text(member.email)
-                            .foregroundStyle(.colorTextSecondary)
-                    }
-                } footer: {
-                    Text("The client owns this person's name and email. Reach out to them if either needs to change.")
+                identitySection
+                emailsSection
+                if !member.phone.isEmpty {
+                    phoneSection
                 }
-
-                Section {
-                    Toggle("Enabled", isOn: $enabled)
-                } footer: {
-                    Text("Enabled people are subscribed to the service and count toward this client's monthly rate.")
+                if !member.address.isEmpty {
+                    addressSection
                 }
+                enabledSection
             }
             .navigationTitle("Person")
             .toolbarTitleDisplayMode(.inline)
@@ -867,6 +858,90 @@ private struct AdvisoryPersonSheet: View {
                     Button("Done", action: doneAction)
                 }
             }
+        }
+    }
+
+    private var identitySection: some View {
+        Section {
+            LabeledContent("First name") {
+                Text(member.firstName.isEmpty ? "—" : member.firstName)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+            if !member.middleName.isEmpty {
+                LabeledContent("Middle name") {
+                    Text(member.middleName)
+                        .foregroundStyle(.colorTextSecondary)
+                }
+            }
+            LabeledContent("Last name") {
+                Text(member.lastName.isEmpty ? "—" : member.lastName)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+        } footer: {
+            Text("The client owns this person's name and contact info. Reach out to them if anything needs to change.")
+        }
+    }
+
+    private var emailsSection: some View {
+        Section {
+            if member.emails.isEmpty {
+                Text("No emails on file")
+                    .foregroundStyle(.colorTextSecondary)
+            } else {
+                ForEach(member.emails) { email in
+                    emailRow(email)
+                }
+            }
+        } header: {
+            Text("Emails")
+        }
+    }
+
+    private func emailRow(_ email: LabeledEmail) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                Text(email.address)
+                    .foregroundStyle(.colorTextPrimary)
+                Text(email.label.displayName)
+                    .font(.caption)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+            Spacer()
+            if email.verified {
+                Text("Verified")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.colorTextSecondary)
+            } else {
+                Text("Unverified")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.colorTextTertiary)
+            }
+        }
+    }
+
+    private var phoneSection: some View {
+        Section {
+            LabeledContent("Phone") {
+                Text(member.phone)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+        }
+    }
+
+    private var addressSection: some View {
+        Section {
+            Text(member.address.singleLine)
+                .foregroundStyle(.colorTextSecondary)
+        } header: {
+            Text("Address")
+        }
+    }
+
+    private var enabledSection: some View {
+        Section {
+            Toggle("Enabled", isOn: $enabled)
+        } footer: {
+            Text("Enabled people are subscribed to the service and count toward this client's monthly rate.")
         }
     }
 }

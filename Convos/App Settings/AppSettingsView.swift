@@ -426,8 +426,11 @@ struct MembershipView: View {
     @State private var plan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
     @State private var editingMember: SeatMember?
     @State private var showingAddPerson: Bool = false
-    @State private var newMemberName: String = ""
+    @State private var newMemberFirstName: String = ""
+    @State private var newMemberMiddleName: String = ""
+    @State private var newMemberLastName: String = ""
     @State private var newMemberEmail: String = ""
+    @State private var newMemberEmailLabel: EmailLabel = .other
     @State private var pendingAdd: PendingAdd?
     @State private var verifyResultMessage: String?
     @State private var showingVerifyResult: Bool = false
@@ -499,8 +502,11 @@ struct MembershipView: View {
         }
         .sheet(isPresented: $showingAddPerson) {
             AddPersonSheet(
-                name: $newMemberName,
+                firstName: $newMemberFirstName,
+                middleName: $newMemberMiddleName,
+                lastName: $newMemberLastName,
                 email: $newMemberEmail,
+                emailLabel: $newMemberEmailLabel,
                 pendingAdd: $pendingAdd,
                 onAdded: handleVerifiedAdd,
                 onTooManyAttempts: handleTooManyAttempts
@@ -535,10 +541,13 @@ struct MembershipView: View {
     /// conversation list.
     private func handleVerifiedAdd(_ member: SeatMember) {
         plan.members.append(member)
-        let addedLabel: String = member.name.isEmpty ? member.email : member.name
+        let addedLabel: String = member.displayName
         pendingAdd = nil
-        newMemberName = ""
+        newMemberFirstName = ""
+        newMemberMiddleName = ""
+        newMemberLastName = ""
         newMemberEmail = ""
+        newMemberEmailLabel = .other
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 350_000_000)
             showingAddPerson = false
@@ -810,11 +819,11 @@ struct MembershipView: View {
         .buttonStyle(.plain)
     }
 
-    /// One row per person. Tap opens a sheet to edit the name (email is
-    /// fixed once verified). Emails are deliberately not shown here so
-    /// the list reads as a clean roster of names.
+    /// One row per person. Tap opens a sheet to edit their info. Emails
+    /// and other contact details are deliberately not shown here so the
+    /// list reads as a clean roster of names.
     private func memberRow(_ member: SeatMember) -> some View {
-        let displayName: String = member.name.isEmpty ? "Unnamed" : member.name
+        let displayName: String = member.displayName
         let tapAction = { editingMember = member }
         return Button(action: tapAction) {
             HStack(spacing: DesignConstants.Spacing.step2x) {
@@ -949,9 +958,13 @@ struct MembershipView: View {
     }
 }
 
-/// Modal editor for a person already on the plan. The email is fixed at
-/// verification time and rendered read-only here; only the display name
-/// is editable. A confirmation dialog gates the destructive remove.
+/// Modal editor for a person already on the plan. Name, phone, and
+/// address are free-form. Emails are managed as a list — adding a new
+/// email triggers the same verify-code handshake as the initial add,
+/// so every address on the person's profile is verified before it
+/// lands in the saved list. At least one verified email must remain on
+/// the person at save time. A confirmation dialog gates the
+/// destructive remove.
 private struct MemberEditSheet: View {
     @Environment(\.dismiss) private var dismiss: DismissAction
 
@@ -959,8 +972,14 @@ private struct MemberEditSheet: View {
     let onSave: (SeatMember) -> Void
     let onRemove: () -> Void
 
-    @State private var name: String
+    @State private var firstName: String
+    @State private var middleName: String
+    @State private var lastName: String
+    @State private var emails: [LabeledEmail]
+    @State private var phone: String
+    @State private var address: PersonAddress
     @State private var showingRemoveConfirm: Bool = false
+    @State private var presentingAddEmail: Bool = false
 
     init(
         member: SeatMember,
@@ -970,59 +989,33 @@ private struct MemberEditSheet: View {
         self.member = member
         self.onSave = onSave
         self.onRemove = onRemove
-        self._name = State(initialValue: member.name)
+        self._firstName = State(initialValue: member.firstName)
+        self._middleName = State(initialValue: member.middleName)
+        self._lastName = State(initialValue: member.lastName)
+        self._emails = State(initialValue: member.emails)
+        self._phone = State(initialValue: member.phone)
+        self._address = State(initialValue: member.address)
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    LabeledContent("Name") {
-                        TextField("Name", text: $name)
-                            .textContentType(.name)
-                            .multilineTextAlignment(.trailing)
-                            .foregroundStyle(.colorTextPrimary)
-                    }
-                    LabeledContent("Email") {
-                        Text(member.email)
-                            .foregroundStyle(.colorTextSecondary)
-                    }
-                } footer: {
-                    Text("The email is set when the person is verified and can't be changed.")
-                }
-                Section {
-                    let removeAction = { showingRemoveConfirm = true }
-                    Button(role: .destructive, action: removeAction) {
-                        HStack {
-                            Spacer()
-                            Text("Remove from plan")
-                                .font(.body.weight(.semibold))
-                            Spacer()
-                        }
-                    }
-                }
+                nameSection
+                emailsSection
+                phoneSection
+                addressSection
+                removeSection
             }
             .navigationTitle("Edit person")
             .toolbarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    let cancelAction = { dismiss() }
-                    Button("Cancel", action: cancelAction)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    let trimmed: String = name.trimmingCharacters(in: .whitespaces)
-                    let saveAction = {
-                        var updated: SeatMember = member
-                        updated.name = trimmed
-                        onSave(updated)
-                        dismiss()
-                    }
-                    Button("Save", action: saveAction)
-                        .disabled(trimmed.isEmpty || trimmed == member.name)
+            .toolbar { toolbarContent }
+            .sheet(isPresented: $presentingAddEmail) {
+                AddEmailSheet { newEmail in
+                    emails.append(newEmail)
                 }
             }
             .confirmationDialog(
-                "Remove \(member.name) from your plan?",
+                "Remove \(member.displayName) from your plan?",
                 isPresented: $showingRemoveConfirm,
                 titleVisibility: .visible
             ) {
@@ -1037,6 +1030,296 @@ private struct MemberEditSheet: View {
             }
         }
     }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            let cancelAction = { dismiss() }
+            Button("Cancel", action: cancelAction)
+        }
+        ToolbarItem(placement: .confirmationAction) {
+            let saveAction = {
+                onSave(updatedMember)
+                dismiss()
+            }
+            Button("Save", action: saveAction)
+                .disabled(!canSave)
+        }
+    }
+
+    private var nameSection: some View {
+        Section {
+            TextField("First name", text: $firstName)
+                .textContentType(.givenName)
+            TextField("Middle name", text: $middleName)
+                .textContentType(.middleName)
+            TextField("Last name", text: $lastName)
+                .textContentType(.familyName)
+        } header: {
+            Text("Name")
+        }
+    }
+
+    private var emailsSection: some View {
+        Section {
+            if emails.isEmpty {
+                Text("No emails on file")
+                    .foregroundStyle(.colorTextSecondary)
+            } else {
+                ForEach(emails) { email in
+                    emailRow(email)
+                }
+                .onDelete(perform: deleteEmails)
+            }
+            addEmailButton
+        } header: {
+            Text("Emails")
+        } footer: {
+            Text("Every email must be verified before it's saved. At least one verified email is required.")
+        }
+    }
+
+    private func emailRow(_ email: LabeledEmail) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                Text(email.address)
+                    .foregroundStyle(.colorTextPrimary)
+                Text(email.label.displayName)
+                    .font(.caption)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+            Spacer()
+            if email.verified {
+                Text("Verified")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.colorTextSecondary)
+            }
+        }
+    }
+
+    private var addEmailButton: some View {
+        let tapAction = { presentingAddEmail = true }
+        return Button(action: tapAction) {
+            HStack(spacing: DesignConstants.Spacing.step2x) {
+                Image(systemName: "plus.circle.fill")
+                    .foregroundStyle(.colorFillPrimary)
+                Text("Add email")
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var phoneSection: some View {
+        Section {
+            TextField("Phone", text: $phone)
+                .textContentType(.telephoneNumber)
+                .keyboardType(.phonePad)
+        } header: {
+            Text("Phone")
+        }
+    }
+
+    private var addressSection: some View {
+        Section {
+            TextField("Street", text: $address.street)
+                .textContentType(.streetAddressLine1)
+            TextField("City", text: $address.city)
+                .textContentType(.addressCity)
+            TextField("State / Region", text: $address.state)
+                .textContentType(.addressState)
+            TextField("Postal code", text: $address.postalCode)
+                .textContentType(.postalCode)
+            TextField("Country", text: $address.country)
+                .textContentType(.countryName)
+        } header: {
+            Text("Address")
+        }
+    }
+
+    private var removeSection: some View {
+        Section {
+            let removeAction = { showingRemoveConfirm = true }
+            Button(role: .destructive, action: removeAction) {
+                HStack {
+                    Spacer()
+                    Text("Remove from plan")
+                        .font(.body.weight(.semibold))
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    private func deleteEmails(at offsets: IndexSet) {
+        emails.remove(atOffsets: offsets)
+    }
+
+    /// Save is allowed when at least one verified email is present and
+    /// the form differs from what was loaded.
+    private var canSave: Bool {
+        let hasVerifiedEmail: Bool = emails.contains(where: { $0.verified })
+        return hasVerifiedEmail && updatedMember != member
+    }
+
+    /// The `SeatMember` that would be persisted if the user tapped
+    /// Save right now. Whitespace is trimmed off every free-form
+    /// field so an accidental trailing space doesn't masquerade as a
+    /// real edit.
+    private var updatedMember: SeatMember {
+        var updated: SeatMember = member
+        updated.firstName = firstName.trimmingCharacters(in: .whitespaces)
+        updated.middleName = middleName.trimmingCharacters(in: .whitespaces)
+        updated.lastName = lastName.trimmingCharacters(in: .whitespaces)
+        updated.emails = emails
+        updated.phone = phone.trimmingCharacters(in: .whitespaces)
+        updated.address = PersonAddress(
+            street: address.street.trimmingCharacters(in: .whitespaces),
+            city: address.city.trimmingCharacters(in: .whitespaces),
+            state: address.state.trimmingCharacters(in: .whitespaces),
+            postalCode: address.postalCode.trimmingCharacters(in: .whitespaces),
+            country: address.country.trimmingCharacters(in: .whitespaces)
+        )
+        return updated
+    }
+}
+
+/// Sub-sheet for adding a new email to an existing person. Same verify-
+/// code handshake as the initial add — the new address only lands in
+/// the parent's emails list once the code clears, which is what
+/// guarantees every saved email is verified.
+private struct AddEmailSheet: View {
+    @Environment(\.dismiss) private var dismiss: DismissAction
+
+    let onVerified: (LabeledEmail) -> Void
+
+    @State private var address: String = ""
+    @State private var label: EmailLabel = .other
+    @State private var code: String = ""
+    @State private var attemptsLeft: Int = EmailCodeVerification.maxAttempts
+    @State private var codeSent: Bool = false
+    @State private var alertMessage: String?
+    @State private var showingAlert: Bool = false
+    @FocusState private var codeFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Email", text: $address)
+                        .textContentType(.emailAddress)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .disabled(codeSent)
+                    Picker("Label", selection: $label) {
+                        ForEach(EmailLabel.allCases) { option in
+                            Text(option.displayName).tag(option)
+                        }
+                    }
+                    .disabled(codeSent)
+                } footer: {
+                    Text(footerText)
+                }
+                if codeSent {
+                    codeSection
+                } else {
+                    sendSection
+                }
+            }
+            .navigationTitle("Add email")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .alert("Verification", isPresented: $showingAlert) {
+                Button("OK", role: .cancel) { codeFocused = true }
+            } message: {
+                Text(alertMessage ?? "")
+            }
+        }
+    }
+
+    private var sendSection: some View {
+        Section {
+            let trimmed: String = address.trimmingCharacters(in: .whitespaces)
+            let canSend: Bool = !trimmed.isEmpty
+            let sendAction = {
+                guard canSend else { return }
+                codeSent = true
+                codeFocused = true
+            }
+            Button(action: sendAction) {
+                HStack {
+                    Spacer()
+                    Text("Send verification code")
+                        .font(.body.weight(.semibold))
+                    Spacer()
+                }
+            }
+            .disabled(!canSend)
+        }
+    }
+
+    private var codeSection: some View {
+        Section {
+            TextField("000000", text: codeBinding)
+                .keyboardType(.numberPad)
+                .textContentType(.oneTimeCode)
+                .font(.system(.title2, design: .monospaced).weight(.semibold))
+                .multilineTextAlignment(.center)
+                .tracking(8)
+                .focused($codeFocused)
+        } header: {
+            Text("Enter code")
+        } footer: {
+            Text("We sent a 6-digit code to \(address).")
+        }
+    }
+
+    private var footerText: String {
+        codeSent
+            ? "Enter the code we sent to add this email to the person's profile."
+            : "We'll email a 6-digit code so this address can be verified before it's saved."
+    }
+
+    private var codeBinding: Binding<String> {
+        Binding(
+            get: { code },
+            set: { newValue in
+                let digitsOnly: String = String(newValue.filter { $0.isNumber }.prefix(EmailCodeVerification.codeLength))
+                code = digitsOnly
+                if digitsOnly.count == EmailCodeVerification.codeLength {
+                    Task { @MainActor in verifyCode() }
+                }
+            }
+        )
+    }
+
+    private func verifyCode() {
+        if EmailCodeVerification.isValid(code) {
+            let verified: LabeledEmail = LabeledEmail(
+                address: address.trimmingCharacters(in: .whitespaces),
+                label: label,
+                verified: true
+            )
+            onVerified(verified)
+            dismiss()
+            return
+        }
+        attemptsLeft -= 1
+        code = ""
+        if attemptsLeft <= 0 {
+            alertMessage = "Too many incorrect codes. Cancel and try again."
+            showingAlert = true
+            return
+        }
+        let triesLabel: String = attemptsLeft == 1 ? "1 try left" : "\(attemptsLeft) tries left"
+        alertMessage = "That code didn't match — \(triesLabel)."
+        showingAlert = true
+    }
 }
 
 /// Modal that hosts the two-stage Add Person flow. The form (name,
@@ -1048,8 +1331,11 @@ private struct MemberEditSheet: View {
 private struct AddPersonSheet: View {
     @Environment(\.dismiss) private var dismiss: DismissAction
 
-    @Binding var name: String
+    @Binding var firstName: String
+    @Binding var middleName: String
+    @Binding var lastName: String
     @Binding var email: String
+    @Binding var emailLabel: EmailLabel
     @Binding var pendingAdd: PendingAdd?
     let onAdded: (SeatMember) -> Void
     let onTooManyAttempts: () -> Void
@@ -1060,14 +1346,25 @@ private struct AddPersonSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    nameField
+                    firstNameField
+                    middleNameField
+                    lastNameField
+                } header: {
+                    Text("Name")
+                } footer: {
+                    Text("Name fields are optional — the person is identified by their verified email.")
+                }
+                Section {
                     emailField
+                    emailLabelPicker
                     if pendingAdd != nil {
                         enterCodeButton
                         cancelCodeButton
                     } else {
                         sendCodeButton
                     }
+                } header: {
+                    Text("Verified email")
                 } footer: {
                     Text(footerText)
                 }
@@ -1096,9 +1393,21 @@ private struct AddPersonSheet: View {
         }
     }
 
-    private var nameField: some View {
-        TextField("Name", text: $name)
-            .textContentType(.name)
+    private var firstNameField: some View {
+        TextField("First name", text: $firstName)
+            .textContentType(.givenName)
+            .disabled(pendingAdd != nil)
+    }
+
+    private var middleNameField: some View {
+        TextField("Middle name", text: $middleName)
+            .textContentType(.middleName)
+            .disabled(pendingAdd != nil)
+    }
+
+    private var lastNameField: some View {
+        TextField("Last name", text: $lastName)
+            .textContentType(.familyName)
             .disabled(pendingAdd != nil)
     }
 
@@ -1110,16 +1419,30 @@ private struct AddPersonSheet: View {
             .disabled(pendingAdd != nil)
     }
 
+    private var emailLabelPicker: some View {
+        Picker("Label", selection: $emailLabel) {
+            ForEach(EmailLabel.allCases) { label in
+                Text(label.displayName).tag(label)
+            }
+        }
+        .disabled(pendingAdd != nil)
+    }
+
     private var sendCodeButton: some View {
-        let trimmedName: String = name.trimmingCharacters(in: .whitespaces)
         let trimmedEmail: String = email.trimmingCharacters(in: .whitespaces)
-        let canSend: Bool = !trimmedName.isEmpty && !trimmedEmail.isEmpty
+        let canSend: Bool = !trimmedEmail.isEmpty
         let sendAction = {
             guard canSend else { return }
             // Real email send is a stub until the mailer ships; the
             // verify sheet trusts the static `EmailCodeVerification`
             // code so QA + early testers can complete the flow.
-            pendingAdd = PendingAdd(name: trimmedName, email: trimmedEmail)
+            pendingAdd = PendingAdd(
+                firstName: firstName.trimmingCharacters(in: .whitespaces),
+                middleName: middleName.trimmingCharacters(in: .whitespaces),
+                lastName: lastName.trimmingCharacters(in: .whitespaces),
+                email: trimmedEmail,
+                emailLabel: emailLabel
+            )
             showingCodeEntry = true
         }
         return Button(action: sendAction) {
@@ -1261,7 +1584,17 @@ private struct VerifyCodeSheet: View {
     private func verifyCode() {
         guard var pending = pendingAdd else { return }
         if EmailCodeVerification.isValid(pending.code) {
-            let member: SeatMember = SeatMember(name: pending.name, email: pending.email)
+            let verifiedEmail: LabeledEmail = LabeledEmail(
+                address: pending.email,
+                label: pending.emailLabel,
+                verified: true
+            )
+            let member: SeatMember = SeatMember(
+                firstName: pending.firstName,
+                middleName: pending.middleName,
+                lastName: pending.lastName,
+                emails: [verifiedEmail]
+            )
             onVerified(member)
             return
         }
@@ -1279,13 +1612,18 @@ private struct VerifyCodeSheet: View {
     }
 }
 
-/// In-flight Add Person flow: the user typed a name + email and tapped
+/// In-flight Add Person flow: the user filled in the form and tapped
 /// "Send code", but hasn't entered a valid 6-digit code yet. Held in
 /// `MembershipView` state so the user can dismiss the verify sheet
-/// (swipe down) and resume later without losing progress.
+/// (swipe down) and resume later without losing progress. Only one
+/// email is required at this stage — additional emails can be added
+/// (and verified one-by-one) later from `MemberEditSheet`.
 private struct PendingAdd: Equatable {
-    var name: String
+    var firstName: String
+    var middleName: String
+    var lastName: String
     var email: String
+    var emailLabel: EmailLabel
     var code: String = ""
     /// How many wrong codes the user has left before the in-flight add
     /// is dropped and they have to request a fresh code.

@@ -3,16 +3,106 @@ import ConvosCoreiOS
 import Foundation
 import Observation
 
+/// Which slot in a person's life an email belongs to. Mirrors the
+/// iOS Contacts label list so the picker reads naturally.
+enum EmailLabel: String, Codable, CaseIterable, Identifiable {
+    case home, work, other
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .home: return "Home"
+        case .work: return "Work"
+        case .other: return "Other"
+        }
+    }
+}
+
+/// One email address on a person's profile. Each address carries its
+/// own verification state because every email must clear the same
+/// email-code handshake before it can be relied on for the third-party
+/// subscription or audit trail.
+struct LabeledEmail: Codable, Identifiable, Equatable {
+    var id: UUID
+    var address: String
+    var label: EmailLabel
+    /// `true` once the email-code handshake has cleared. New addresses
+    /// added through the edit sheet stay `false` until verified.
+    var verified: Bool
+
+    init(
+        id: UUID = UUID(),
+        address: String,
+        label: EmailLabel = .other,
+        verified: Bool = false
+    ) {
+        self.id = id
+        self.address = address
+        self.label = label
+        self.verified = verified
+    }
+}
+
+/// A person's mailing address. All fields are optional — clients fill
+/// in what they have. Kept structured (rather than a free-form string)
+/// so future use cases — tax forms, mailed paperwork, region-aware
+/// pricing — don't need a re-parse.
+struct PersonAddress: Codable, Equatable {
+    var street: String
+    var city: String
+    var state: String
+    var postalCode: String
+    var country: String
+
+    init(
+        street: String = "",
+        city: String = "",
+        state: String = "",
+        postalCode: String = "",
+        country: String = ""
+    ) {
+        self.street = street
+        self.city = city
+        self.state = state
+        self.postalCode = postalCode
+        self.country = country
+    }
+
+    /// True when every field is blank — used to decide whether to render
+    /// the address section at all on read-only views.
+    var isEmpty: Bool {
+        street.isEmpty && city.isEmpty && state.isEmpty && postalCode.isEmpty && country.isEmpty
+    }
+
+    /// Single-line summary suitable for compact rows. Skips blanks so a
+    /// partially filled address still reads cleanly.
+    var singleLine: String {
+        [street, city, state, postalCode, country]
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+    }
+}
+
 /// One person on the plan. There is a single Goldilocks plan today
 /// (`GoldilocksPlan.monthlyPricePerPerson` per person, per month) so each
 /// person is just one seat. Entry is gated by an email-code handshake
-/// against the person's email address; once verified, the person is
-/// added directly as `enabled`. Admins can still disable a person later
-/// as a kill switch for the third-party subscription.
+/// against any one of the person's emails; once that first address is
+/// verified, the person is added with `enabled = true`. Additional
+/// emails added later go through the same handshake before they're
+/// marked verified. Admins can still disable a person later as a kill
+/// switch for the third-party subscription.
 struct SeatMember: Codable, Identifiable, Equatable {
     var id: UUID
-    var name: String
-    var email: String
+    var firstName: String
+    var middleName: String
+    var lastName: String
+    /// All email addresses on the person's profile. At least one must
+    /// be present + verified for the person to count as added; further
+    /// emails track their own verified state independently.
+    var emails: [LabeledEmail]
+    var phone: String
+    var address: PersonAddress
     /// Admin-controlled kill switch. Defaults to `true` for newly
     /// verified people. When an admin disables a person the backend
     /// unsubscribes them from the third-party service; flipping it back
@@ -21,33 +111,99 @@ struct SeatMember: Codable, Identifiable, Equatable {
 
     init(
         id: UUID = UUID(),
-        name: String = "",
-        email: String = "",
+        firstName: String = "",
+        middleName: String = "",
+        lastName: String = "",
+        emails: [LabeledEmail] = [],
+        phone: String = "",
+        address: PersonAddress = PersonAddress(),
         enabled: Bool = true
     ) {
         self.id = id
-        self.name = name
-        self.email = email
+        self.firstName = firstName
+        self.middleName = middleName
+        self.lastName = lastName
+        self.emails = emails
+        self.phone = phone
+        self.address = address
         self.enabled = enabled
     }
 
+    /// Concatenated first / middle / last, skipping blanks so a
+    /// partially filled name still renders cleanly.
+    var fullName: String {
+        [firstName, middleName, lastName]
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    /// First verified email, falling back to the first listed email if
+    /// none are verified yet. `nil` when the person has no emails.
+    var primaryEmail: LabeledEmail? {
+        emails.first(where: { $0.verified }) ?? emails.first
+    }
+
+    /// String shown in lists and audit lines. Prefers the full name,
+    /// falls back to the primary email, then a generic placeholder.
+    var displayName: String {
+        let name: String = fullName
+        if !name.isEmpty { return name }
+        if let address = primaryEmail?.address, !address.isEmpty { return address }
+        return "Unnamed person"
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case id, name, email, enabled
+        case id, firstName, middleName, lastName, emails, phone, address, enabled
     }
 
     /// Keys that don't map to a stored property, used only by the decoder
     /// to detect legacy on-disk shapes. Kept separate from `CodingKeys`
     /// so Swift's synthesized `encode(to:)` doesn't try to encode them.
     private enum LegacyKeys: String, CodingKey {
-        case approvalStatus
+        case name, email, approvalStatus
     }
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacyContainer = try decoder.container(keyedBy: LegacyKeys.self)
+
         self.id = try container.decode(UUID.self, forKey: .id)
-        self.name = try container.decode(String.self, forKey: .name)
-        self.email = try container.decode(String.self, forKey: .email)
-        // Legacy shapes carried an `approvalStatus` field and used
+
+        // Either the row was written under the new schema (has
+        // `firstName`) or under one of the legacy shapes (has `name` and
+        // `email` at the top level). The two are mutually exclusive.
+        let hasNewNameShape: Bool = container.contains(.firstName)
+        if hasNewNameShape {
+            self.firstName = try container.decodeIfPresent(String.self, forKey: .firstName) ?? ""
+            self.middleName = try container.decodeIfPresent(String.self, forKey: .middleName) ?? ""
+            self.lastName = try container.decodeIfPresent(String.self, forKey: .lastName) ?? ""
+        } else {
+            let legacyName: String = (try? legacyContainer.decodeIfPresent(String.self, forKey: .name)) ?? ""
+            let parts: LegacyNameParts = Self.splitLegacyName(legacyName)
+            self.firstName = parts.first
+            self.middleName = parts.middle
+            self.lastName = parts.last
+        }
+
+        if container.contains(.emails) {
+            self.emails = try container.decodeIfPresent([LabeledEmail].self, forKey: .emails) ?? []
+        } else {
+            // Legacy rows only carried a single email, but they were
+            // only persisted after the verification handshake cleared,
+            // so it's safe to mark the migrated email as verified.
+            let legacyEmail: String = (try? legacyContainer.decodeIfPresent(String.self, forKey: .email)) ?? ""
+            if legacyEmail.isEmpty {
+                self.emails = []
+            } else {
+                self.emails = [LabeledEmail(address: legacyEmail, label: .other, verified: true)]
+            }
+        }
+
+        self.phone = try container.decodeIfPresent(String.self, forKey: .phone) ?? ""
+        self.address = try container.decodeIfPresent(PersonAddress.self, forKey: .address) ?? PersonAddress()
+
+        // Older shapes carried an `approvalStatus` field and used
         // `enabled` only as the admin's kill switch on top of an
         // already-approved person. With the email-verification gate
         // replacing admin approval, a legacy row's `enabled = false`
@@ -55,13 +211,38 @@ struct SeatMember: Codable, Identifiable, Equatable {
         // off", so auto-enable everything that came in under the old
         // schema. Rows written by the current code path have no
         // `approvalStatus` key and their explicit `enabled` value wins.
-        let legacyContainer = try decoder.container(keyedBy: LegacyKeys.self)
-        let isLegacyRow: Bool = legacyContainer.contains(.approvalStatus)
-        if isLegacyRow {
+        let isLegacyApprovalRow: Bool = legacyContainer.contains(.approvalStatus)
+        if isLegacyApprovalRow {
             self.enabled = true
         } else {
             self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         }
+    }
+
+    /// Best-effort split of a legacy single-string name into first /
+    /// middle / last. Single token → just `firstName`; two tokens →
+    /// first + last; three or more → middle tokens joined.
+    private static func splitLegacyName(_ raw: String) -> LegacyNameParts {
+        let trimmed: String = raw.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return LegacyNameParts(first: "", middle: "", last: "") }
+        let tokens: [String] = trimmed.split(separator: " ").map(String.init)
+        switch tokens.count {
+        case 1: return LegacyNameParts(first: tokens[0], middle: "", last: "")
+        case 2: return LegacyNameParts(first: tokens[0], middle: "", last: tokens[1])
+        default:
+            let first: String = tokens[0]
+            let last: String = tokens[tokens.count - 1]
+            let middle: String = tokens[1..<(tokens.count - 1)].joined(separator: " ")
+            return LegacyNameParts(first: first, middle: middle, last: last)
+        }
+    }
+
+    /// Result of splitting a legacy single-field name. A struct rather
+    /// than a 3-tuple to stay inside SwiftLint's `large_tuple` cap.
+    private struct LegacyNameParts {
+        let first: String
+        let middle: String
+        let last: String
     }
 }
 
