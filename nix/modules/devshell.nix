@@ -29,6 +29,9 @@ _: {
         packages = [
           gems
           (lib.lowPrio gems.wrappedRuby)
+          # sentry-cli is invoked by fastlane-plugin-sentry's
+          # sentry_debug_files_upload to push dSYMs to Sentry.
+          pkgs.sentry-cli
         ];
         DEVELOPER_DIR = "${xcode}";
         LANG = "en_US.UTF-8";

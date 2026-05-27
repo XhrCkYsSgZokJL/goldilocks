@@ -432,6 +432,17 @@
     };
     version = "1.0.0";
   };
+  fastlane-plugin-sentry = {
+    dependencies = ["os"];
+    groups = ["default"];
+    platforms = [];
+    source = {
+      remotes = ["https://rubygems.org"];
+      sha256 = "0xqvqrnhgpviqw0zwcnqa49hbgxs5v08mdm1k4jsn2drffff0qz3";
+      type = "gem";
+    };
+    version = "2.5.5";
+  };
   fastlane-sirp = {
     groups = ["default"];
     platforms = [];
