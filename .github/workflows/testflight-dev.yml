@@ -103,14 +103,6 @@ jobs:
           SENTRY_DSN_DEV: ${{ secrets.SENTRY_DSN_DEV }}
         run: ./Scripts/generate-secrets-secure.sh
 
-      - name: Write ASC API key to disk
-        env:
-          ASC_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY }}
-        run: |
-          umask 077
-          mkdir -p "$RUNNER_TEMP/asc"
-          printf '%s' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/asc/key.p8"
-
       - name: Run fastlane testflight_dev
         env:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
@@ -118,17 +110,15 @@ jobs:
           MATCH_GIT_URL: ${{ github.workspace }}/convos-certificates
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          APP_STORE_CONNECT_API_KEY_FILEPATH: ${{ runner.temp }}/asc/key.p8
+          # Passed directly to fastlane's app_store_connect_api_key via key_content;
+          # stays in memory, never written to disk, redacted from logs.
+          APP_STORE_CONNECT_API_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG_SLUG: ${{ vars.SENTRY_ORG_SLUG }}
           SENTRY_PROJECT_SLUG: ${{ vars.SENTRY_PROJECT_SLUG }}
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: fastlane testflight_dev
-
-      - name: Clean up ASC key
-        if: always()
-        run: rm -rf "$RUNNER_TEMP/asc"
 
       - name: Upload IPA artifact
         if: always()
