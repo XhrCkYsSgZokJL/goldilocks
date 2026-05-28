@@ -903,6 +903,13 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
 // MARK: - Quarantine Sweeping
 
 extension SessionManager {
+    /// Thrown when the consent-bump closure outlives its owning
+    /// `SessionManager` (the `Task.detached` fan-out in
+    /// `runQuarantineSweep` can do this). Forces the sweeper to defer
+    /// the row instead of committing a DB promotion whose XMTP-side
+    /// bump never happened.
+    private struct ConsentBumpSessionDeinitError: Error {}
+
     /// Periodic sweeper that promotes quarantined conversations whose
     /// senders have become contacts and deletes those past the TTL. Runs
     /// once at session-observe time and once per `Constant.foregroundSweepInterval`
@@ -913,16 +920,14 @@ extension SessionManager {
             databaseWriter: databaseWriter,
             databaseReader: databaseReader,
             contactsRepository: ContactsRepository(databaseReader: databaseReader),
-            // Bump XMTP-side consent to `.allowed` before the sweeper
-            // commits the DB promotion. Routed through the messaging
-            // service's `XMTPClientProvider`, the same path
-            // `ConversationConsentWriter.join` uses. Throws if the inbox
-            // isn't ready yet (first-launch race), if the XMTP client
-            // can't find the conversation in its local cache, or on any
-            // network error - the sweeper handles those by deferring the
-            // affected row to the next sweep cycle.
+            // Bump XMTP-side consent via the same path
+            // `ConversationConsentWriter.join` uses. Any throw (inbox
+            // not ready, conversation missing from local cache, network
+            // error, session deinit) defers the row to the next sweep.
             consentBumper: { [weak self] conversationId in
-                guard let self else { return }
+                guard let self else {
+                    throw ConsentBumpSessionDeinitError()
+                }
                 let inboxReady = try await self.loadOrCreateService()
                     .sessionStateManager
                     .waitForInboxReadyResult()
