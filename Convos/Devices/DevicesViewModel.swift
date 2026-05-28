@@ -77,15 +77,73 @@ final class DevicesViewModel {
         if !didStartObserving {
             didStartObserving = true
             observers.add(for: .pairingDidCompleteSuccessfully) { [weak self] notification in
-                let name = (notification.userInfo?["joinerDeviceName"] as? String) ?? "New device"
+                let userInfo = notification.userInfo
+                // The initiator's post carries an explicit `isInitiator`
+                // flag (plus the joiner's device name). The joiner's post
+                // has neither. Only the initiator broadcasts the
+                // profile-snapshot fan-out -- the joiner is the one
+                // *receiving* the snapshots, it shouldn't re-send them.
+                let displayName = (userInfo?["joinerDeviceName"] as? String) ?? "New device"
+                let isInitiatorSide = (userInfo?["isInitiator"] as? Bool) ?? false
                 Task { @MainActor in
-                    self?.insertOptimisticDevice(named: name)
-                    await self?.refreshUntilRealInstallationAppears()
+                    guard let self else { return }
+                    self.insertOptimisticDevice(named: displayName)
+                    // Capture the installation baseline BEFORE the refresh
+                    // waits for the joiner -- otherwise the joiner folds
+                    // into the baseline and the broadcaster's diff finds
+                    // nothing new (so it never broadcasts). `nil` means we
+                    // couldn't read a trustworthy baseline; skip the
+                    // broadcast entirely rather than fire it against an
+                    // empty set (which would diff true on the initiator's
+                    // own installation and broadcast before the joiner
+                    // appears).
+                    let baseline = isInitiatorSide ? await self.currentInstallationIds() : nil
+                    await self.refreshUntilRealInstallationAppears()
+                    if isInitiatorSide, let baseline {
+                        await self.broadcastProfileSnapshotsAfterPair(baseline: baseline)
+                    }
                 }
             }
         }
         Task { @MainActor in
             await refreshInstallations(refreshFromNetwork: true)
+        }
+    }
+
+    /// The inbox's currently-known installation IDs (cached, no network
+    /// round-trip) -- used as the pre-refresh baseline for the post-pair
+    /// broadcast so the joiner's not-yet-visible installation is excluded.
+    /// Returns `nil` (not an empty set) when the baseline can't be read,
+    /// so the caller skips the broadcast: an empty baseline would diff
+    /// true against the initiator's own installation and fire the
+    /// broadcast before the joiner ever appears.
+    private func currentInstallationIds() async -> Set<String>? {
+        guard let session else { return nil }
+        do {
+            let snapshot = try await session.messagingService()
+                .installationsSnapshot(refreshFromNetwork: false)
+            return Set(snapshot.installations.map(\.id))
+        } catch {
+            Log.warning("DevicesViewModel: failed to read installation baseline before pairing broadcast: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Initiator-only: once the joiner's installation is visible in our
+    /// inbox, broadcast a fresh `ProfileSnapshot` to every group so the
+    /// joiner's new local DB hydrates each conversation's members
+    /// immediately. `baseline` is the pre-refresh installation set; the
+    /// broadcaster waits for an installation beyond it before sending.
+    /// Falls through silently if the joiner's installation never appears
+    /// within the broadcaster's polling window.
+    private func broadcastProfileSnapshotsAfterPair(baseline: Set<String>) async {
+        guard let session else { return }
+        let broadcaster = PostPairProfileSnapshotBroadcaster(
+            messagingService: session.messagingService()
+        )
+        let didBroadcast = await broadcaster.runAfterPairing(baseline: baseline)
+        if !didBroadcast {
+            Log.warning("DevicesViewModel: post-pair profile broadcast did not run (joiner installation not detected within polling window)")
         }
     }
 

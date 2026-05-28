@@ -35,7 +35,7 @@ extension MessagingServiceProtocol {
     }
 }
 
-public protocol MessagingServiceProtocol: AnyObject, Sendable {
+public protocol MessagingServiceProtocol: AnyObject, Sendable, PostPairBroadcastMessaging {
     var state: MessagingServiceState { get }
     var sessionStateManager: any SessionStateManagerProtocol { get }
 
@@ -116,7 +116,8 @@ public protocol MessagingServiceProtocol: AnyObject, Sendable {
 
     /// Snapshot of the inbox's libxmtp installations (this device plus
     /// any other paired devices). The Devices screen drives off this.
-    func installationsSnapshot(refreshFromNetwork: Bool) async throws -> InstallationsSnapshot
+    /// (`installationsSnapshot` + `broadcastProfileSnapshotsToAllGroups`
+    /// are inherited from `PostPairBroadcastMessaging`.)
 
     /// Revokes every installation other than this device's own. Used by
     /// "Sign out other devices". Returns the installationIds revoked.
