@@ -86,17 +86,6 @@ struct ConversationInfoView: View {
     @State private var metadataDebugText: String = "Loading…"
     @State private var showingRestoreInviteTagAlert: Bool = false
     @State private var restoreInviteTagText: String = ""
-    @State private var seatPlan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
-    @State private var advisoryCoverage: ConvosAPI.GoldilocksBillingStatusResponse?
-    @State private var selectedAdvisoryPerson: SeatMember?
-
-    /// Parses the backend's ISO-8601 `activeUntil` timestamp.
-    private static let coverageDateFormatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-
     private let maxMembersToShow: Int = 6
     private var displayedMembers: [ConversationMember] {
         let sortedMembers = viewModel.conversation.members.sortedByRole()
@@ -303,113 +292,6 @@ struct ConversationInfoView: View {
         }
     }
 
-    /// True when this conversation is the viewer's own Advisory or Reports
-    /// chat — the two places the encrypted people list + coverage are
-    /// surfaced. Both channels carry the same information so the client
-    /// can review it from whichever chat they happen to have open.
-    private var isOwnGoldilocksClientChannel: Bool {
-        guard viewModel.conversation.goldilocksPinnedSection == .client else { return false }
-        let name: String = viewModel.conversation.name ?? ""
-        return name.hasPrefix("Advisory") || name.hasPrefix("Reports")
-    }
-
-    /// Coverage end-date, decrypted-people-list, and billing roll-up.
-    /// Admin-only: clients manage their own roster from the Membership
-    /// screen instead of inside a chat. Limited to the viewer's own
-    /// Advisory / Reports chat because that's the only client list we
-    /// hold locally; an admin who wants to manage a different client
-    /// goes through `AdminChannelsView`.
-    @ViewBuilder
-    private var peopleAndCoverageSection: some View {
-        if isOwnGoldilocksClientChannel && GoldilocksConfig.role == .admin {
-            Section {
-                HStack {
-                    Text("Coverage")
-                        .foregroundStyle(.colorTextPrimary)
-                    Spacer()
-                    Text(coverageSummary)
-                        .font(.footnote)
-                        .foregroundStyle(.colorTextSecondary)
-                }
-                if seatPlan.members.isEmpty {
-                    Text("No people added yet.")
-                        .foregroundStyle(.colorTextSecondary)
-                } else {
-                    ForEach(seatPlan.members) { member in
-                        advisoryPersonRow(member)
-                    }
-                }
-            } header: {
-                Text("People & coverage")
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(.colorTextSecondary)
-            } footer: {
-                Text("Tap a person to view their info or toggle their coverage.")
-                    .font(.caption)
-                    .foregroundStyle(.colorTextSecondary)
-            }
-            .sheet(item: $selectedAdvisoryPerson) { member in
-                AdvisoryPersonSheet(
-                    member: member,
-                    enabled: advisoryEnabledBinding(for: member.id)
-                )
-            }
-        }
-    }
-
-    /// One row per person. Name on the left, a "Disabled" pill under it
-    /// when off the bill, and a chevron on the right. Tapping opens the
-    /// person sheet — the row deliberately doesn't carry the toggle so
-    /// the primary action is unambiguous.
-    private func advisoryPersonRow(_ member: SeatMember) -> some View {
-        let name: String = member.displayName
-        let tapAction = { selectedAdvisoryPerson = member }
-        return Button(action: tapAction) {
-            HStack(spacing: DesignConstants.Spacing.step2x) {
-                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
-                    Text(name)
-                        .font(.body)
-                        .foregroundStyle(.colorTextPrimary)
-                    if !member.enabled {
-                        Text("Disabled")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.colorTextTertiary)
-                    }
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.colorTextTertiary)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    /// Binding the AdvisoryPersonSheet's Toggle reads + writes through.
-    /// Looking the member up by id every read keeps the toggle in lock-
-    /// step with the seat plan even if the snapshot the sheet was
-    /// opened with goes stale.
-    private func advisoryEnabledBinding(for id: UUID) -> Binding<Bool> {
-        Binding(
-            get: { seatPlan.members.first(where: { $0.id == id })?.enabled ?? false },
-            set: { newValue in
-                guard let index = seatPlan.members.firstIndex(where: { $0.id == id }) else { return }
-                seatPlan.members[index].enabled = newValue
-                Task { await viewModel.saveGoldilocksPeopleList() }
-            }
-        )
-    }
-
-    private var coverageSummary: String {
-        guard let coverage = advisoryCoverage else { return "Loading…" }
-        guard let activeUntil = coverage.activeUntil,
-              let date = Self.coverageDateFormatter.date(from: activeUntil) else {
-            return "No active coverage"
-        }
-        return "Active until \(date.formatted(date: .abbreviated, time: .omitted))"
-    }
-
     private var convoRulesSection: some View {
         Section {
             FeatureRowItem(
@@ -471,7 +353,7 @@ struct ConversationInfoView: View {
 
             membersSection
 
-            peopleAndCoverageSection
+            PeopleAndCoverageSection(viewModel: viewModel)
 
             AdminEmeraldTierSection(viewModel: viewModel)
 
@@ -631,21 +513,6 @@ struct ConversationInfoView: View {
                     if FeatureFlags.shared.isCloudConnectionsEnabled, connectionsViewModel == nil {
                         connectionsViewModel = viewModel.makeConversationConnectionsViewModel()
                     }
-                }
-                .task {
-                    if isOwnGoldilocksClientChannel {
-                        advisoryCoverage = await viewModel.loadGoldilocksAdvisoryInfo()
-                    }
-                }
-                .task {
-                    // Admin-only: if this is a client Advisory chat,
-                    // pull the matching admin-channel row so the
-                    // Emerald toggle can show the current state +
-                    // resolve the target client's inbox id.
-                    guard GoldilocksConfig.role == .admin else { return }
-                    let name: String = viewModel.conversation.name ?? ""
-                    guard name.hasPrefix("Advisory") else { return }
-                    adminAdvisoryChannel = await viewModel.loadAdminChannelForCurrentConversation()
                 }
                 .alert("Restore invite tag", isPresented: $showingRestoreInviteTagAlert) {
                     TextField("Invite tag", text: $restoreInviteTagText)
@@ -962,4 +829,236 @@ private struct AdvisoryPersonSheet: View {
     @Previewable @State var viewModel: ConversationViewModel = .mock
     @Previewable @State var focusCoordinator: FocusCoordinator = FocusCoordinator(horizontalSizeClass: nil)
     ConversationInfoView(viewModel: viewModel, focusCoordinator: focusCoordinator)
+}
+
+/// Admin-only Emerald toggle that appears at the top of a client
+/// Advisory chat's info screen. Extracted into its own view so
+/// `ConversationInfoView` stays under SwiftLint's type-body-length
+/// cap, and so the section's state (the fetched admin-channel row +
+/// the toggle's in-flight saving / error flags) doesn't pollute the
+/// parent's already-large state surface. Self-loads its data on
+/// appear and self-refetches after every toggle.
+private struct AdminEmeraldTierSection: View {
+    let viewModel: ConversationViewModel
+
+    @State private var channel: ConvosAPI.GoldilocksAdminChannel?
+    @State private var saving: Bool = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if GoldilocksConfig.role == .admin, let channel {
+                Section {
+                    toggleRow(for: channel)
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                } header: {
+                    Text("Tier override")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.colorTextSecondary)
+                } footer: {
+                    Text("Emerald overrides the automatic Bronze/Silver/Gold tier for Client #\(channel.clientNumber). Any admin can flip it.")
+                        .font(.caption)
+                        .foregroundStyle(.colorTextSecondary)
+                }
+            }
+        }
+        .task { await loadChannelIfAdmin() }
+    }
+
+    @ViewBuilder
+    private func toggleRow(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
+        HStack {
+            Text("Emerald membership")
+                .foregroundStyle(.colorTextPrimary)
+            Spacer()
+            if saving {
+                ProgressView()
+            } else {
+                Toggle("", isOn: binding(for: channel))
+                    .labelsHidden()
+            }
+        }
+    }
+
+    private func binding(for channel: ConvosAPI.GoldilocksAdminChannel) -> Binding<Bool> {
+        Binding(
+            get: { channel.emeraldMembershipEnabled },
+            set: { newValue in
+                Task { await setEmerald(to: newValue, for: channel) }
+            }
+        )
+    }
+
+    /// Pull the admin-channel row matching this conversation's xmtp
+    /// group id. Non-admin viewers and non-Advisory chats bail before
+    /// hitting the network.
+    private func loadChannelIfAdmin() async {
+        guard GoldilocksConfig.role == .admin else { return }
+        let name: String = viewModel.conversation.name ?? ""
+        guard name.hasPrefix("Advisory") else { return }
+        channel = await viewModel.loadAdminChannelForCurrentConversation()
+    }
+
+    private func setEmerald(
+        to newValue: Bool,
+        for channel: ConvosAPI.GoldilocksAdminChannel
+    ) async {
+        saving = true
+        errorMessage = nil
+        let result: Bool? = await viewModel.setAdvisoryEmeraldMembership(
+            clientInboxId: channel.clientInboxId,
+            enabled: newValue
+        )
+        if result != nil {
+            // Refetch so the toggle reflects what actually landed on
+            // the backend (handles the no-op fast path too).
+            self.channel = await viewModel.loadAdminChannelForCurrentConversation()
+        } else {
+            errorMessage = "Couldn't update Emerald membership."
+        }
+        saving = false
+    }
+}
+
+/// Coverage end-date + decrypted-people-list section that appears in
+/// an admin's view of their own Advisory or Reports chat. Extracted
+/// from `ConversationInfoView` so the parent struct stays under the
+/// type-body-length cap and the section's transient state
+/// (the loaded billing snapshot + the in-flight person sheet) stops
+/// polluting the parent's already-large @State surface.
+///
+/// Limited to the viewer's own client channels because that's the
+/// only people list we hold the decryption key for locally — an
+/// admin who wants to manage a different client goes through
+/// `AdminChannelsView` → `AdminClientPeopleListView`.
+private struct PeopleAndCoverageSection: View {
+    let viewModel: ConversationViewModel
+
+    @State private var seatPlan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
+    @State private var coverage: ConvosAPI.GoldilocksBillingStatusResponse?
+    @State private var selectedPerson: SeatMember?
+
+    /// Parses the backend's ISO-8601 `activeUntil` timestamp.
+    private static let coverageDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    var body: some View {
+        Group {
+            if shouldShow {
+                Section {
+                    coverageRow
+                    if seatPlan.members.isEmpty {
+                        Text("No people added yet.")
+                            .foregroundStyle(.colorTextSecondary)
+                    } else {
+                        ForEach(seatPlan.members) { member in
+                            personRow(member)
+                        }
+                    }
+                } header: {
+                    Text("People & coverage")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.colorTextSecondary)
+                } footer: {
+                    Text("Tap a person to view their info or toggle their coverage.")
+                        .font(.caption)
+                        .foregroundStyle(.colorTextSecondary)
+                }
+                .sheet(item: $selectedPerson) { member in
+                    AdvisoryPersonSheet(
+                        member: member,
+                        enabled: enabledBinding(for: member.id)
+                    )
+                }
+            }
+        }
+        .task {
+            if shouldShow {
+                coverage = await viewModel.loadGoldilocksAdvisoryInfo()
+            }
+        }
+    }
+
+    /// True when this conversation is the viewer's own Advisory or
+    /// Reports chat — both carry the same information so the client
+    /// can review it from whichever chat they happen to have open.
+    /// Admin-only because clients manage their own roster from the
+    /// Membership screen instead of inside a chat.
+    private var shouldShow: Bool {
+        guard GoldilocksConfig.role == .admin else { return false }
+        guard viewModel.conversation.goldilocksPinnedSection == .client else { return false }
+        let name: String = viewModel.conversation.name ?? ""
+        return name.hasPrefix("Advisory") || name.hasPrefix("Reports")
+    }
+
+    private var coverageRow: some View {
+        HStack {
+            Text("Coverage")
+                .foregroundStyle(.colorTextPrimary)
+            Spacer()
+            Text(coverageSummary)
+                .font(.footnote)
+                .foregroundStyle(.colorTextSecondary)
+        }
+    }
+
+    private var coverageSummary: String {
+        guard let coverage else { return "Loading…" }
+        guard let activeUntil = coverage.activeUntil,
+              let date = Self.coverageDateFormatter.date(from: activeUntil) else {
+            return "No active coverage"
+        }
+        return "Active until \(date.formatted(date: .abbreviated, time: .omitted))"
+    }
+
+    /// One row per person. Name on the left, a "Disabled" pill under
+    /// it when off the bill, and a chevron on the right. Tapping
+    /// opens the person sheet — the row deliberately doesn't carry
+    /// the toggle so the primary action is unambiguous.
+    private func personRow(_ member: SeatMember) -> some View {
+        let name: String = member.displayName
+        let tapAction = { selectedPerson = member }
+        return Button(action: tapAction) {
+            HStack(spacing: DesignConstants.Spacing.step2x) {
+                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                    Text(name)
+                        .font(.body)
+                        .foregroundStyle(.colorTextPrimary)
+                    if !member.enabled {
+                        Text("Disabled")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.colorTextTertiary)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.colorTextTertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Binding the AdvisoryPersonSheet's Toggle reads + writes
+    /// through. Looking the member up by id every read keeps the
+    /// toggle in lock-step with the seat plan even if the snapshot
+    /// the sheet was opened with goes stale.
+    private func enabledBinding(for id: UUID) -> Binding<Bool> {
+        Binding(
+            get: { seatPlan.members.first(where: { $0.id == id })?.enabled ?? false },
+            set: { newValue in
+                guard let index = seatPlan.members.firstIndex(where: { $0.id == id }) else { return }
+                seatPlan.members[index].enabled = newValue
+                Task { await viewModel.saveGoldilocksPeopleList() }
+            }
+        )
+    }
 }
