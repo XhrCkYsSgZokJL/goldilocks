@@ -28,15 +28,22 @@ public enum GoldilocksAuth {
         public let clientNumber: Int64
         public let isAdmin: Bool
         public let inboxId: String
+        /// Admin-controlled Emerald membership flag. Drives the
+        /// client's tier badge + locks the Membership screen's
+        /// "Add coverage" purchase flow (Emerald is granted, not
+        /// bought) while unlocking the Invoices section.
+        public let emeraldMembershipEnabled: Bool
 
         public init(
             clientNumber: Int64,
             isAdmin: Bool,
-            inboxId: String
+            inboxId: String,
+            emeraldMembershipEnabled: Bool = false
         ) {
             self.clientNumber = clientNumber
             self.isAdmin = isAdmin
             self.inboxId = inboxId
+            self.emeraldMembershipEnabled = emeraldMembershipEnabled
         }
 
         /// Build an identity from the backend's `/v2/me` response.
@@ -44,6 +51,7 @@ public enum GoldilocksAuth {
             self.clientNumber = response.clientNumber
             self.isAdmin = response.isAdmin
             self.inboxId = response.inboxId
+            self.emeraldMembershipEnabled = response.emeraldMembershipEnabled
         }
     }
 

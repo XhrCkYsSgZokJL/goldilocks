@@ -1684,6 +1684,38 @@ extension ConversationViewModel {
     func saveGoldilocksPeopleList() async {
         await GoldilocksSeatPlan.shared.saveToBackend(session: session)
     }
+
+    /// Goldilocks (admin): fetch the admin's view of a single client's
+    /// channel matching this conversation's xmtp group id. Used by the
+    /// chat info view's Emerald toggle so it can read the current
+    /// state + resolve the target client's inbox id.
+    func loadAdminChannelForCurrentConversation() async -> ConvosAPI.GoldilocksAdminChannel? {
+        let conversationId: String = conversation.id
+        do {
+            let channels: [ConvosAPI.GoldilocksAdminChannel] = try await session.fetchAdminChannels()
+            return channels.first(where: { $0.xmtpGroupId == conversationId })
+        } catch {
+            return nil
+        }
+    }
+
+    /// Goldilocks (admin): flip the Emerald flag on a client. Wraps
+    /// the session call so the chat info view doesn't need its own
+    /// session handle. Returns the new state, or nil on failure.
+    func setAdvisoryEmeraldMembership(
+        clientInboxId: String,
+        enabled: Bool
+    ) async -> Bool? {
+        do {
+            let response = try await session.setEmeraldMembership(
+                clientInboxId: clientInboxId,
+                enabled: enabled
+            )
+            return response.emeraldMembershipEnabled
+        } catch {
+            return nil
+        }
+    }
 }
 
 extension ConversationViewModel {

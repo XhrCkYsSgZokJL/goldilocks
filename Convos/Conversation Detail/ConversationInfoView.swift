@@ -473,6 +473,8 @@ struct ConversationInfoView: View {
 
             peopleAndCoverageSection
 
+            AdminEmeraldTierSection(viewModel: viewModel)
+
             assistantSection
 
             if FeatureFlags.shared.isCloudConnectionsEnabled,
@@ -634,6 +636,16 @@ struct ConversationInfoView: View {
                     if isOwnGoldilocksClientChannel {
                         advisoryCoverage = await viewModel.loadGoldilocksAdvisoryInfo()
                     }
+                }
+                .task {
+                    // Admin-only: if this is a client Advisory chat,
+                    // pull the matching admin-channel row so the
+                    // Emerald toggle can show the current state +
+                    // resolve the target client's inbox id.
+                    guard GoldilocksConfig.role == .admin else { return }
+                    let name: String = viewModel.conversation.name ?? ""
+                    guard name.hasPrefix("Advisory") else { return }
+                    adminAdvisoryChannel = await viewModel.loadAdminChannelForCurrentConversation()
                 }
                 .alert("Restore invite tag", isPresented: $showingRestoreInviteTagAlert) {
                     TextField("Invite tag", text: $restoreInviteTagText)
@@ -826,7 +838,7 @@ private struct ConversationPreferencesSection: View {
     }
 }
 
-/// Admin-side companion to the client's `MemberEditSheet`. Name and
+/// Admin-side companion to the client's `PersonEditorSheet`. Name and
 /// email are owned by the client (set when they verify the person), so
 /// both are read-only here. The one admin lever is the enabled toggle,
 /// which acts as a kill switch on the third-party subscription and the

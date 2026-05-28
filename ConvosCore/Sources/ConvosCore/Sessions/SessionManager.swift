@@ -564,8 +564,21 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         try await apiClient.fetchAdminPeopleList(clientInboxId: clientInboxId)
     }
 
-    public func saveAdminPeopleList(clientInboxId: String, ciphertext: String, salt: String, nonce: String, baseVersion: Int) async throws -> Int {
-        let request = ConvosAPI.GoldilocksPeopleListSaveRequest(ciphertext: ciphertext, salt: salt, nonce: nonce, baseVersion: baseVersion)
+    public func saveAdminPeopleList(
+        clientInboxId: String,
+        ciphertext: String,
+        salt: String,
+        nonce: String,
+        baseVersion: Int,
+        auditHint: ConvosAPI.GoldilocksPeopleListSaveRequest.AuditHint? = nil
+    ) async throws -> Int {
+        let request = ConvosAPI.GoldilocksPeopleListSaveRequest(
+            ciphertext: ciphertext,
+            salt: salt,
+            nonce: nonce,
+            baseVersion: baseVersion,
+            auditHint: auditHint
+        )
         let response = try await apiClient.saveAdminPeopleList(clientInboxId: clientInboxId, request)
         return response.version
     }
@@ -593,6 +606,19 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
     public func fetchAdminChannels() async throws -> [ConvosAPI.GoldilocksAdminChannel] {
         let response = try await apiClient.fetchGoldilocksAdminChannels()
         return response.channels
+    }
+
+    /// Admin: flip the Emerald membership flag on a client. Returns
+    /// the new state; the backend posts an audit-log line if the
+    /// flag actually changed.
+    public func setEmeraldMembership(
+        clientInboxId: String,
+        enabled: Bool
+    ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
+        try await apiClient.setGoldilocksEmeraldMembership(
+            clientInboxId: clientInboxId,
+            enabled: enabled
+        )
     }
 
     public func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws {

@@ -164,6 +164,15 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// so the admin home screen can render "Advisory #55", "Reports #56" etc.
     func fetchAdminChannels() async throws -> [ConvosAPI.GoldilocksAdminChannel]
 
+    /// Admin-only. Flip the Emerald membership flag on a client. The
+    /// backend posts an "Admin #N enabled/disabled Emerald membership
+    /// for Client #M" line to the audit log when the flag actually
+    /// changes.
+    func setEmeraldMembership(
+        clientInboxId: String,
+        enabled: Bool
+    ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse
+
     // MARK: Goldilocks channel lifecycle
 
     /// Register a freshly-created XMTP group as the (role, this client)
@@ -217,8 +226,17 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     func fetchAdminPeopleList(clientInboxId: String) async throws -> ConvosAPI.GoldilocksPeopleListResponse
 
     /// Admin: replace a client's encrypted people-list blob. Returns the
-    /// new stored version; throws on a version conflict.
-    func saveAdminPeopleList(clientInboxId: String, ciphertext: String, salt: String, nonce: String, baseVersion: Int) async throws -> Int
+    /// new stored version; throws on a version conflict. The optional
+    /// `auditHint` tags the write so the backend can record a per-person
+    /// enable/disable line in the audit log.
+    func saveAdminPeopleList(
+        clientInboxId: String,
+        ciphertext: String,
+        salt: String,
+        nonce: String,
+        baseVersion: Int,
+        auditHint: ConvosAPI.GoldilocksPeopleListSaveRequest.AuditHint?
+    ) async throws -> Int
 }
 
 extension SessionManagerProtocol {
@@ -289,7 +307,14 @@ extension SessionManagerProtocol {
         ConvosAPI.GoldilocksPeopleListResponse(version: 0, ciphertext: nil, salt: nil, nonce: nil)
     }
 
-    public func saveAdminPeopleList(clientInboxId: String, ciphertext: String, salt: String, nonce: String, baseVersion: Int) async throws -> Int {
+    public func saveAdminPeopleList(
+        clientInboxId: String,
+        ciphertext: String,
+        salt: String,
+        nonce: String,
+        baseVersion: Int,
+        auditHint: ConvosAPI.GoldilocksPeopleListSaveRequest.AuditHint?
+    ) async throws -> Int {
         baseVersion + 1
     }
 
@@ -311,6 +336,17 @@ extension SessionManagerProtocol {
 
     public func fetchAdminChannels() async throws -> [ConvosAPI.GoldilocksAdminChannel] {
         []
+    }
+
+    public func setEmeraldMembership(
+        clientInboxId: String,
+        enabled: Bool
+    ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
+        ConvosAPI.GoldilocksEmeraldToggleResponse(
+            clientNumber: 0,
+            emeraldMembershipEnabled: enabled,
+            changed: false
+        )
     }
 
     // Default channel-lifecycle no-ops for mocks/tests.

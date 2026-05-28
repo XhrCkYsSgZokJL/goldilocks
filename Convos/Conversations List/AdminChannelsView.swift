@@ -144,7 +144,8 @@ struct AdminChannelsView: View {
         let rowOpacity: Double = isExploded ? 0.5 : 1.0
         let tier: GoldilocksMembershipTier = GoldilocksMembershipTier(
             monthlyRateCents: channel.monthlyRateCents,
-            hasActiveCoverage: channel.coverageActive
+            hasActiveCoverage: channel.coverageActive,
+            emeraldEnabled: channel.emeraldMembershipEnabled
         )
         let tierColor: Color = isAdvisory ? tier.accentColor : .colorTextTertiary
         return HStack(spacing: DesignConstants.Spacing.step3x) {
@@ -181,7 +182,8 @@ struct AdminChannelsView: View {
         guard channel.role == "advisory" else { return .clear }
         let tier: GoldilocksMembershipTier = GoldilocksMembershipTier(
             monthlyRateCents: channel.monthlyRateCents,
-            hasActiveCoverage: channel.coverageActive
+            hasActiveCoverage: channel.coverageActive,
+            emeraldEnabled: channel.emeraldMembershipEnabled
         )
         return tier.tintColor
     }

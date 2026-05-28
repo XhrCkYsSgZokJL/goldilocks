@@ -80,6 +80,10 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse
     func fetchGoldilocksAgents() async throws -> ConvosAPI.GoldilocksAgentsResponse
     func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse
+    func setGoldilocksEmeraldMembership(
+        clientInboxId: String,
+        enabled: Bool
+    ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse
 
     // Goldilocks channel lifecycle.
     func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse
@@ -788,6 +792,25 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
 
     func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse {
         let request = try authenticatedRequest(for: "v2/admin/channels", method: "GET")
+        return try await performRequest(request)
+    }
+
+    /// Toggle a client's admin-controlled Emerald membership flag.
+    /// Admin-only; the backend posts an "Admin #N enabled/disabled
+    /// Emerald membership for Client #M" line to the audit log on
+    /// any state change.
+    func setGoldilocksEmeraldMembership(
+        clientInboxId: String,
+        enabled: Bool
+    ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
+        var request = try authenticatedRequest(
+            for: "v2/admin/clients/\(clientInboxId)/emerald",
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            ConvosAPI.GoldilocksEmeraldToggleRequest(enabled: enabled)
+        )
         return try await performRequest(request)
     }
 

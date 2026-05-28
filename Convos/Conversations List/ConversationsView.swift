@@ -115,14 +115,21 @@ struct ConversationsView: View {
         .glassEffect(.regular, in: Capsule())
     }
 
-    /// The client's Bronze/Silver/Gold membership tier, shown as a chip
-    /// beside the role chip. Bronze is the free tier; Silver and Gold
-    /// require active coverage, set by the active-member count.
+    /// The viewer's Bronze/Silver/Gold/Emerald membership tier, shown as
+    /// a chip beside the role chip. Bronze is the free tier; Silver and
+    /// Gold require active coverage, set by the active-member count.
+    /// Emerald is an admin-controlled override that trumps the
+    /// automatic rules — driven by the `emeraldMembershipEnabled` flag
+    /// the backend returns on `/v2/me`. Without this override the chip
+    /// stays on whatever the seats + coverage math produces, so admins
+    /// who are also Emerald-tier clients still see the Emerald badge.
     private var membershipTier: GoldilocksMembershipTier {
         let plan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
+        let emerald: Bool = GoldilocksSession.shared.identity?.emeraldMembershipEnabled ?? false
         return GoldilocksMembershipTier(
             activeMembers: plan.billableSeatCount,
-            hasActiveCoverage: plan.coverageActive
+            hasActiveCoverage: plan.coverageActive,
+            emeraldEnabled: emerald
         )
     }
 

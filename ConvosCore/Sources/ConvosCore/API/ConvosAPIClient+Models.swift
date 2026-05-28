@@ -245,15 +245,36 @@ public enum ConvosAPI {
         public let clientNumber: Int64
         public let isAdmin: Bool
         public let inboxId: String
+        /// Admin-controlled Emerald membership flag for this client.
+        /// Default false so older backend responses (pre-migration 015)
+        /// still decode cleanly. Emerald clients get the Emerald tier
+        /// regardless of seats / coverage, and the Membership screen
+        /// hides the "Add coverage" purchase flow + enables Invoices.
+        public let emeraldMembershipEnabled: Bool
 
         public init(
             clientNumber: Int64,
             isAdmin: Bool,
-            inboxId: String
+            inboxId: String,
+            emeraldMembershipEnabled: Bool = false
         ) {
             self.clientNumber = clientNumber
             self.isAdmin = isAdmin
             self.inboxId = inboxId
+            self.emeraldMembershipEnabled = emeraldMembershipEnabled
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case clientNumber, isAdmin, inboxId, emeraldMembershipEnabled
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.clientNumber = try container.decode(Int64.self, forKey: .clientNumber)
+            self.isAdmin = try container.decode(Bool.self, forKey: .isAdmin)
+            self.inboxId = try container.decode(String.self, forKey: .inboxId)
+            // Tolerate older backends that don't yet return this field.
+            self.emeraldMembershipEnabled = try container.decodeIfPresent(Bool.self, forKey: .emeraldMembershipEnabled) ?? false
         }
     }
 
@@ -343,6 +364,24 @@ public enum ConvosAPI {
         /// Whether the client currently has active prepaid coverage. A
         /// client only reaches Silver or Gold while this is true.
         public let coverageActive: Bool
+        /// Admin-controlled Emerald override. When true, the tier is
+        /// Emerald regardless of `monthlyRateCents` / `coverageActive`.
+        public let emeraldMembershipEnabled: Bool
+    }
+
+    /// Body for `POST /v2/admin/clients/:inboxId/emerald` — admins
+    /// toggle a client's Emerald membership status.
+    public struct GoldilocksEmeraldToggleRequest: Codable, Sendable {
+        public let enabled: Bool
+        public init(enabled: Bool) { self.enabled = enabled }
+    }
+
+    /// Response for the Emerald toggle endpoint. `changed` is false
+    /// when the requested state matched what was already stored.
+    public struct GoldilocksEmeraldToggleResponse: Codable, Sendable {
+        public let clientNumber: Int64
+        public let emeraldMembershipEnabled: Bool
+        public let changed: Bool
     }
 
     public struct GoldilocksAdminChannelsResponse: Codable, Sendable {
@@ -440,18 +479,37 @@ public enum ConvosAPI {
     }
 
     /// Body for `PUT /v2/me/people-list` — the re-encrypted blob plus the
-    /// version it was edited from (optimistic concurrency).
+    /// version it was edited from (optimistic concurrency). `auditHint`
+    /// is only honoured by the admin variant of the endpoint; it tags
+    /// the write so the backend can post a narrative line ("Admin #N
+    /// enabled/disabled someone on Client #M") to the audit log
+    /// without ever seeing the plaintext list.
     public struct GoldilocksPeopleListSaveRequest: Codable, Sendable {
         public let ciphertext: String
         public let salt: String
         public let nonce: String
         public let baseVersion: Int
+        public let auditHint: AuditHint?
 
-        public init(ciphertext: String, salt: String, nonce: String, baseVersion: Int) {
+        public struct AuditHint: Codable, Sendable, Equatable {
+            public let action: String
+            public init(action: String) { self.action = action }
+            public static let enablePerson: AuditHint = AuditHint(action: "enable_person")
+            public static let disablePerson: AuditHint = AuditHint(action: "disable_person")
+        }
+
+        public init(
+            ciphertext: String,
+            salt: String,
+            nonce: String,
+            baseVersion: Int,
+            auditHint: AuditHint? = nil
+        ) {
             self.ciphertext = ciphertext
             self.salt = salt
             self.nonce = nonce
             self.baseVersion = baseVersion
+            self.auditHint = auditHint
         }
     }
 

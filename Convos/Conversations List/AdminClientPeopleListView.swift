@@ -27,6 +27,11 @@ struct AdminClientPeopleListView: View {
     @State private var statusMessage: String?
     @State private var savingMemberIds: Set<UUID> = []
     @State private var expandedMemberId: UUID?
+    /// Local mirror of the client's admin-controlled Emerald status.
+    /// Seeded from `channel.emeraldMembershipEnabled` on appear, then
+    /// updated optimistically when the admin flips the toggle.
+    @State private var emeraldEnabled: Bool = false
+    @State private var emeraldSaving: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -63,6 +68,7 @@ struct AdminClientPeopleListView: View {
                         .foregroundStyle(.colorTextSecondary)
                 }
             }
+            emeraldSection
             if members.isEmpty {
                 Section {
                     Text("This client has no people on their plan yet.")
@@ -72,6 +78,57 @@ struct AdminClientPeopleListView: View {
             membersSection(title: "Enabled", people: enabled, footer: enabledFooter)
             membersSection(title: "Disabled", people: disabled, footer: disabledFooter)
         }
+    }
+
+    /// Admin-only Emerald membership override. Toggling fires the
+    /// backend endpoint, which posts an "Admin #N enabled/disabled
+    /// Emerald membership for Client #M" line to the audit log on
+    /// any state change. Any admin can flip it.
+    private var emeraldSection: some View {
+        Section {
+            HStack {
+                Text("Emerald membership")
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+                if emeraldSaving {
+                    ProgressView()
+                } else {
+                    Toggle("", isOn: emeraldBinding)
+                        .labelsHidden()
+                }
+            }
+        } header: {
+            Text("Membership")
+        } footer: {
+            Text("Emerald overrides the automatic Bronze/Silver/Gold tier for this client. Any admin can flip it.")
+        }
+    }
+
+    private var emeraldBinding: Binding<Bool> {
+        Binding(
+            get: { emeraldEnabled },
+            set: { newValue in
+                Task { await setEmerald(to: newValue) }
+            }
+        )
+    }
+
+    private func setEmerald(to newValue: Bool) async {
+        let previous: Bool = emeraldEnabled
+        emeraldEnabled = newValue
+        emeraldSaving = true
+        statusMessage = nil
+        do {
+            let response = try await session.setEmeraldMembership(
+                clientInboxId: channel.clientInboxId,
+                enabled: newValue
+            )
+            emeraldEnabled = response.emeraldMembershipEnabled
+        } catch {
+            emeraldEnabled = previous
+            statusMessage = "Couldn't update Emerald membership: \(error.localizedDescription)"
+        }
+        emeraldSaving = false
     }
 
     private var enabledFooter: String {
@@ -172,6 +229,9 @@ struct AdminClientPeopleListView: View {
     private func load() async {
         isLoading = true
         statusMessage = nil
+        // Seed Emerald from the channel snapshot we were handed, so the
+        // toggle shows the right state before any network round-trip.
+        emeraldEnabled = channel.emeraldMembershipEnabled
         guard let groupId = channel.xmtpGroupId else {
             statusMessage = "This client's Advisory chat isn't ready yet."
             isLoading = false
@@ -197,21 +257,35 @@ struct AdminClientPeopleListView: View {
     }
 
     /// Flip a person's enabled flag, re-encrypt the list, and save it.
-    /// On success, posts an audit line into the client's Advisory chat.
+    /// On success, posts an audit line into the client's Advisory chat
+    /// (visible to the client + every admin in that chat) AND tags the
+    /// save with an `auditHint` so the backend records a generic
+    /// "Admin #N enabled/disabled someone on Client #M" line in the
+    /// alerts audit log (no identity revealed there).
     private func setEnabled(_ member: SeatMember, to newValue: Bool) async {
         guard let groupId = channel.xmtpGroupId else { return }
         guard let index = members.firstIndex(where: { $0.id == member.id }) else { return }
         var updated: [SeatMember] = members
         updated[index].enabled = newValue
         let auditLine: String = GoldilocksPeopleAudit.enabledLine(for: updated[index], enabled: newValue)
-        await saveMemberChange(updated: updated, memberId: member.id, groupId: groupId, auditLine: auditLine)
+        let hint: ConvosAPI.GoldilocksPeopleListSaveRequest.AuditHint = newValue
+            ? .enablePerson
+            : .disablePerson
+        await saveMemberChange(
+            updated: updated,
+            memberId: member.id,
+            groupId: groupId,
+            auditLine: auditLine,
+            auditHint: hint
+        )
     }
 
     private func saveMemberChange(
         updated: [SeatMember],
         memberId: UUID,
         groupId: String,
-        auditLine: String?
+        auditLine: String?,
+        auditHint: ConvosAPI.GoldilocksPeopleListSaveRequest.AuditHint?
     ) async {
         savingMemberIds.insert(memberId)
         statusMessage = nil
@@ -223,7 +297,8 @@ struct AdminClientPeopleListView: View {
                 ciphertext: blob.ciphertext,
                 salt: blob.salt,
                 nonce: blob.nonce,
-                baseVersion: listVersion
+                baseVersion: listVersion,
+                auditHint: auditHint
             )
             members = updated
             listVersion = newVersion
