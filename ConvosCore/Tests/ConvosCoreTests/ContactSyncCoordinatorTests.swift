@@ -426,24 +426,35 @@ struct ContactSyncCoordinatorTests {
             )
         }
 
-        let recorder = SyncNotificationRecorder(name: .contactsWereAdded)
+        // Private center so other suites posting on `.default` cannot leak in.
+        let center = NotificationCenter()
+        let recorder = SyncNotificationRecorder(name: .contactsWereAdded, center: center)
 
         let coordinator = ContactSyncCoordinator(
             databaseWriter: dbManager.dbWriter,
-            databaseReader: dbManager.dbReader
+            databaseReader: dbManager.dbReader,
+            notificationCenter: center
         )
         try await coordinator.syncContactsOnFirstMessage(for: conversationId)
 
-        // Allow the main-queue dispatch from `postContactsWereAdded` to drain.
-        try await Task.sleep(nanoseconds: 30_000_000)
+        // Wait for the main-queue dispatch from `postContactsWereAdded` to
+        // land. Polling beats a fixed sleep because the dispatch latency
+        // varies under CI load.
+        try await waitUntil(timeout: .seconds(2)) {
+            recorder.notifications.count >= 1
+        }
 
         #expect(recorder.notifications.count == 1, "Batch sync must coalesce N inserts into one notification")
         let payload = recorder.notifications.first?.userInfo?["inboxIds"] as? [String] ?? []
         #expect(Set(payload) == Set(["alice", "bob", "carol"]))
 
-        // Second sync is a no-op (already-synced) and must not re-fire.
+        // Second sync is a no-op (already-synced) and must not re-fire. Use
+        // a happens-after sentinel: post a marker on the same center after
+        // the no-op call, wait for the sentinel, then assert no second
+        // `contactsWereAdded` arrived. Polling for the absence of a
+        // notification would be a race; the sentinel pattern is not.
         try await coordinator.syncContactsOnFirstMessage(for: conversationId)
-        try await Task.sleep(nanoseconds: 30_000_000)
+        try await flush(center: center)
         #expect(recorder.notifications.count == 1)
 
         recorder.stop()
@@ -479,14 +490,21 @@ struct ContactSyncCoordinatorTests {
             ).save(db)
         }
 
-        let recorder = SyncNotificationRecorder(name: .contactsWereAdded)
+        let center = NotificationCenter()
+        let recorder = SyncNotificationRecorder(name: .contactsWereAdded, center: center)
 
         let coordinator = ContactSyncCoordinator(
             databaseWriter: dbManager.dbWriter,
-            databaseReader: dbManager.dbReader
+            databaseReader: dbManager.dbReader,
+            notificationCenter: center
         )
         try await coordinator.syncContactsOnFirstMessage(for: conversationId)
-        try await Task.sleep(nanoseconds: 30_000_000)
+
+        // Happens-after sentinel: any real `contactsWereAdded` post from the
+        // sync above would have been dispatched to the main queue before
+        // the sentinel post we make here, so once the sentinel arrives the
+        // recorder has seen everything the sync could have produced.
+        try await flush(center: center)
 
         #expect(recorder.notifications.isEmpty, "No new contact rows, so no sweep-trigger should fire")
 
@@ -494,30 +512,78 @@ struct ContactSyncCoordinatorTests {
     }
 }
 
+/// Posts a sentinel notification on `center` and awaits its delivery on the
+/// main queue. Use this in tests that need to assert "nothing happened":
+/// because `postContactsWereAdded` dispatches to the main queue, any real
+/// post made before this call lands on the queue before the sentinel.
+private func flush(center: NotificationCenter) async throws {
+    let sentinelName = Notification.Name("ContactSyncCoordinatorTests.Sentinel.\(UUID().uuidString)")
+    let arrived = SentinelLatch()
+    let token = center.addObserver(forName: sentinelName, object: nil, queue: nil) { _ in
+        arrived.fire()
+    }
+    defer { center.removeObserver(token) }
+
+    await MainActor.run {
+        center.post(name: sentinelName, object: nil)
+    }
+    try await waitUntil(timeout: .seconds(2)) { arrived.didFire }
+}
+
+private final class SentinelLatch: @unchecked Sendable {
+    private let lock: NSLock = NSLock()
+    private var _didFire: Bool = false
+
+    var didFire: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _didFire
+    }
+
+    func fire() {
+        lock.lock()
+        _didFire = true
+        lock.unlock()
+    }
+}
+
 /// Local copy of the recorder used by `ContactsWriterTests`. Kept private
 /// to this file so each test file can opt into the helper without coupling
 /// suites to a shared scaffolding module.
+///
+/// The recorder is bound to a specific `NotificationCenter` so callers can
+/// scope it to a private center and avoid cross-suite leakage through
+/// `.default`. The `lock`-guarded array makes concurrent appends safe when
+/// the center delivers to its own queue.
 private final class SyncNotificationRecorder: @unchecked Sendable {
-    private(set) var notifications: [Notification] = []
+    private let center: NotificationCenter
+    private var _notifications: [Notification] = []
     private var token: NSObjectProtocol?
     private let lock: NSLock = NSLock()
 
-    init(name: Notification.Name) {
-        token = NotificationCenter.default.addObserver(
+    var notifications: [Notification] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _notifications
+    }
+
+    init(name: Notification.Name, center: NotificationCenter = .default) {
+        self.center = center
+        token = center.addObserver(
             forName: name,
             object: nil,
             queue: nil
         ) { [weak self] notification in
             guard let self else { return }
             self.lock.lock()
-            self.notifications.append(notification)
+            self._notifications.append(notification)
             self.lock.unlock()
         }
     }
 
     func stop() {
         if let token {
-            NotificationCenter.default.removeObserver(token)
+            center.removeObserver(token)
             self.token = nil
         }
     }

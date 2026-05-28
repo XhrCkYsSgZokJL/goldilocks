@@ -30,6 +30,7 @@ public protocol ContactSyncCoordinatorProtocol: Sendable {
 final class ContactSyncCoordinator: ContactSyncCoordinatorProtocol, @unchecked Sendable {
     private let databaseWriter: any DatabaseWriter
     private let databaseReader: any DatabaseReader
+    private let notificationCenter: NotificationCenter
 
     /// Closure that returns the local user's `inboxId`. Called within the
     /// sync transaction so the lookup hits the same snapshot as the member
@@ -41,10 +42,12 @@ final class ContactSyncCoordinator: ContactSyncCoordinatorProtocol, @unchecked S
     init(
         databaseWriter: any DatabaseWriter,
         databaseReader: any DatabaseReader,
+        notificationCenter: NotificationCenter = .default,
         selfInboxIdProvider: @escaping @Sendable (Database) throws -> String? = ContactSyncCoordinator.defaultSelfInboxIdProvider
     ) {
         self.databaseWriter = databaseWriter
         self.databaseReader = databaseReader
+        self.notificationCenter = notificationCenter
         self.selfInboxIdProvider = selfInboxIdProvider
     }
 
@@ -183,6 +186,9 @@ final class ContactSyncCoordinator: ContactSyncCoordinatorProtocol, @unchecked S
         // observer in `SessionManager` runs against committed contact rows.
         // A single notification per batch coalesces the whole group sync
         // into one sweep, no debounce timer required.
-        ContactsWriter.postContactsWereAdded(inboxIds: insertedInboxIds)
+        ContactsWriter.postContactsWereAdded(
+            inboxIds: insertedInboxIds,
+            notificationCenter: notificationCenter
+        )
     }
 }

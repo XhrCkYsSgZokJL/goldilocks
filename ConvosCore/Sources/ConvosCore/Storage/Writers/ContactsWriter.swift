@@ -101,9 +101,14 @@ public protocol ContactsWriterProtocol: Sendable {
 
 final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
     private let databaseWriter: any DatabaseWriter
+    private let notificationCenter: NotificationCenter
 
-    init(databaseWriter: any DatabaseWriter) {
+    init(
+        databaseWriter: any DatabaseWriter,
+        notificationCenter: NotificationCenter = .default
+    ) {
         self.databaseWriter = databaseWriter
+        self.notificationCenter = notificationCenter
     }
 
     func upsertContact(
@@ -120,7 +125,10 @@ final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
             )
         }
         if didInsert {
-            ContactsWriter.postContactsWereAdded(inboxIds: [inboxId])
+            ContactsWriter.postContactsWereAdded(
+                inboxIds: [inboxId],
+                notificationCenter: notificationCenter
+            )
         }
     }
 
@@ -158,7 +166,11 @@ final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
             return true
         }
         if didChange {
-            ContactsWriter.postBlockingDidChange(inboxId: inboxId, blocked: true)
+            ContactsWriter.postBlockingDidChange(
+                inboxId: inboxId,
+                blocked: true,
+                notificationCenter: notificationCenter
+            )
         }
     }
 
@@ -175,7 +187,11 @@ final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
             return true
         }
         if didChange {
-            ContactsWriter.postBlockingDidChange(inboxId: inboxId, blocked: false)
+            ContactsWriter.postBlockingDidChange(
+                inboxId: inboxId,
+                blocked: false,
+                notificationCenter: notificationCenter
+            )
         }
     }
 
@@ -184,17 +200,25 @@ final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
     /// observes this to trigger an immediate `QuarantineSweeper.sweep()`
     /// so unblocking restores held-by-block conversations to the main
     /// feed without waiting for the next hourly/foreground sweep.
-    private static func postBlockingDidChange(inboxId: String, blocked: Bool) {
+    ///
+    /// The `notificationCenter` parameter exists so tests can scope
+    /// observers to a private center and avoid cross-suite leakage
+    /// through `.default`.
+    private static func postBlockingDidChange(
+        inboxId: String,
+        blocked: Bool,
+        notificationCenter: NotificationCenter
+    ) {
         let userInfo: [String: Any] = ["inboxId": inboxId, "blocked": blocked]
         if Thread.isMainThread {
-            NotificationCenter.default.post(
+            notificationCenter.post(
                 name: .contactBlockingDidChange,
                 object: nil,
                 userInfo: userInfo
             )
         } else {
             DispatchQueue.main.async {
-                NotificationCenter.default.post(
+                notificationCenter.post(
                     name: .contactBlockingDidChange,
                     object: nil,
                     userInfo: userInfo
@@ -212,18 +236,25 @@ final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
     ///
     /// No-op on an empty array so batch callers can call unconditionally
     /// after their transaction.
-    static func postContactsWereAdded(inboxIds: [String]) {
+    ///
+    /// The `notificationCenter` parameter exists so tests can scope
+    /// observers to a private center and avoid cross-suite leakage
+    /// through `.default`. Production callers omit it and get `.default`.
+    static func postContactsWereAdded(
+        inboxIds: [String],
+        notificationCenter: NotificationCenter = .default
+    ) {
         guard !inboxIds.isEmpty else { return }
         let userInfo: [String: Any] = ["inboxIds": inboxIds]
         if Thread.isMainThread {
-            NotificationCenter.default.post(
+            notificationCenter.post(
                 name: .contactsWereAdded,
                 object: nil,
                 userInfo: userInfo
             )
         } else {
             DispatchQueue.main.async {
-                NotificationCenter.default.post(
+                notificationCenter.post(
                     name: .contactsWereAdded,
                     object: nil,
                     userInfo: userInfo
