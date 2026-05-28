@@ -22,6 +22,7 @@ import { z } from 'zod';
 import { db } from '../db/client.js';
 import { adminInboxes, clients, clientPeopleList, devices } from '../db/schema.js';
 import { requireJwt } from '../middleware/jwt.js';
+import { adminNumberForInbox, emitAuditEvent } from '../audit-events.js';
 
 const PutBody = z.object({
   ciphertext: z.string().min(1).max(1_000_000),
@@ -30,6 +31,19 @@ const PutBody = z.object({
   // The version the caller edited. 0 means "I believe there is no list
   // yet." The write is rejected if the stored version differs.
   baseVersion: z.number().int().min(0),
+});
+
+// Optional hint the iOS admin client tags on an admin-side people-list
+// write so the backend can post a generic narrative line ("Admin #N
+// enabled someone on Client #M") to the audit log. The hint is
+// deliberately identity-free — the encrypted blob is opaque to the
+// backend, and the audit shouldn't expose who was toggled. Omit the
+// hint for non-enable/disable writes (initial save, reorder, etc.) to
+// keep the audit log signal-to-noise high.
+const AdminPutBody = PutBody.extend({
+  auditHint: z.object({
+    action: z.enum(['enable_person', 'disable_person']),
+  }).optional(),
 });
 
 interface BlobResponse {
@@ -119,13 +133,19 @@ async function resolveClientId(req: FastifyRequest, reply: FastifyReply): Promis
   return client.id;
 }
 
+interface AdminTarget {
+  clientId: string;
+  clientNumber: number;
+  adminInboxId: string;
+}
+
 // Confirm the caller is an admin, then resolve the target client's id
 // from their inbox id. Sends the error response itself, returns null.
 async function resolveTargetForAdmin(
   req: FastifyRequest,
   reply: FastifyReply,
   targetInboxId: string,
-): Promise<string | null> {
+): Promise<AdminTarget | null> {
   const deviceId = req.deviceId;
   if (!deviceId) {
     reply.code(401).send({ error: 'no_device' });
@@ -150,7 +170,7 @@ async function resolveTargetForAdmin(
     reply.code(404).send({ error: 'client_not_found' });
     return null;
   }
-  return client.id;
+  return { clientId: client.id, clientNumber: client.clientNumber, adminInboxId: device.inboxId };
 }
 
 export default async function peopleListRoutes(app: FastifyInstance) {
@@ -182,25 +202,38 @@ export default async function peopleListRoutes(app: FastifyInstance) {
   app.get<{ Params: { inboxId: string } }>(
     '/v2/admin/clients/:inboxId/people-list',
     async (req, reply) => {
-      const clientId = await resolveTargetForAdmin(req, reply, req.params.inboxId);
-      if (!clientId) return;
-      return reply.code(200).send(await fetchBlob(clientId));
+      const target = await resolveTargetForAdmin(req, reply, req.params.inboxId);
+      if (!target) return;
+      return reply.code(200).send(await fetchBlob(target.clientId));
     },
   );
 
   // PUT /v2/admin/clients/:inboxId/people-list — admin replaces a client's blob.
+  // Accepts an optional `auditHint` so the iOS admin client can tag the
+  // write as a per-person enable / disable, producing a corresponding
+  // narrative line in the audit log.
   app.put<{ Params: { inboxId: string } }>(
     '/v2/admin/clients/:inboxId/people-list',
     async (req, reply) => {
-      const clientId = await resolveTargetForAdmin(req, reply, req.params.inboxId);
-      if (!clientId) return;
-      const parsed = PutBody.safeParse(req.body);
+      const target = await resolveTargetForAdmin(req, reply, req.params.inboxId);
+      if (!target) return;
+      const parsed = AdminPutBody.safeParse(req.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
       }
-      const result = await writeBlob(clientId, parsed.data);
+      const result = await writeBlob(target.clientId, parsed.data);
       if (!result.ok) {
         return reply.code(409).send({ error: 'version_conflict', currentVersion: result.currentVersion });
+      }
+      if (parsed.data.auditHint) {
+        const adminNumber: number | null = await adminNumberForInbox(target.adminInboxId);
+        if (adminNumber !== null) {
+          await emitAuditEvent({
+            kind: parsed.data.auditHint.action === 'enable_person' ? 'people_enable' : 'people_disable',
+            admin_number: adminNumber,
+            client_number: target.clientNumber,
+          });
+        }
       }
       return reply.code(200).send({ version: result.version });
     },

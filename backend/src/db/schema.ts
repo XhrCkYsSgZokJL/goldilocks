@@ -117,6 +117,10 @@ export const clients = pgTable('clients', {
   billingBalanceCents: integer('billing_balance_cents').notNull().default(0),
   billingSeats: integer('billing_seats').notNull().default(0),
   billingBalanceAsOf: timestamp('billing_balance_as_of', { withTimezone: true }),
+  // Admin-toggled Emerald membership (migration 015). When true,
+  // overrides the auto-computed tier from seats + coverage — see
+  // `computeTier` in src/billing/tier.ts.
+  emeraldMembershipEnabled: boolean('emerald_membership_enabled').notNull().default(false),
 });
 
 // Audit trail for Stripe Checkout Sessions — one row per top-up. Inserted

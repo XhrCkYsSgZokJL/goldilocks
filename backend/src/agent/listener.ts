@@ -41,12 +41,22 @@ export interface PeopleListChangedPayload {
   client_id: string;        // uuid
 }
 
+// Audit events come from /v2/admin/* HTTP routes when an admin makes
+// a tracked change. The admins-agent formats the payload into a
+// narrative line and posts it to the alerts group.
+export interface AuditEventPayload {
+  kind: 'emerald_enable' | 'emerald_disable' | 'people_enable' | 'people_disable';
+  admin_number: number;
+  client_number: number;
+}
+
 export interface ListenerHandlers {
   onAdminChanged: (payload: AdminChangedPayload) => Promise<void>;
   onClientRegistered: (payload: ClientRegisteredPayload) => Promise<void>;
   onUserActive: (payload: UserActivePayload) => Promise<void>;
   onChannelsRecover: (payload: ChannelsRecoverPayload) => Promise<void>;
   onPeopleListChanged: (payload: PeopleListChangedPayload) => Promise<void>;
+  onAuditEvent: (payload: AuditEventPayload) => Promise<void>;
 }
 
 /**
@@ -71,7 +81,8 @@ export async function startListener(handlers: ListenerHandlers): Promise<() => P
   await pgc.query('LISTEN user_active');
   await pgc.query('LISTEN channels_recover');
   await pgc.query('LISTEN people_list_changed');
-  console.log('[agent] LISTENing on admin_changed + client_registered + user_active + channels_recover + people_list_changed');
+  await pgc.query('LISTEN audit_event');
+  console.log('[agent] LISTENing on admin_changed + client_registered + user_active + channels_recover + people_list_changed + audit_event');
 
   return async () => {
     try { await pgc.query('UNLISTEN *'); } catch {}
@@ -101,6 +112,8 @@ export async function dispatch(channel: string, payload: string, handlers: Liste
       await handlers.onChannelsRecover(parsed as ChannelsRecoverPayload);
     } else if (channel === 'people_list_changed') {
       await handlers.onPeopleListChanged(parsed as PeopleListChangedPayload);
+    } else if (channel === 'audit_event') {
+      await handlers.onAuditEvent(parsed as AuditEventPayload);
     } else {
       console.warn(`[agent] notify: unknown channel ${channel}`);
     }

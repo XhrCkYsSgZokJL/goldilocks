@@ -18,6 +18,7 @@ import { monthlyTotalCents } from '../billing/pricing.js';
 import { db } from '../db/client.js';
 import { adminInboxes, clients, clientChannels, devices } from '../db/schema.js';
 import { requireJwt } from '../middleware/jwt.js';
+import { adminNumberForInbox, emitAuditEvent } from '../audit-events.js';
 
 const ROLE = z.enum(['advisory', 'reports']);
 
@@ -275,6 +276,7 @@ export default async function channelRoutes(app: FastifyInstance) {
         billingBalanceCents: clients.billingBalanceCents,
         billingSeats: clients.billingSeats,
         billingBalanceAsOf: clients.billingBalanceAsOf,
+        emeraldMembershipEnabled: clients.emeraldMembershipEnabled,
         role: clientChannels.role,
         xmtpGroupId: clientChannels.xmtpGroupId,
         status: clientChannels.status,
@@ -291,6 +293,7 @@ export default async function channelRoutes(app: FastifyInstance) {
         clientInboxId: r.clientInboxId,
         monthlyRateCents: monthlyTotalCents(r.billingSeats),
         coverageActive: liveBalanceCents(r) > 0,
+        emeraldMembershipEnabled: r.emeraldMembershipEnabled,
         role: r.role,
         xmtpGroupId: r.xmtpGroupId,
         status: r.status,
@@ -300,4 +303,68 @@ export default async function channelRoutes(app: FastifyInstance) {
       })),
     });
   });
+
+  // -------------------------------------------------------------------
+  // POST /v2/admin/clients/:inboxId/emerald
+  // body: { enabled: bool }
+  // Admin-only. Flips the admin-controlled Emerald membership flag on
+  // the target client. Emerald overrides the automatic B/S/G tier the
+  // backend computes from seats + coverage — see src/billing/tier.ts.
+  // Posts a "Admin #N enabled/disabled Emerald membership for Client #M"
+  // line to the audit log via pg_notify('audit_event').
+  // -------------------------------------------------------------------
+  const EmeraldBody = z.object({ enabled: z.boolean() });
+  app.post<{ Params: { inboxId: string } }>(
+    '/v2/admin/clients/:inboxId/emerald',
+    async (req, reply) => {
+      const caller = await resolveCaller(req, reply);
+      if (!caller) return;
+      if (!caller.isAdmin) {
+        return reply.code(403).send({ error: 'not_admin' });
+      }
+      const parsed = EmeraldBody.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
+      }
+      const targetInboxId: string = req.params.inboxId;
+      const [target] = await db
+        .select({ id: clients.id, clientNumber: clients.clientNumber, current: clients.emeraldMembershipEnabled })
+        .from(clients)
+        .where(eq(clients.inboxId, targetInboxId))
+        .limit(1);
+      if (!target) {
+        return reply.code(404).send({ error: 'client_not_found' });
+      }
+      // No-op fast path — don't write or audit if nothing actually
+      // changes, so a UI that re-submits doesn't double-log.
+      if (target.current === parsed.data.enabled) {
+        return reply.code(200).send({
+          clientNumber: target.clientNumber,
+          emeraldMembershipEnabled: parsed.data.enabled,
+          changed: false,
+        });
+      }
+      await db
+        .update(clients)
+        .set({ emeraldMembershipEnabled: parsed.data.enabled })
+        .where(eq(clients.id, target.id));
+
+      // Best-effort audit emit. If admin-number resolution fails
+      // (e.g. the caller was just demoted in a race), still return
+      // success — the DB change has landed.
+      const adminNumber: number | null = await adminNumberForInbox(caller.inboxId);
+      if (adminNumber !== null) {
+        await emitAuditEvent({
+          kind: parsed.data.enabled ? 'emerald_enable' : 'emerald_disable',
+          admin_number: adminNumber,
+          client_number: target.clientNumber,
+        });
+      }
+      return reply.code(200).send({
+        clientNumber: target.clientNumber,
+        emeraldMembershipEnabled: parsed.data.enabled,
+        changed: true,
+      });
+    },
+  );
 }

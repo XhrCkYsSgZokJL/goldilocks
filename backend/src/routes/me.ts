@@ -130,6 +130,7 @@ export default async function meRoutes(app: FastifyInstance) {
       clientNumber: client.clientNumber,
       isAdmin: !!adminRow,
       inboxId: client.inboxId,
+      emeraldMembershipEnabled: client.emeraldMembershipEnabled,
     });
   });
 
@@ -395,6 +396,7 @@ export default async function meRoutes(app: FastifyInstance) {
       clientNumber: client.clientNumber,
       isAdmin: !!adminRow,
       inboxId: client.inboxId,
+      emeraldMembershipEnabled: client.emeraldMembershipEnabled,
     });
   });
 }

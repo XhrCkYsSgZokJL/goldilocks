@@ -19,6 +19,15 @@ import { AdminsAgent } from './admins-agent.js';
 import { ReportsAgent } from './reports-agent.js';
 import { startListener } from './listener.js';
 import { startReportsWatcher } from './reports-watcher.js';
+import { AuditLog } from './audit.js';
+import { formatAuditLine } from './audit-format.js';
+
+// All audit posts (watcher echoes + admin actions) flow through this
+// single AuditLog. It's constructed with the admins-agent client
+// because that's the agent inbox that's actually a member of the
+// alerts group (see `reconcileAlertsGroup` in admins-agent.ts).
+// The reports-agent inbox is NOT in the alerts group, so giving the
+// reports-watcher its own AuditLog would silently fail every post.
 
 /**
  * Block until Postgres accepts a query. The dev stack can start the
@@ -74,6 +83,11 @@ async function main(): Promise<void> {
 
   const adminsAgent = new AdminsAgent(adminsClient, adminsIdentity);
   const reportsAgent = new ReportsAgent(reportsClient, reportsIdentity);
+
+  // The audit log lives in the alerts group, which the admins-agent
+  // owns + is a member of. Route every audit event through that
+  // agent's client so it has the necessary group access.
+  const auditLog: AuditLog = new AuditLog(adminsClient);
 
   // Catch up on anything that happened while the process was down.
   // Wrap each in try/catch so a bad initial reconcile (e.g. a wedged
@@ -164,6 +178,11 @@ async function main(): Promise<void> {
       // intentionally not built yet — only the trigger is wired.
       console.log(`[agent] people_list_changed client=${payload.client_id.slice(0, 8)}… — third-party onboarding re-evaluation not yet wired (service undefined)`);
     },
+    onAuditEvent: async (payload) => {
+      const line: string = formatAuditLine(payload);
+      console.log(`[agent] audit_event ${payload.kind} admin=#${payload.admin_number} client=#${payload.client_number}`);
+      await auditLog.postText(line);
+    },
   });
 
   // Auto-reply to clients who write into their Reports feed — Reports is
@@ -173,7 +192,7 @@ async function main(): Promise<void> {
   // File-drop ingestion: PDFs in REPORTS_DIR with filenames like
   // "<clientNumber>-<title>.pdf" are encrypted and posted to that
   // client's Reports group, then moved to reports/sent/ on success.
-  const stopReportsWatcher = await startReportsWatcher({ client: reportsClient });
+  const stopReportsWatcher = await startReportsWatcher({ client: reportsClient, audit: auditLog });
 
   // Graceful shutdown — stop LISTEN + the message stream, then exit. The
   // XMTP clients hold a SQLCipher connection that node-sdk releases on
