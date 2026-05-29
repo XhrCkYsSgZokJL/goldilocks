@@ -402,9 +402,26 @@ class ReportsWatcher {
             continue;
           }
 
-          // Refresh the agent's view of the group ONCE per recipient.
-          // Without this, synchronous sends hit SyncFailedToWait when
-          // the agent has drifted off the group's latest epoch.
+          // Refresh the agent's view of the network in two passes
+          // before sending.
+          //
+          // 1) `client.conversations.syncAll()` is a brute-force pull
+          //    across every conversation the agent is in. This breaks
+          //    "stuck-epoch" log jams where the agent's local libxmtp
+          //    state is behind the network because group.sync() is
+          //    cursor-conservative and won't pull commits it doesn't
+          //    already know about. Symptom that prompted this: every
+          //    publishMessages() timing out at ~240ms with epoch never
+          //    advancing.
+          // 2) The targeted group.sync() then makes sure the per-group
+          //    epoch is current. Cheap follow-up after syncAll.
+          try {
+            const syncAllStart = Date.now();
+            const summary = await this.opts.client.conversations.syncAll();
+            log(`[reports-watcher] client.syncAll (Reports #${recipient.clientNumber}) OK in ${Date.now() - syncAllStart}ms — eligible=${summary.numEligible} synced=${summary.numSynced}`);
+          } catch (err) {
+            log(`[reports-watcher] client.syncAll (Reports #${recipient.clientNumber}) failed: ${(err as Error).message} — proceeding`);
+          }
           try {
             await reportsGroup.sync();
           } catch (err) {
@@ -558,37 +575,108 @@ class ReportsWatcher {
 // already done `group.sync()` so the agent's epoch view is fresh
 // before we ask libxmtp to commit.
 async function sendAttachmentWithRetry(group: Group, remoteAttachment: RemoteAttachment): Promise<void> {
-  await sendWithRetry('attachment', async () => {
-    await group.sendRemoteAttachment(remoteAttachment);
+  // Optimistic mode: writes the intent to the agent's local SQLCipher
+  // store and returns immediately. The actual network commit happens
+  // in `publishMessages` below, where libxmtp handles MLS-epoch races
+  // internally rather than throwing SyncFailedToWait at us.
+  await optimisticSendAndPublish('attachment', group, async () => {
+    await group.sendRemoteAttachment(remoteAttachment, true);
   });
 }
 
-// Text twin of sendAttachmentWithRetry. `sendText` returns the message
-// id but we don't need it; throws on commit failure, which propagates
-// up so the file ends up in `failed/` with a useful error attached.
 async function sendTextWithRetry(group: Group, body: string): Promise<void> {
-  await sendWithRetry('text', async () => {
-    await group.sendText(body);
+  await optimisticSendAndPublish('text', group, async () => {
+    await group.sendText(body, true);
   });
 }
 
-// Try a synchronous send; on `SyncFailedToWait` (the common failure
-// mode when the agent's local snapshot is stale) re-sync the group
-// and try once more. We only retry once because synchronous sends
-// either succeed quickly or fail for a structural reason — looping
-// on the same error wastes time. After the second failure we throw
-// so the caller can park the file in `failed/`.
-async function sendWithRetry(label: string, send: () => Promise<void>): Promise<void> {
+// Capture the group's MLS state so we have a structural fingerprint to
+// stick next to SyncFailedToWait errors. Best-effort — if the SDK call
+// itself errors we still want the send path to proceed. Returns a
+// short string the caller can log inline.
+async function groupDebugFingerprint(group: Group): Promise<string> {
   try {
-    await send();
-    return;
+    const info = await group.debugInfo();
+    const epoch = info.epoch.toString();
+    const fork = info.maybeForked ? 'forked' : 'ok';
+    let memberCount: string;
+    try {
+      const members = await group.members();
+      memberCount = String(members.length);
+    } catch {
+      memberCount = '?';
+    }
+    return `epoch=${epoch} members=${memberCount} fork=${fork}`;
   } catch (err) {
-    const msg: string = (err as Error).message;
-    if (!msg.includes('SyncFailedToWait')) throw err;
-    log(`[reports-watcher] send (${label}) hit SyncFailedToWait — retrying after a short pause`);
-    await new Promise((resolve) => setTimeout(resolve, 750));
-    await send();
+    return `debugInfo-failed=${(err as Error).message}`;
   }
+}
+
+// Two-step send: optimistic queue first, then publishMessages to push
+// every queued intent to the network. publishMessages is the right
+// retry surface for the SyncFailedToWait race — it's libxmtp's
+// intended pattern for "the client moved the epoch under me." On a
+// publish failure we resync and retry; the previously-queued intent
+// stays in libxmtp's local store, so the retry just publishes the
+// same blob without re-encoding it. Total worst case: 4 attempts
+// with 750ms / 2s / 4s / 8s backoffs, ~14.75s before giving up.
+async function optimisticSendAndPublish(
+  label: string,
+  group: Group,
+  queueMessage: () => Promise<void>,
+): Promise<void> {
+  // Step 1: queue locally. This is fast and shouldn't ever fail with
+  // SyncFailedToWait (no network commit yet).
+  const preFp = await groupDebugFingerprint(group);
+  log(`[reports-watcher] queue ${label}: pre-queue ${preFp}`);
+  const queueStart = Date.now();
+  try {
+    await queueMessage();
+  } catch (err) {
+    log(`[reports-watcher] queue ${label} FAILED in ${Date.now() - queueStart}ms: ${(err as Error).message}`);
+    throw err;
+  }
+  log(`[reports-watcher] queue ${label} OK in ${Date.now() - queueStart}ms`);
+
+  // Step 2: publish, with retries on SyncFailedToWait.
+  const backoffMs: readonly number[] = [750, 2000, 4000, 8000] as const;
+  let lastErr: Error | null = null;
+
+  for (let attempt = 0; attempt < backoffMs.length + 1; attempt++) {
+    const publishStart = Date.now();
+    try {
+      await group.publishMessages();
+      const elapsedMs = Date.now() - publishStart;
+      if (attempt === 0) {
+        log(`[reports-watcher] publish ${label} OK in ${elapsedMs}ms (attempt 1)`);
+      } else {
+        log(`[reports-watcher] publish ${label} OK in ${elapsedMs}ms (attempt ${attempt + 1} of ${backoffMs.length + 1})`);
+      }
+      return;
+    } catch (err) {
+      lastErr = err as Error;
+      const elapsedMs = Date.now() - publishStart;
+      const msg: string = lastErr.message;
+      const postFp = await groupDebugFingerprint(group);
+      log(`[reports-watcher] publish ${label} attempt ${attempt + 1} FAILED in ${elapsedMs}ms: ${msg}; ${postFp}`);
+
+      if (!msg.includes('SyncFailedToWait')) {
+        throw err;
+      }
+      if (attempt === backoffMs.length) break;
+      const delayMs = backoffMs[attempt] ?? 0;
+      log(`[reports-watcher] re-syncing group then retrying publish in ${delayMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      try {
+        const syncStart = Date.now();
+        await group.sync();
+        log(`[reports-watcher] inter-retry sync OK in ${Date.now() - syncStart}ms`);
+      } catch (syncErr) {
+        log(`[reports-watcher] inter-retry sync FAILED: ${(syncErr as Error).message} — trying publish anyway`);
+      }
+    }
+  }
+  throw lastErr ?? new Error('publishMessages exhausted attempts');
 }
 
 // Header line for the admin audit-log echo. The body / attachment

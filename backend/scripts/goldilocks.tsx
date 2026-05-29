@@ -21,7 +21,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes, randomInt } from 'node:crypto';
 import {
   chmodSync, closeSync, existsSync, mkdirSync, openSync,
-  readFileSync, readdirSync, statSync, unlinkSync, writeFileSync, writeSync,
+  readFileSync, statSync, unlinkSync, writeFileSync, writeSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -103,10 +103,16 @@ interface ClientRow {
   billing_seats: number;
 }
 
-interface BackupFile {
-  name: string;
-  size: number;
-  mtime: Date;
+// A snapshot row from `restic snapshots --json`. The fields we render
+// from come straight from restic's output. See
+// docs/encryption-and-backup-plan.md F1.
+interface ResticSnapshot {
+  id: string;        // 64-char full id
+  short_id: string;  // 8-char display id
+  time: string;      // ISO8601 timestamp
+  tags?: string[];
+  paths?: string[];
+  hostname?: string;
 }
 
 interface DashboardData {
@@ -705,16 +711,55 @@ function caddyRootCertPath(): string {
   );
 }
 
-// True once Caddy's local root is in the macOS System keychain — the
-// trust store the iOS Simulator inherits.
-function caddyRootTrustedInSystemKeychain(): boolean {
+// SHA-1 fingerprint of the on-disk Caddy root, or null if we can't read
+// it. Used to compare against what's in the System keychain so we notice
+// when Caddy rotates its yearly root (the CN matches between years but
+// the fingerprint doesn't).
+function caddyRootFingerprint(): string | null {
+  const path = caddyRootCertPath();
+  if (!existsSync(path)) return null;
   try {
     const res = spawnSync(
-      'security',
-      ['find-certificate', '-c', 'Caddy Local Authority', '/Library/Keychains/System.keychain'],
-      { stdio: 'ignore' },
+      'openssl',
+      ['x509', '-in', path, '-noout', '-fingerprint', '-sha1'],
+      { encoding: 'utf8' },
     );
-    return res.status === 0;
+    if (res.status !== 0) return null;
+    // openssl prints "SHA1 Fingerprint=AA:BB:CC:..." — strip the prefix.
+    const line = (res.stdout ?? '').trim();
+    const eq = line.indexOf('=');
+    return eq >= 0 ? line.slice(eq + 1).toUpperCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+// True once Caddy's current local root is in the macOS System keychain.
+// Matches by SHA-1, not CN, so a stale root from a prior year doesn't
+// mask a missing-current-year cert when Caddy rotates.
+function caddyRootTrustedInSystemKeychain(): boolean {
+  const want = caddyRootFingerprint();
+  if (!want) return false;
+  try {
+    // -Z prints SHA-1 alongside each matching cert; -a returns every
+    // match (there can be multiple "Caddy Local Authority - <year>" certs
+    // stacked up after a few rotations).
+    const res = spawnSync(
+      'security',
+      [
+        'find-certificate',
+        '-a',
+        '-c',
+        'Caddy Local Authority',
+        '-Z',
+        '/Library/Keychains/System.keychain',
+      ],
+      { encoding: 'utf8' },
+    );
+    if (res.status !== 0) return false;
+    const normalized = (res.stdout ?? '').replace(/:/g, '').toUpperCase();
+    const wantNoColons = want.replace(/:/g, '');
+    return normalized.includes(wantNoColons);
   } catch {
     return false;
   }
@@ -971,65 +1016,482 @@ async function collectDashboard(): Promise<DashboardData> {
 
 // --- backups ---------------------------------------------------------------
 
-function humanSize(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${bytes} B`;
+// Backups live in a restic repo under ./backups/restic-<env>/, written
+// by the `backup` compose service. See scripts/backup.sh and
+// docs/encryption-and-backup-plan.md F1.
+
+function resticRepoDir(): string {
+  return join(REPO_ROOT, 'backups', `restic-${ENV}`);
 }
 
-// Backups land in ./backups on the box (written by the `backup` service).
-function listBackups(prefix: string, suffix: string): BackupFile[] {
-  const dir = join(REPO_ROOT, 'backups');
-  let names: string[];
+function resticPassphraseFile(): string {
+  return ENV === 'prod'
+    ? join(REPO_ROOT, '.restic-passphrase.prod')
+    : join(REPO_ROOT, 'dev', 'restic-passphrase.dev');
+}
+
+const BACKUP_IMAGE = 'goldilocks-backup:latest';
+
+// Create the env's restic passphrase file if it doesn't already exist.
+// Returns whether a new file was written so the caller can surface the
+// "go save this in your password manager" prompt at the right moment.
+//
+// The passphrase is 24 random bytes encoded as base64 — high enough
+// entropy that brute-force is intractable, short enough to read from a
+// terminal line. chmod 600 so other users on the host can't read it.
+function ensureResticPassphrase(): { created: boolean; path: string } {
+  const path = resticPassphraseFile();
+  if (existsSync(path)) {
+    return { created: false, path };
+  }
+  const passphrase = randomBytes(24).toString('base64');
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${passphrase}\n`, { mode: 0o600 });
+  chmodSync(path, 0o600);
+  return { created: true, path };
+}
+
+// Has the backup image been built locally? Used so the Backups screen
+// can offer a one-time "Build backup image" action instead of making
+// the operator wait through it on their first backup. The sync flavor
+// is kept for callers that legitimately need it (Settings → Run setup
+// branches on this before kicking off the build); the async flavor is
+// what the Backups screen useEffect calls.
+function backupImageBuilt(): boolean {
+  const res = spawnSync('docker', ['image', 'inspect', BACKUP_IMAGE], {
+    stdio: 'ignore',
+  });
+  return res.status === 0;
+}
+
+function backupImageBuiltAsync(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const proc = spawn('docker', ['image', 'inspect', BACKUP_IMAGE], {
+      stdio: 'ignore',
+    });
+    const timeout = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch { /* ignore */ }
+      resolve(false);
+    }, 5000);
+    proc.on('close', (code) => {
+      clearTimeout(timeout);
+      resolve(code === 0);
+    });
+    proc.on('error', () => {
+      clearTimeout(timeout);
+      resolve(false);
+    });
+  });
+}
+
+// Result of an async snapshot fetch — includes a surfaceable error
+// string so the screen can tell the operator WHY the load failed
+// (image missing, repo locked, docker daemon unresponsive) instead
+// of just hanging or returning an unexplained empty list.
+interface SnapshotLoadResult {
+  snapshots: ResticSnapshot[];
+  error: string | null;
+}
+
+// Async snapshot list — used by the Backups screen useEffect so the
+// render path stays non-blocking. Hard 15s timeout: if docker /
+// restic doesn't respond by then, we give up and surface the most
+// useful error fragment we have so the operator can decide what to
+// do (rebuild image / unlock repo / restart docker).
+function listSnapshotsAsync(): Promise<SnapshotLoadResult> {
+  if (!existsSync(resticRepoDir())) {
+    return Promise.resolve({ snapshots: [], error: null });
+  }
+  if (!existsSync(resticPassphraseFile())) {
+    return Promise.resolve({
+      snapshots: [],
+      error: `passphrase missing at ${resticPassphraseFile().replace(REPO_ROOT + '/', '')} — Generate backup passphrase below`,
+    });
+  }
+  return new Promise((resolve) => {
+    const proc = spawn(
+      'docker',
+      resticDockerArgs(['snapshots', '--json'], true),
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let out = '';
+    let err = '';
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      out += chunk.toString('utf8');
+    });
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      err += chunk.toString('utf8');
+    });
+    const timeout = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch { /* ignore */ }
+      resolve({
+        snapshots: [],
+        error: 'snapshot fetch timed out after 15s — Docker may be slow or unresponsive (try Backups → Build backup image, or restart Docker Desktop)',
+      });
+    }, 15000);
+    proc.on('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0 && out) {
+        try {
+          const parsed: unknown = JSON.parse(out);
+          if (Array.isArray(parsed)) {
+            resolve({ snapshots: parsed as ResticSnapshot[], error: null });
+            return;
+          }
+          resolve({ snapshots: [], error: 'restic returned non-array JSON' });
+          return;
+        } catch {
+          resolve({ snapshots: [], error: 'restic output was not valid JSON' });
+          return;
+        }
+      }
+      // Surface the most informative tail of stderr.
+      const tail = err.split('\n').map((l) => l.trim()).filter(Boolean).slice(-3).join('  |  ');
+      const message = tail || `restic exited ${code ?? '?'} with no output`;
+      // Common case worth pattern-matching: a stale lock from an
+      // interrupted backup. The operator can clear it with the
+      // "Unlock restic repo" action.
+      const friendly = /locked/i.test(message)
+        ? `${message}  (try "Unlock restic repo" below)`
+        : message;
+      resolve({ snapshots: [], error: friendly.slice(0, 240) });
+    });
+    proc.on('error', (e) => {
+      clearTimeout(timeout);
+      resolve({ snapshots: [], error: `docker spawn failed: ${e.message}` });
+    });
+  });
+}
+
+// --- SOPS-sealed env files (F3) -------------------------------------------
+//
+// Each environment has:
+//   - .env.<env>                     plaintext, runtime cache, gitignored
+//   - secrets/<env>.env.enc          SOPS-encrypted, committable
+//   - secrets/.age/<env>.key         age private key, mode 600, gitignored
+//   - secrets/.age/<env>.key.pub     plain-text recipient (age1...), gitignored
+//
+// The CLI auto-unseals the encrypted file into the plaintext on session
+// start whenever the sealed file is newer than the plaintext, so the
+// operator's day-to-day workflow doesn't change — they edit .env.<env>,
+// the CLI re-seals on demand via Settings → Keys.
+
+function ageKeyFile(): string {
+  return join(REPO_ROOT, 'secrets', '.age', `${ENV}.key`);
+}
+
+function ageRecipientFile(): string {
+  return `${ageKeyFile()}.pub`;
+}
+
+function sealedEnvFile(): string {
+  return join(REPO_ROOT, 'secrets', `${ENV}.env.enc`);
+}
+
+// Read the recipient (age1...) line for sealing. Cached on disk
+// alongside the private key so we don't shell out to age-keygen every
+// time we want to encrypt.
+function readAgeRecipient(): string | null {
   try {
-    names = readdirSync(dir);
+    const raw = readFileSync(ageRecipientFile(), 'utf8').trim();
+    const match = raw.match(/age1[a-z0-9]+/);
+    return match ? match[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+// Generate a fresh age keypair via the backup image's age-keygen binary,
+// chmod 600, write the recipient to <key>.pub alongside. Returns whether
+// a new key was minted (vs. one already existed).
+function ensureAgeKey(): { created: boolean; path: string; recipient: string | null } {
+  const path = ageKeyFile();
+  if (existsSync(path)) {
+    return { created: false, path, recipient: readAgeRecipient() };
+  }
+  mkdirSync(dirname(path), { recursive: true });
+  // age-keygen writes the private key (with a `# public key:` comment line)
+  // to stdout. We split it: the secret line(s) go to the key file, the
+  // recipient goes to <key>.pub.
+  const res = spawnSync(
+    'docker',
+    ['run', '--rm', BACKUP_IMAGE, 'age-keygen'],
+    { encoding: 'utf8' },
+  );
+  if (res.status !== 0 || !res.stdout) {
+    return { created: false, path, recipient: null };
+  }
+  const out = res.stdout;
+  const recipientMatch = out.match(/age1[a-z0-9]+/);
+  const recipient = recipientMatch ? recipientMatch[0] : null;
+  writeFileSync(path, out, { mode: 0o600 });
+  chmodSync(path, 0o600);
+  if (recipient) {
+    writeFileSync(ageRecipientFile(), `${recipient}\n`, { mode: 0o600 });
+    chmodSync(ageRecipientFile(), 0o600);
+  }
+  return { created: true, path, recipient };
+}
+
+// Write a minimal .sops.yaml mapping the *source* env files to their
+// per-env age recipients. SOPS matches creation_rules against the file
+// passed to `--encrypt` (the plaintext `.env.<env>`), so the rule
+// regex has to match THAT path, not the encrypted output.
+//
+// Idempotent: if the file already exists with the correct pattern it
+// short-circuits. If it exists with the legacy/wrong pattern (the
+// pre-fix version targeted `secrets/<env>.env.enc`, which sops never
+// uses for lookup) the function rewrites it.
+function ensureSopsConfig(): { created: boolean; path: string; replaced: boolean } {
+  const path = join(REPO_ROOT, '.sops.yaml');
+
+  let replaced = false;
+  if (existsSync(path)) {
+    let existing = '';
+    try {
+      existing = readFileSync(path, 'utf8');
+    } catch {
+      existing = '';
+    }
+    // The buggy pre-fix pattern targeted the encrypted output path.
+    const hasBuggyPattern = /path_regex:\s*secrets\/(dev|prod)\\?\.env\\?\.enc/.test(existing);
+    if (!hasBuggyPattern) {
+      return { created: false, path, replaced: false };
+    }
+    replaced = true;
+  }
+
+  const lines: string[] = [
+    '# SOPS rule set. Each entry binds a path pattern (matched against',
+    '# the SOURCE file passed to `sops --encrypt`) to the age recipient',
+    '# that can decrypt files written under that rule. Generated by the',
+    '# goldilocks CLI; safe to edit if you know what you are doing.',
+    'creation_rules:',
+  ];
+  for (const env of ['dev', 'prod'] as const) {
+    const pubPath = join(REPO_ROOT, 'secrets', '.age', `${env}.key.pub`);
+    let recipient = '';
+    try {
+      const raw = readFileSync(pubPath, 'utf8');
+      recipient = (raw.match(/age1[a-z0-9]+/) ?? [''])[0];
+    } catch {
+      recipient = '';
+    }
+    if (recipient) {
+      // Match the plaintext source file. sops looks up rules using the
+      // path passed to --encrypt, which seal-env.sh passes as
+      // `.env.<env>` after `cd $REPO_ROOT`.
+      lines.push(`  - path_regex: \\.env\\.${env}$`);
+      lines.push(`    age: ${recipient}`);
+    }
+  }
+  writeFileSync(path, `${lines.join('\n')}\n`);
+  return { created: !replaced, path, replaced };
+}
+
+// Run scripts/seal-env.sh for the current env via plain bash on the host
+// (the script itself shells into the backup image to invoke sops). Sync
+// because the call sites want a result. Returns stderr on failure.
+function sealEnvSync(): { ok: boolean; message: string } {
+  const res = spawnSync('bash', [scriptPath('seal-env.sh'), ENV], {
+    encoding: 'utf8',
+  });
+  if (res.status === 0) {
+    return { ok: true, message: `Sealed .env.${ENV} → ${sealedEnvFile()}` };
+  }
+  return { ok: false, message: (res.stderr || res.stdout || 'seal-env.sh failed').trim() };
+}
+
+function unsealEnvSync(): { ok: boolean; message: string } {
+  const res = spawnSync('bash', [scriptPath('unseal-env.sh'), ENV], {
+    encoding: 'utf8',
+  });
+  if (res.status === 0) {
+    return { ok: true, message: `Unsealed ${sealedEnvFile()} → .env.${ENV}` };
+  }
+  return { ok: false, message: (res.stderr || res.stdout || 'unseal-env.sh failed').trim() };
+}
+
+// "Is the encrypted form newer than the plaintext (or the plaintext
+// missing entirely)?" Used at session start to decide whether to
+// auto-unseal so the operator never sees the encryption layer when
+// they just want to use the system normally.
+function sealedNewerThanPlain(): boolean {
+  const sealed = sealedEnvFile();
+  const plain = envFilePath();
+  if (!existsSync(sealed)) return false;
+  if (!existsSync(plain)) return true;
+  try {
+    return statSync(sealed).mtimeMs > statSync(plain).mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
+// --- Internal TLS (F5) ----------------------------------------------------
+//
+// secrets/tls/ holds the per-env CA + postgres server leaf. The CA is
+// generated once and reused; only the leaf rotates (manually for now,
+// via scripts/renew-tls.sh — annual cadence).
+
+function tlsDir(): string {
+  return join(REPO_ROOT, 'secrets', 'tls');
+}
+
+function tlsCaCertPath(): string {
+  return join(tlsDir(), 'ca.crt');
+}
+
+function tlsCaKeyPath(): string {
+  return join(tlsDir(), 'ca.key');
+}
+
+function tlsPostgresCertPath(): string {
+  return join(tlsDir(), 'postgres.crt');
+}
+
+// Read the notAfter date of a PEM cert via openssl inside the backup
+// image. Returns null if the file is missing or openssl can't read it.
+function tlsCertExpiry(certPath: string): Date | null {
+  if (!existsSync(certPath)) return null;
+  if (!backupImageBuilt()) return null;
+  // openssl x509 -enddate prints  notAfter=Apr 28 12:00:00 2027 GMT
+  const res = spawnSync(
+    'docker',
+    [
+      'run', '--rm',
+      '-v', `${REPO_ROOT}:/work:ro`,
+      '-w', '/work',
+      '--entrypoint', 'openssl',
+      BACKUP_IMAGE,
+      'x509', '-enddate', '-noout', '-in', certPath.replace(REPO_ROOT + '/', ''),
+    ],
+    { encoding: 'utf8' },
+  );
+  if (res.status !== 0 || !res.stdout) return null;
+  const match = res.stdout.match(/notAfter=(.+)/);
+  if (!match || !match[1]) return null;
+  const parsed = new Date(match[1].trim());
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// Mint the CA + postgres leaf for the current env via init-tls.sh.
+// Idempotent: skips work if both already exist (unless force=true).
+function ensureTlsSync(force = false): { ok: boolean; message: string; created: boolean } {
+  const caExists = existsSync(tlsCaCertPath());
+  const leafExists = existsSync(tlsPostgresCertPath());
+  if (caExists && leafExists && !force) {
+    return { ok: true, message: 'TLS material already in place — leaving it alone.', created: false };
+  }
+  const args = [scriptPath('init-tls.sh'), ENV];
+  if (force) args.push('--force');
+  const res = spawnSync('bash', args, { encoding: 'utf8' });
+  if (res.status === 0) {
+    return { ok: true, message: `Minted TLS material in ${tlsDir().replace(REPO_ROOT + '/', '')}/`, created: true };
+  }
+  return { ok: false, message: (res.stderr || res.stdout || 'init-tls.sh failed').trim(), created: false };
+}
+
+// Rotate the leaf cert only — keeps the CA so pinned clients keep
+// working without a config change.
+function renewTlsLeafSync(): { ok: boolean; message: string } {
+  const res = spawnSync('bash', [scriptPath('renew-tls.sh'), ENV], { encoding: 'utf8' });
+  if (res.status === 0) {
+    return { ok: true, message: 'Renewed postgres leaf cert. Restart postgres + backend + agent to pick it up.' };
+  }
+  return { ok: false, message: (res.stderr || res.stdout || 'renew-tls.sh failed').trim() };
+}
+
+// Build the `docker run` arg list for one-shot restic invocations.
+// Read-only mounts when we just want to list / check the repo. Reuses
+// the goldilocks-backup image (which already carries the restic binary)
+// so opening the Backups screen doesn't pay the extra image-pull cost
+// — that pull was the cause of an early-launch UI freeze on fresh
+// checkouts. `--entrypoint restic` bypasses the postgres base's
+// inherited docker-entrypoint.sh.
+//
+// When `readOnly` is true the repo is mounted :ro AND restic gets the
+// global `--no-lock` flag prepended — otherwise restic would try to
+// write a lock file under /repo/locks/ and hang on EROFS-retries.
+function resticDockerArgs(args: string[], readOnly: boolean): string[] {
+  const repo = resticRepoDir();
+  const pass = resticPassphraseFile();
+  const repoMount = readOnly ? `${repo}:/repo:ro` : `${repo}:/repo`;
+  const resticArgs = readOnly ? ['--no-lock', ...args] : args;
+  return [
+    'run', '--rm',
+    '--entrypoint', 'restic',
+    '-v', repoMount,
+    '-v', `${pass}:/passphrase:ro`,
+    '-e', 'RESTIC_REPOSITORY=/repo',
+    '-e', 'RESTIC_PASSWORD_FILE=/passphrase',
+    BACKUP_IMAGE,
+    ...resticArgs,
+  ];
+}
+
+// Synchronously fetch and parse the snapshot list. Returns [] if the
+// repo doesn't exist yet, the passphrase is missing, or restic can't
+// open the repo for any reason.
+function listSnapshots(): ResticSnapshot[] {
+  if (!existsSync(resticRepoDir()) || !existsSync(resticPassphraseFile())) {
+    return [];
+  }
+  const res = spawnSync('docker', resticDockerArgs(['snapshots', '--json'], true), {
+    encoding: 'utf8',
+  });
+  if (res.status !== 0) return [];
+  try {
+    const parsed: unknown = JSON.parse(res.stdout);
+    if (!Array.isArray(parsed)) return [];
+    return parsed as ResticSnapshot[];
   } catch {
     return [];
   }
-  return names
-    .filter((n) => n.startsWith(prefix) && n.endsWith(suffix))
-    .map((n) => {
-      const s = statSync(join(dir, n));
-      return { name: n, size: s.size, mtime: s.mtime };
-    })
-    .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
 }
 
-function formatBackups(): string[] {
-  const dbDumps = listBackups('db-', '.dump');
-  const agentTars = listBackups('agent-data-', '.tar.gz');
-  const lines: string[] = ['Database dumps:'];
-  if (dbDumps.length === 0) lines.push('  (none)');
-  else dbDumps.forEach((f) => lines.push(`  ${f.name}  ${humanSize(f.size)}`));
-  lines.push('', 'Agent-identity archives:');
-  if (agentTars.length === 0) lines.push('  (none)');
-  else agentTars.forEach((f) => lines.push(`  ${f.name}  ${humanSize(f.size)}`));
-  return lines;
+function formatSnapshots(snapshots: ResticSnapshot[]): string[] {
+  if (snapshots.length === 0) {
+    if (!existsSync(resticPassphraseFile())) {
+      return [`No passphrase file at ${resticPassphraseFile()} — run setup first.`];
+    }
+    if (!existsSync(resticRepoDir())) {
+      return ['(no snapshots yet — run a backup to initialise the repo)'];
+    }
+    return ['(no snapshots in repo)'];
+  }
+  // Sort newest first. Restic returns ascending; we want descending.
+  const sorted = [...snapshots].sort((a, b) => b.time.localeCompare(a.time));
+  return sorted.map((s) => {
+    const when = s.time.replace('T', ' ').replace(/\.\d+.*$/, 'Z');
+    const tags = (s.tags ?? []).filter((t) => !t.startsWith('ts=')).join(' ');
+    return `  ${s.short_id}  ${when}  ${tags}`;
+  });
 }
 
-// One bash script that stops the app, restores the DB dump, and restarts.
-function restoreDatabaseScript(file: string): string {
-  const user = process.env.POSTGRES_USER ?? 'goldilocks';
-  const db = process.env.POSTGRES_DB ?? 'goldilocks';
-  const dc = `docker compose --env-file .env.${ENV} -f ${composeFile()}`;
-  return (
-    `${dc} stop backend agent; ` +
-    `cat "backups/${file}" | ${dc} exec -T goldilocks-db ` +
-    `pg_restore -U ${user} -d ${db} --clean --if-exists --no-owner; rc=$?; ` +
-    `${dc} start backend agent; exit $rc`
-  );
+// Group snapshots by their ts= tag — one backup run writes three
+// (db / volumes / stage). The picker shows one row per run, restore.sh
+// resolves the snapshot id back to the full run.
+interface BackupRun {
+  ts: string;       // the ts= tag value, e.g. 20260527T030000Z
+  snapshotId: string; // any one of the snapshots from this run (restore.sh accepts any)
+  time: string;       // ISO timestamp for display
+  kinds: string[];    // db/volumes/stage that we found for this run
 }
 
-// One bash script that stops the agent, replaces its identity data, restarts.
-function restoreAgentScript(file: string): string {
-  const dc = `docker compose --env-file .env.${ENV} -f ${composeFile()}`;
-  const backups = join(REPO_ROOT, 'backups');
-  return (
-    `${dc} stop agent; ` +
-    `${dc} run --rm --no-deps -v "${backups}:/restore-src:ro" --entrypoint sh agent ` +
-    `-c 'rm -rf /var/lib/goldilocks-agent/* && tar xzf "/restore-src/${file}" -C /var/lib/goldilocks-agent'; rc=$?; ` +
-    `${dc} start agent; exit $rc`
-  );
+function groupBackupRuns(snapshots: ResticSnapshot[]): BackupRun[] {
+  const byTs = new Map<string, BackupRun>();
+  for (const s of snapshots) {
+    const ts = (s.tags ?? []).find((t) => t.startsWith('ts='))?.slice(3) ?? s.short_id;
+    const kind = (s.tags ?? []).find((t) => t.startsWith('kind='))?.slice(5) ?? '';
+    const existing = byTs.get(ts);
+    if (existing) {
+      if (kind && !existing.kinds.includes(kind)) existing.kinds.push(kind);
+    } else {
+      byTs.set(ts, { ts, snapshotId: s.short_id, time: s.time, kinds: kind ? [kind] : [] });
+    }
+  }
+  return Array.from(byTs.values()).sort((a, b) => b.ts.localeCompare(a.ts));
 }
 
 // --- settings / env --------------------------------------------------------
@@ -1082,11 +1544,30 @@ function envSummaryLine(): string {
 
 // Build a fresh .env file from the template, with generated secrets.
 function buildEnvContent(xmtpUrl: string): string {
+  // Preserve existing secrets across re-runs so the encrypted columns
+  // (F4) and the agent DB (encrypted with AGENT_DB_ENCRYPTION_KEY) stay
+  // readable. Only generate fresh values for keys the operator hasn't
+  // seen yet. A change in template (.env.example) still propagates —
+  // we re-read the template every time.
+  const existing = existsSync(envFilePath()) ? readEnvFile() : {};
+  const carryOrGenerate = (key: string): string => {
+    const prior = existing[key];
+    if (prior && prior !== '' && !prior.startsWith('replace_me')) {
+      return prior;
+    }
+    return generateSecret();
+  };
+
   let content = readFileSync(envTemplatePath(), 'utf8');
-  content = setEnvValue(content, 'JWT_SECRET', generateSecret());
-  content = setEnvValue(content, 'AGENT_DB_ENCRYPTION_KEY', generateSecret());
+  content = setEnvValue(content, 'JWT_SECRET', carryOrGenerate('JWT_SECRET'));
+  content = setEnvValue(content, 'AGENT_DB_ENCRYPTION_KEY', carryOrGenerate('AGENT_DB_ENCRYPTION_KEY'));
+  // F4 — App-layer column encryption. Carrying the existing key is
+  // critical: rotating it without a re-encrypt step would make every
+  // ciphertext in the targeted columns permanently unreadable.
+  content = setEnvValue(content, 'APP_ENCRYPTION_KEY', carryOrGenerate('APP_ENCRYPTION_KEY'));
+  content = setEnvValue(content, 'ENCRYPT_AT_REST_V1', 'true');
   if (ENV === 'prod') {
-    content = setEnvValue(content, 'POSTGRES_PASSWORD', generateSecret());
+    content = setEnvValue(content, 'POSTGRES_PASSWORD', carryOrGenerate('POSTGRES_PASSWORD'));
     if (xmtpUrl) content = setEnvValue(content, 'XMTP_GRPC_URL', xmtpUrl);
   }
   return content;
@@ -1462,6 +1943,17 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
   const [dash, setDash] = useState<DashboardData | null>(null);
   const [admins, setAdmins] = useState<AdminRow[] | null>(null);
   const [clients, setClients] = useState<ClientRow[] | null>(null);
+  // Backups screen — snapshot list + image-built flag + last error.
+  // Loaded async by the effect below so the screen renders instantly
+  // and shows a "Loading…" placeholder instead of blocking the terminal
+  // on a synchronous `docker run`. `error` carries an actionable
+  // string when the fetch fails (timeout, locked repo, etc).
+  const [backupsState, setBackupsState] = useState<{
+    snapshots: ResticSnapshot[];
+    imageBuilt: boolean;
+    loaded: boolean;
+    error: string | null;
+  }>({ snapshots: [], imageBuilt: false, loaded: false, error: null });
   const [running, setRunning] = useState<RunState | null>(null);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const [inputState, setInputState] = useState<InputState | null>(null);
@@ -1511,6 +2003,38 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
     withDb(loadClients)
       .then((rows) => mounted && setClients(rows))
       .catch(() => mounted && setClients([]));
+    return () => {
+      mounted = false;
+    };
+  }, [screen, tick]);
+
+  // Load restic snapshot list + backup-image presence when the Backups
+  // screen opens. Async so the screen renders instantly with a
+  // "Loading…" placeholder instead of blocking on `docker run` in the
+  // render path. tick re-fetches on Refresh.
+  useEffect(() => {
+    if (screen !== 'backups') return undefined;
+    let mounted = true;
+    setBackupsState((prev) => ({ ...prev, loaded: false }));
+    Promise.all([listSnapshotsAsync(), backupImageBuiltAsync()])
+      .then(([result, imageBuilt]) => {
+        if (!mounted) return;
+        setBackupsState({
+          snapshots: result.snapshots,
+          imageBuilt,
+          loaded: true,
+          error: result.error,
+        });
+      })
+      .catch((e) => {
+        if (!mounted) return;
+        setBackupsState({
+          snapshots: [],
+          imageBuilt: false,
+          loaded: true,
+          error: (e as Error).message,
+        });
+      });
     return () => {
       mounted = false;
     };
@@ -1595,6 +2119,18 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
 
   const pickEnv = (chosen: Env): void => {
     ENV = chosen;
+
+    // F3 — if the sealed env is newer than the plaintext (or the
+    // plaintext doesn't exist), auto-unseal so the operator never has
+    // to think about the encryption layer day-to-day. Silent on success;
+    // failures surface as a notice so they're not invisible.
+    if (sealedNewerThanPlain() && existsSync(ageKeyFile())) {
+      const res = unsealEnvSync();
+      if (!res.ok) {
+        setNotice(`Auto-unseal failed: ${res.message}`);
+      }
+    }
+
     if (envFileExists()) {
       loadEnv({ path: envFilePath(), override: true });
       go('dashboard');
@@ -1609,17 +2145,101 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
       writeFileSync(envFilePath(), content, { mode: 0o600 });
       chmodSync(envFilePath(), 0o600);
       loadEnv({ path: envFilePath(), override: true });
-      setNotice(
-        ENV === 'prod'
-          ? `Wrote .env.prod — back up AGENT_DB_ENCRYPTION_KEY, losing it loses the agents.`
-          : 'Wrote .env.dev — dev defaults cover everything else.',
-      );
+
+      // Generate the restic passphrase if it isn't already on disk.
+      // Backups → View backup passphrase opens this file so the operator
+      // can copy it into their password manager once.
+      const restic = ensureResticPassphrase();
+      const resticPart = restic.created
+        ? ` Generated restic passphrase at ${restic.path} — save it to your password manager (Backups → View backup passphrase).`
+        : '';
+
+      // F3 + F5 — generate the SOPS age key + TLS material. Both need
+      // the backup image (for age-keygen and the step CLI). On a fresh
+      // checkout the image isn't built yet, so kick off the build now
+      // and finish the rest in the finalize callback — that way the
+      // operator clicks Run setup once and walks away.
+      const envHeader = ENV === 'prod'
+        ? 'Wrote .env.prod — back up AGENT_DB_ENCRYPTION_KEY, losing it loses the agents.'
+        : 'Wrote .env.dev — dev defaults cover everything else.';
+
+      if (!backupImageBuilt()) {
+        runDocker(
+          'Building backup image (one-time, ~1 min) — setup will continue after',
+          ['--profile', 'backup', 'build', 'backup'],
+          'settings',
+          {
+            finalize: async (code, append) => {
+              if (code !== 0) {
+                append('');
+                append('Backup image build failed. Once Docker is healthy, re-run Settings → Run setup.');
+                return;
+              }
+              append('');
+              append('Image built. Finishing setup (age key + TLS material)…');
+              const finalizeMessage = finalizeKeysAndTls();
+              append(finalizeMessage);
+              setNotice(`${envHeader}${resticPart} ${finalizeMessage}`.trim());
+            },
+          },
+        );
+        return;
+      }
+
+      const sopsAndTlsMessage = finalizeKeysAndTls();
+      setNotice(`${envHeader}${resticPart} ${sopsAndTlsMessage}`.trim());
       setScreen('dashboard');
       refresh();
     } catch (err) {
       setNotice(`Setup failed: ${(err as Error).message}`);
       setScreen('settings');
     }
+  };
+
+  // Generates the SOPS age key, writes .sops.yaml, seals .env.<env>,
+  // and mints the TLS CA + postgres leaf. Used by finishSetup both in
+  // the synchronous path (image already built) and in the post-build
+  // finalize callback (image just built). Returns a notice fragment.
+  //
+  // Idempotent: each step short-circuits if the artifact is already in
+  // place. Crucially, the seal step runs whenever the sealed file is
+  // missing OR older than the just-written .env.<env>, so a re-run of
+  // Setup keeps the encrypted copy in sync with the regenerated plain
+  // env file.
+  const finalizeKeysAndTls = (): string => {
+    const fragments: string[] = [];
+    try {
+      const age = ensureAgeKey();
+      ensureSopsConfig();
+      if (age.created && age.recipient) {
+        fragments.push(`Minted age key (recipient ${age.recipient.slice(0, 12)}…).`);
+      } else if (age.created) {
+        fragments.push('Age key created, but recipient could not be read — manual seal may be needed.');
+      }
+
+      // Always seal if the sealed file doesn't exist yet OR if the plain
+      // env is newer (e.g. Setup just regenerated it). This is the fix
+      // for the re-run drift case where a second Setup call would
+      // otherwise leave secrets/<env>.env.enc stale.
+      if (existsSync(envFilePath()) && existsSync(ageKeyFile())) {
+        const sealedExists = existsSync(sealedEnvFile());
+        const needsSeal = !sealedExists || !sealedNewerThanPlain();
+        if (needsSeal) {
+          const seal = sealEnvSync();
+          fragments.push(seal.ok ? 'Sealed .env into the encrypted copy.' : `Seal failed: ${seal.message}`);
+        }
+      }
+
+      const tls = ensureTlsSync();
+      if (tls.created) {
+        fragments.push('Generated TLS material in secrets/tls/.');
+      } else if (!tls.ok) {
+        fragments.push(`TLS setup failed: ${tls.message}`);
+      }
+    } catch (err) {
+      fragments.push(`Keys/TLS step errored: ${(err as Error).message}`);
+    }
+    return fragments.join(' ');
   };
 
   const startSetup = (): void => {
@@ -1733,30 +2353,6 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
     });
   };
 
-  // pg_dump the dev Postgres container into ./backups. Custom format so it
-  // restores with pg_restore; the `dev-` prefix keeps these dumps out of
-  // the prod Backups restore picker.
-  const devBackup = (): void => {
-    const file = `dev-db-${timestamp()}.dump`;
-    const script = [
-      'mkdir -p backups',
-      `if docker compose -f docker-compose.yml exec -T goldilocks-db ` +
-        `pg_dump -U goldilocks -d goldilocks -Fc > "backups/${file}"; then`,
-      `  echo "Saved backups/${file}"`,
-      'else',
-      `  rm -f "backups/${file}"`,
-      '  echo "Backup failed — start the dev environment first."',
-      '  exit 1',
-      'fi',
-    ].join('\n');
-    startCommand({
-      title: 'Back up dev database',
-      command: 'bash',
-      args: ['-c', script],
-      returnTo: 'systems',
-    });
-  };
-
   // --- screen rendering ----------------------------------------------------
 
   // Each screen builds its own body element; renderScreen() selects the
@@ -1836,13 +2432,16 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
     ];
     const menu: Choice<string>[] = [
       { label: 'Admins', value: 'admins', hint: 'add / remove admin slots' },
+      // Backups works in both envs — the dev path runs the restic repo
+      // at ./backups/restic-dev/ and exposes Run / Restore / Verify /
+      // restore-drill against the live dev stack.
+      { label: 'Backups', value: 'backups', hint: 'list, run, restore, restore drill' },
       { label: 'Clients', value: 'clients', hint: 'view client plans' },
       { label: 'Payments', value: 'payments', hint: 'Stripe keys + webhook config' },
     ];
     if (ENV === 'prod') {
       menu.push({ label: 'Deploy', value: 'deploy', hint: 'pull, preflight, build, migrate, restart' });
       menu.push({ label: 'Production stack', value: 'stack', hint: 'status, start / stop, restart' });
-      menu.push({ label: 'Backups', value: 'backups', hint: 'list, run, restore' });
       menu.push({ label: 'Cloudflare tunnel', value: 'tunnel', hint: 'start / stop, public URL' });
     }
     menu.push({ label: 'Settings', value: 'settings', hint: '.env config' });
@@ -2157,13 +2756,13 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
     );
   }
 
-  // Systems (dev environment start/stop).
+  // Systems (dev environment start/stop). Backup lives in the dedicated
+  // Backups screen (restic-based) — Systems is just lifecycle now.
   if (screen === 'systems') {
     const onSelect = (v: string): void => {
       if (v === 'back') go('dashboard');
       else if (v === 'up') devUp();
       else if (v === 'down') devDown();
-      else if (v === 'backup') devBackup();
       else if (v === 'restart') devRestart();
       else if (v === 'reset') {
         setConfirmState({
@@ -2183,7 +2782,6 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
           choices={[
             { label: 'Start', value: 'up', hint: 'node, db, migrations, server, agents' },
             { label: 'Stop', value: 'down', hint: 'stops everything; data is kept' },
-            { label: 'Backup', value: 'backup', hint: 'dump the dev database to backups/' },
             { label: 'Restart', value: 'restart', hint: 'bounce server + agents to pick up code changes' },
             { label: 'Reset', value: 'reset', hint: 'stop, then wipe the dev db, keys, sims' },
             { label: 'Back', value: 'back' },
@@ -2331,101 +2929,217 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
     );
   }
 
-  // Backups.
+  // Backups. Lists restic snapshots and exposes Run / Restore / Verify /
+  // Pull / setup-style actions. The full design lives in
+  // docs/encryption-and-backup-plan.md (F1/F2/F6/F7/F9).
   if (screen === 'backups') {
+    const { snapshots, imageBuilt, loaded, error: backupsError } = backupsState;
+    const runs = groupBackupRuns(snapshots);
+    const passphraseExists = existsSync(resticPassphraseFile());
+
+    // Render a tight placeholder until the async load finishes. Avoids
+    // blocking the terminal on `docker run`. The fetch itself has a
+    // 15s hard timeout so this can't hang forever.
+    if (!loaded) {
+      return (
+        <Box flexDirection="column">
+          <Text bold>Backups</Text>
+          <Box marginTop={1} flexDirection="column">
+            <Text dimColor>Loading snapshots…</Text>
+            <Text dimColor>(15s timeout — if this sticks, Docker may not be running.)</Text>
+          </Box>
+        </Box>
+      );
+    }
+
     const onSelect = (v: string): void => {
       if (v === 'back') go('dashboard');
       else if (v === 'refresh') refresh();
-      else if (v === 'run') {
-        runDocker('Run a backup', ['exec', 'backup', 'bash', '/usr/local/bin/backup.sh'], 'backups');
-      } else if (v === 'restore-db') go('restore-db');
-      else if (v === 'restore-agent') go('restore-agent');
+      else if (v === 'generate-passphrase') {
+        const result = ensureResticPassphrase();
+        if (result.created) {
+          setNotice(`Generated restic passphrase at ${result.path}. Open it (View backup passphrase) and save the value to your password manager.`);
+        } else {
+          setNotice(`Passphrase already exists at ${result.path}.`);
+        }
+        refresh();
+      } else if (v === 'view-passphrase') {
+        openInOS(['-t', resticPassphraseFile()]);
+        setNotice(`Opened ${resticPassphraseFile()} in your default editor. Copy the value to your password manager and close without changes.`);
+      } else if (v === 'build-image') {
+        runDocker(
+          'Build backup image (one-time, ~1 min)',
+          ['--profile', 'backup', 'build', 'backup'],
+          'backups',
+        );
+      } else if (v === 'run') {
+        runDocker(
+          'Run a backup',
+          ['--profile', 'backup', 'run', '--rm', 'backup'],
+          'backups',
+        );
+      } else if (v === 'restore-latest') {
+        const latest = runs[0];
+        if (!latest) {
+          setNotice('No snapshots to restore from — run a backup first.');
+          return;
+        }
+        setConfirmState({
+          message: `Restore the latest snapshot (${latest.snapshotId}, ${latest.time})? This will overwrite the current database and volumes. The stack must be stopped first.`,
+          onYes: () =>
+            startCommand({
+              title: `Restore latest — ${latest.snapshotId}`,
+              command: 'bash',
+              args: [
+                scriptPath('restore.sh'),
+                '--env', ENV,
+                '--yes',
+                resticRepoDir(),
+                latest.snapshotId,
+              ],
+              returnTo: 'backups',
+            }),
+        });
+      } else if (v === 'restore-pick') {
+        go('restore-snapshot');
+      } else if (v === 'verify') {
+        startCommand({
+          title: 'Verify backup integrity (restic check)',
+          command: 'docker',
+          args: resticDockerArgs(['check', '--read-data'], true),
+          returnTo: 'backups',
+        });
+      } else if (v === 'pull') {
+        startCommand({
+          title: 'Pull latest snapshots to laptop',
+          command: 'bash',
+          args: [scriptPath('pull-latest-backup.sh')],
+          returnTo: 'backups',
+        });
+      } else if (v === 'unlock') {
+        startCommand({
+          title: 'Unlock restic repo',
+          command: 'docker',
+          args: resticDockerArgs(['unlock'], false),
+          returnTo: 'backups',
+        });
+      } else if (v === 'drill') {
+        setConfirmState({
+          message: 'Run the end-to-end restore drill? Backs up, restores into a parallel goldilocks-restore-test project, runs a smoke probe, then tears it down. Takes ~2 minutes.',
+          onYes: () =>
+            startCommand({
+              title: 'Restore drill',
+              command: 'bash',
+              args: [join(REPO_ROOT, 'dev', 'restore-drill')],
+              returnTo: 'backups',
+            }),
+        });
+      } else if (v === 'open') {
+        openInOS([join(REPO_ROOT, 'backups')]);
+        setNotice('Opened the backups folder in Finder.');
+      }
     };
+
+    const choices: Choice<string>[] = [];
+    // Setup actions first when something's missing — the operator can't
+    // do anything else until these are green.
+    if (!passphraseExists) {
+      choices.push({ label: 'Generate backup passphrase', value: 'generate-passphrase', hint: 'creates a strong random passphrase (one-time)' });
+    } else {
+      choices.push({ label: 'View backup passphrase', value: 'view-passphrase', hint: 'open the file in your editor — copy to your password manager' });
+    }
+    if (!imageBuilt) {
+      choices.push({ label: 'Build backup image (one-time)', value: 'build-image', hint: 'builds the restic + pg_dump + git container (~1 min)' });
+    }
+    // Normal flow. Disable Run / Restore until prerequisites are met
+    // by simply not listing them (cleaner than greyed-out items).
+    if (passphraseExists) {
+      choices.push({ label: 'Run a backup now', value: 'run' });
+    }
+    if (runs.length > 0) {
+      choices.push({ label: `Restore from latest snapshot (${runs[0].snapshotId})`, value: 'restore-latest' });
+      choices.push({ label: 'Restore from a specific snapshot…', value: 'restore-pick' });
+      choices.push({ label: 'Verify backup integrity', value: 'verify' });
+    }
+    if (ENV === 'prod') {
+      choices.push({ label: 'Pull snapshots to laptop', value: 'pull' });
+    }
+    if (ENV === 'dev' && passphraseExists) {
+      choices.push({ label: 'Run restore drill', value: 'drill', hint: 'end-to-end backup + restore round-trip test' });
+    }
+    if (backupsError && /lock/i.test(backupsError)) {
+      choices.push({ label: 'Unlock restic repo', value: 'unlock', hint: 'clears stale locks left by an interrupted backup' });
+    }
+    choices.push({ label: 'Open backup folder', value: 'open' });
+    choices.push({ label: 'Refresh', value: 'refresh' });
+    choices.push({ label: 'Back', value: 'back' });
+
     return (
       <Box flexDirection="column">
         <Text bold>Backups</Text>
-        <Box marginTop={1} marginBottom={1}>
-          <Text dimColor>Daily pg_dump + agent-identity archive, kept 30 days in backups/.</Text>
+        <Box marginTop={1} marginBottom={1} flexDirection="column">
+          <Text dimColor>
+            Restic repo at backups/restic-{ENV}/ — encrypted, deduplicated,
+            tiered retention. Run on demand.
+          </Text>
+          {!passphraseExists && (
+            <Text color="yellow">
+              {'No passphrase yet — choose "Generate backup passphrase" below.'}
+            </Text>
+          )}
+          {passphraseExists && !imageBuilt && (
+            <Text color="yellow">
+              Backup image not yet built — first backup will build it
+              automatically, or pre-build via the action below.
+            </Text>
+          )}
+          {backupsError && (
+            <Text color="red">{`Snapshot fetch error: ${backupsError}`}</Text>
+          )}
         </Box>
-        <Panel title="Available backups" lines={formatBackups()} />
+        <Panel title="Snapshots (newest first)" lines={formatSnapshots(snapshots)} />
         <SectionLabel text="Actions" />
-        <SelectList
-          key="backups"
-          choices={[
-            { label: 'Run a backup now', value: 'run' },
-            { label: 'Restore the database from a backup', value: 'restore-db' },
-            { label: 'Restore agent identities from a backup', value: 'restore-agent' },
-            { label: 'Refresh', value: 'refresh' },
-            { label: 'Back', value: 'back' },
-          ]}
-          onSelect={onSelect}
-        />
+        <SelectList key="backups" choices={choices} onSelect={onSelect} />
       </Box>
     );
   }
 
-  // Backups — restore database picker.
-  if (screen === 'restore-db') {
-    const dumps = listBackups('db-', '.dump');
+  // Backups — restore from a specific snapshot picker. One row per
+  // backup run (kind=db + kind=volumes + kind=stage collapse into one).
+  if (screen === 'restore-snapshot') {
+    const runs = groupBackupRuns(listSnapshots());
     const choices: Choice<string | null>[] = [
-      ...dumps.map((f): Choice<string | null> => ({ label: `${f.name}  ${humanSize(f.size)}`, value: f.name })),
+      ...runs.map((r): Choice<string | null> => ({
+        label: `${r.snapshotId}  ${r.time.replace('T', ' ').replace(/\.\d+.*$/, 'Z')}  [${r.kinds.join(',') || 'n/a'}]`,
+        value: r.snapshotId,
+      })),
       { label: 'Cancel', value: null },
     ];
     return (
       <Box flexDirection="column">
-        <Text bold>Restore the database from which dump?</Text>
+        <Text bold>Restore from which snapshot?</Text>
         <Box marginTop={1}>
           <SelectList
-            key="restore-db"
+            key="restore-snapshot"
             choices={choices}
-            onSelect={(file) => {
-              if (!file) {
+            onSelect={(snapshotId) => {
+              if (!snapshotId) {
                 go('backups');
                 return;
               }
               setConfirmState({
-                message: `Overwrite the current database with "${file}"? This cannot be undone.`,
+                message: `Restore snapshot ${snapshotId}? This will overwrite the current database and volumes. The stack must be stopped first.`,
                 onYes: () =>
                   startCommand({
-                    title: `Restore database — ${file}`,
+                    title: `Restore — ${snapshotId}`,
                     command: 'bash',
-                    args: ['-c', restoreDatabaseScript(file)],
-                    returnTo: 'backups',
-                  }),
-              });
-            }}
-          />
-        </Box>
-      </Box>
-    );
-  }
-
-  // Backups — restore agent identities picker.
-  if (screen === 'restore-agent') {
-    const tars = listBackups('agent-data-', '.tar.gz');
-    const choices: Choice<string | null>[] = [
-      ...tars.map((f): Choice<string | null> => ({ label: `${f.name}  ${humanSize(f.size)}`, value: f.name })),
-      { label: 'Cancel', value: null },
-    ];
-    return (
-      <Box flexDirection="column">
-        <Text bold>Restore agent identities from which archive?</Text>
-        <Box marginTop={1}>
-          <SelectList
-            key="restore-agent"
-            choices={choices}
-            onSelect={(file) => {
-              if (!file) {
-                go('backups');
-                return;
-              }
-              setConfirmState({
-                message: `Replace the agents' identity data with "${file}"? This cannot be undone.`,
-                onYes: () =>
-                  startCommand({
-                    title: `Restore agent identities — ${file}`,
-                    command: 'bash',
-                    args: ['-c', restoreAgentScript(file)],
+                    args: [
+                      scriptPath('restore.sh'),
+                      '--env', ENV,
+                      '--yes',
+                      resticRepoDir(),
+                      snapshotId,
+                    ],
                     returnTo: 'backups',
                   }),
               });
@@ -2441,6 +3155,11 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
     const exists = envFileExists();
     const items: Choice<string>[] = [];
     items.push({
+      label: 'Keys',
+      value: 'keys',
+      hint: 'backup passphrase + sealed-secrets age key',
+    });
+    items.push({
       label: 'View logs',
       value: 'logs',
       hint: ENV === 'dev' ? 'open the .dev-run log folder' : 'stream a service log',
@@ -2451,6 +3170,7 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
 
     const onSelect = (v: string): void => {
       if (v === 'back') go('dashboard');
+      else if (v === 'keys') go('keys');
       else if (v === 'logs') {
         if (ENV === 'dev') {
           // Dev logs are plain files — just open the folder in Finder.
@@ -2468,7 +3188,7 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
           return;
         }
         openInOS(['-t', envFilePath()]);
-        setNotice(`Opened .env.${ENV} in your default editor.`);
+        setNotice(`Opened .env.${ENV} in your default editor. After saving, run Settings → Keys → Seal secrets to update the encrypted copy.`);
       }
     };
     return (
@@ -2480,6 +3200,254 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
           <Text dimColor>{`  —  ${envSummaryLine()}`}</Text>
         </Box>
         <SelectList key="settings" choices={items} onSelect={onSelect} />
+      </Box>
+    );
+  }
+
+  // Settings → Keys. Inventory + actions for long-lived secrets the
+  // system depends on. Values never display — only fingerprints, "set /
+  // not set" markers, and paths. See docs/encryption-and-backup-plan.md
+  // F9. More rows arrive with later phases (APP_ENCRYPTION_KEY,
+  // step-ca root, etc.).
+  if (screen === 'keys') {
+    const passphrasePath = resticPassphraseFile();
+    const passphraseSet = existsSync(passphrasePath);
+
+    const agePath = ageKeyFile();
+    const ageSet = existsSync(agePath);
+    const recipient = readAgeRecipient();
+    const recipientShort = recipient ? `${recipient.slice(0, 16)}…` : '(unreadable)';
+
+    const sealedPath = sealedEnvFile();
+    const sealedExists = existsSync(sealedPath);
+    const plainExists = envFileExists();
+    let sealStatus: { color: 'green' | 'yellow' | 'gray'; text: string };
+    if (!ageSet) {
+      sealStatus = { color: 'gray', text: 'Age key not generated — run setup' };
+    } else if (!sealedExists) {
+      sealStatus = { color: 'yellow', text: `Not sealed yet — run "Seal .env.${ENV}" below` };
+    } else if (!plainExists) {
+      sealStatus = { color: 'yellow', text: 'Plaintext .env missing — unseal to recover' };
+    } else {
+      const sealedTime = statSync(sealedPath).mtime;
+      const plainTime = statSync(envFilePath()).mtime;
+      const drift = plainTime.getTime() - sealedTime.getTime();
+      sealStatus = drift > 1000
+        ? { color: 'yellow', text: `.env.${ENV} has changes — seal to update the encrypted copy` }
+        : { color: 'green', text: `In sync (last sealed ${sealedTime.toISOString().replace('T', ' ').replace(/\.\d+.*$/, 'Z')})` };
+    }
+
+    // F4 — column encryption status. APP_ENCRYPTION_KEY is set by setup;
+    // we read its presence (never the value) from the .env file. The
+    // feature flag is the actual switch — if it's off, the codec passes
+    // plaintext through.
+    const envValues = readEnvFile();
+    const appKeySet = (envValues.APP_ENCRYPTION_KEY ?? '').length === 64;
+    const colFlagOn = (envValues.ENCRYPT_AT_REST_V1 ?? '').toLowerCase() === 'true';
+    let colStatus: { color: 'green' | 'yellow' | 'gray'; text: string };
+    if (!appKeySet) {
+      colStatus = { color: 'gray', text: 'APP_ENCRYPTION_KEY not set — run setup' };
+    } else if (!colFlagOn) {
+      colStatus = { color: 'yellow', text: 'Key present but ENCRYPT_AT_REST_V1=false — writes are still plaintext' };
+    } else {
+      colStatus = { color: 'green', text: 'On — new writes are encrypted in the targeted columns' };
+    }
+
+    // F5 — TLS row.
+    const tlsCaPath = tlsCaCertPath();
+    const tlsCaSet = existsSync(tlsCaPath);
+    const tlsLeafPath = tlsPostgresCertPath();
+    const tlsLeafSet = existsSync(tlsLeafPath);
+    const caExpiry = tlsCaSet ? tlsCertExpiry(tlsCaPath) : null;
+    const leafExpiry = tlsLeafSet ? tlsCertExpiry(tlsLeafPath) : null;
+    const fmtExpiry = (d: Date | null): string => {
+      if (!d) return '(unreadable)';
+      const days = Math.round((d.getTime() - Date.now()) / 86_400_000);
+      return `${d.toISOString().slice(0, 10)} (${days}d)`;
+    };
+    let tlsStatus: { color: 'green' | 'yellow' | 'red' | 'gray'; text: string };
+    if (!tlsCaSet || !tlsLeafSet) {
+      tlsStatus = { color: 'gray', text: 'TLS not initialised — postgres will refuse to start' };
+    } else if (leafExpiry && leafExpiry.getTime() - Date.now() < 30 * 86_400_000) {
+      tlsStatus = { color: 'red', text: `Postgres leaf expires in <30 days — run "Renew TLS leaf" below` };
+    } else if (leafExpiry && leafExpiry.getTime() - Date.now() < 90 * 86_400_000) {
+      tlsStatus = { color: 'yellow', text: `Postgres leaf expires in <90 days — plan a renewal` };
+    } else {
+      tlsStatus = { color: 'green', text: `Healthy (leaf expires ${fmtExpiry(leafExpiry)})` };
+    }
+
+    const onSelect = (v: string): void => {
+      if (v === 'back') go('settings');
+      else if (v === 'view-passphrase') {
+        if (!passphraseSet) {
+          setNotice('No passphrase yet — Backups → Generate backup passphrase first.');
+          return;
+        }
+        openInOS(['-t', passphrasePath]);
+        setNotice(`Opened ${passphrasePath}. Copy the value to your password manager and close without changes.`);
+      } else if (v === 'view-age') {
+        if (!ageSet) {
+          setNotice('No age key yet — Settings → Run setup first.');
+          return;
+        }
+        openInOS(['-t', agePath]);
+        setNotice(`Opened ${agePath}. Recipient (public) line is at the top — that's safe to share; the AGE-SECRET-KEY line below it is not.`);
+      } else if (v === 'view-tls') {
+        if (!tlsCaSet) {
+          setNotice('No TLS material yet — Settings → Run setup first.');
+          return;
+        }
+        openInOS([tlsDir()]);
+        setNotice(`Opened ${tlsDir()} in Finder. Files: ca.crt (public), ca.key (private), postgres.crt/key (server).`);
+      } else if (v === 'init-tls') {
+        if (!backupImageBuilt()) {
+          setNotice('Build the backup image first (Backups → Build backup image).');
+          return;
+        }
+        const result = ensureTlsSync();
+        setNotice(result.message);
+        refresh();
+      } else if (v === 'renew-tls') {
+        setConfirmState({
+          message: 'Regenerate the postgres leaf cert (keeping the same CA)? Postgres + backend + agent will need a restart afterwards.',
+          onYes: () => {
+            const result = renewTlsLeafSync();
+            setNotice(result.message);
+            refresh();
+          },
+        });
+      } else if (v === 'migrate-columns') {
+        if (!appKeySet) {
+          setNotice('APP_ENCRYPTION_KEY not set — run setup first.');
+          return;
+        }
+        setConfirmState({
+          message: `Encrypt all remaining plaintext rows in the at-rest columns? Idempotent and resumable — already-encrypted rows are skipped. Reads ${ENV === 'prod' ? 'against prod' : 'against dev'} continue to work throughout.`,
+          onYes: () =>
+            startCommand({
+              title: 'Encrypt remaining plaintext columns',
+              command: 'bash',
+              args: [
+                '-c',
+                `DOTENV_CONFIG_PATH=.env.${ENV} npx tsx scripts/migrate-encrypt-columns.ts`,
+              ],
+              returnTo: 'keys',
+            }),
+        });
+      } else if (v === 'migrate-columns-dry') {
+        startCommand({
+          title: 'Plaintext column scan (dry run)',
+          command: 'bash',
+          args: [
+            '-c',
+            `DOTENV_CONFIG_PATH=.env.${ENV} npx tsx scripts/migrate-encrypt-columns.ts --dry-run`,
+          ],
+          returnTo: 'keys',
+        });
+      } else if (v === 'seal') {
+        if (!ageSet) {
+          setNotice('No age key yet — Settings → Run setup first (the setup flow mints one).');
+          return;
+        }
+        if (!plainExists) {
+          setNotice(`No .env.${ENV} to seal.`);
+          return;
+        }
+        // Self-heal: if .sops.yaml carries the old (buggy) path_regex
+        // from before the SOPS-config fix, ensureSopsConfig replaces it
+        // in place. Idempotent — no-op when the file is already correct.
+        const sopsCfg = ensureSopsConfig();
+        const result = sealEnvSync();
+        const healedNote = sopsCfg.replaced
+          ? ' (rewrote stale .sops.yaml so sops could find the rule.)'
+          : '';
+        setNotice(`${result.message}${healedNote}`);
+        refresh();
+      } else if (v === 'unseal') {
+        if (!sealedExists) {
+          setNotice(`No ${sealedPath} to unseal.`);
+          return;
+        }
+        if (plainExists) {
+          setConfirmState({
+            message: `Overwrite .env.${ENV} with the contents of ${sealedPath}? Any unsaved local edits will be lost.`,
+            onYes: () => {
+              const result = unsealEnvSync();
+              setNotice(result.message);
+              refresh();
+            },
+          });
+        } else {
+          const result = unsealEnvSync();
+          setNotice(result.message);
+          refresh();
+        }
+      }
+    };
+
+    const choices: Choice<string>[] = [];
+    if (passphraseSet) {
+      choices.push({ label: 'View restic backup passphrase', value: 'view-passphrase', hint: 'opens the file in your editor' });
+    }
+    if (ageSet) {
+      choices.push({ label: 'View SOPS age key', value: 'view-age', hint: 'opens the file — recipient line is public, key line is not' });
+    }
+    if (!tlsCaSet || !tlsLeafSet) {
+      choices.push({ label: 'Initialize TLS material', value: 'init-tls', hint: 'mint CA + postgres leaf (required for the stack to start)' });
+    } else {
+      choices.push({ label: 'View TLS material', value: 'view-tls', hint: 'opens secrets/tls/ in Finder' });
+      choices.push({ label: 'Renew TLS leaf', value: 'renew-tls', hint: 'regenerate postgres.crt against the existing CA' });
+    }
+    if (appKeySet) {
+      choices.push({ label: 'Scan for plaintext columns (dry-run)', value: 'migrate-columns-dry', hint: 'reports plaintext rows in target columns without writing' });
+      choices.push({ label: 'Encrypt remaining plaintext columns', value: 'migrate-columns', hint: 'backfill encryption across server_agents, admin_inboxes, clients, billing_checkouts, devices' });
+    }
+    if (ageSet && plainExists) {
+      choices.push({ label: `Seal .env.${ENV} → ${sealedPath.replace(REPO_ROOT + '/', '')}`, value: 'seal' });
+    }
+    if (ageSet && sealedExists) {
+      choices.push({ label: `Unseal ${sealedPath.replace(REPO_ROOT + '/', '')} → .env.${ENV}`, value: 'unseal' });
+    }
+    choices.push({ label: 'Back', value: 'back' });
+
+    const inventory: string[] = [
+      `Restic backup passphrase   ${passphraseSet ? 'set' : 'not set'}   ${passphrasePath.replace(REPO_ROOT + '/', '')}`,
+      `SOPS age key               ${ageSet ? 'set' : 'not set'}   ${agePath.replace(REPO_ROOT + '/', '')}` +
+        (ageSet ? `   recipient: ${recipientShort}` : ''),
+      `TLS CA                     ${tlsCaSet ? 'set' : 'not set'}   ${tlsCaPath.replace(REPO_ROOT + '/', '')}` +
+        (tlsCaSet ? `   expires ${fmtExpiry(caExpiry)}` : ''),
+      `TLS postgres leaf          ${tlsLeafSet ? 'set' : 'not set'}   ${tlsLeafPath.replace(REPO_ROOT + '/', '')}` +
+        (tlsLeafSet ? `   expires ${fmtExpiry(leafExpiry)}` : ''),
+      `APP_ENCRYPTION_KEY (F4)    ${appKeySet ? 'set' : 'not set'}   .env.${ENV}` +
+        (appKeySet ? `   flag ${colFlagOn ? 'on' : 'off'}` : ''),
+    ];
+
+    return (
+      <Box flexDirection="column">
+        <Text bold>Keys</Text>
+        <Box marginTop={1} marginBottom={1} flexDirection="column">
+          <Text dimColor>
+            Inventory of long-lived secrets for env=
+            <Text>{ENV}</Text>
+            . Values stay on disk in their files; this screen only shows
+            paths + fingerprints.
+          </Text>
+          <Box marginTop={1}>
+            <Text dimColor>Seal status:  </Text>
+            <Text color={sealStatus.color}>{sealStatus.text}</Text>
+          </Box>
+          <Box>
+            <Text dimColor>TLS status:   </Text>
+            <Text color={tlsStatus.color}>{tlsStatus.text}</Text>
+          </Box>
+          <Box>
+            <Text dimColor>Columns:      </Text>
+            <Text color={colStatus.color}>{colStatus.text}</Text>
+          </Box>
+        </Box>
+        <Panel title="Inventory" lines={inventory} />
+        <SectionLabel text="Actions" />
+        <SelectList key="keys" choices={choices} onSelect={onSelect} />
       </Box>
     );
   }

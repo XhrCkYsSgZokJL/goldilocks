@@ -1,0 +1,68 @@
+# Image for the `backup` compose service AND for SOPS / age / TLS
+# operations the goldilocks CLI invokes via this image.
+#
+# Bundles five tools in one container:
+#   - pg_dump      (from postgres:16) so we can stream the database
+#                  straight into restic without a tmp file
+#   - openssl      (from postgres:16) for minting the per-env TLS CA
+#                  and the postgres server leaf — see init-tls.sh
+#   - restic       (pinned) for encrypted, deduplicated snapshots
+#   - git          for `git bundle create` of the source repos
+#   - sops         for sealing / unsealing .env files (F3)
+#   - age          (with age-keygen) so the CLI can mint per-env
+#                  recipient keys without a host install
+#
+# Built automatically by docker compose the first time the backup
+# service is run, or via the CLI's Backups → Build backup image
+# action. See docker-compose.{prod.,}yml and
+# docs/encryption-and-backup-plan.md F1 + F3 + F5.
+
+FROM postgres:16
+
+ARG RESTIC_VERSION=0.18.0
+ARG SOPS_VERSION=3.9.0
+ARG AGE_VERSION=1.2.0
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bzip2 \
+        ca-certificates \
+        curl \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Restic — single static binary, pinned so an upstream release can't
+# silently change the on-disk repo format.
+RUN curl -fSL \
+        "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_amd64.bz2" \
+        -o /tmp/restic.bz2 \
+    && bunzip2 /tmp/restic.bz2 \
+    && mv /tmp/restic /usr/local/bin/restic \
+    && chmod 0755 /usr/local/bin/restic \
+    && restic version
+
+# SOPS — single static binary.
+RUN curl -fSL \
+        "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64" \
+        -o /usr/local/bin/sops \
+    && chmod 0755 /usr/local/bin/sops \
+    && sops --version
+
+# age + age-keygen — released as a tarball.
+RUN curl -fSL \
+        "https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}/age-v${AGE_VERSION}-linux-amd64.tar.gz" \
+        -o /tmp/age.tgz \
+    && tar -xzf /tmp/age.tgz -C /tmp \
+    && mv /tmp/age/age /usr/local/bin/age \
+    && mv /tmp/age/age-keygen /usr/local/bin/age-keygen \
+    && rm -rf /tmp/age /tmp/age.tgz \
+    && age --version \
+    && age-keygen --version
+
+# TLS material (F5) is minted via openssl, which is already in the
+# postgres:16 base. No external download required — see init-tls.sh.
+
+# The backup script is mounted as a read-only bind from the host so we
+# can edit it without rebuilding the image. Compose sets the entrypoint
+# to it; the CLI invokes specific binaries inside the image directly.
+WORKDIR /work
