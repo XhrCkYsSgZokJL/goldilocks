@@ -151,29 +151,37 @@ public final class CertificatePinner: NSObject, URLSessionDelegate, @unchecked S
         return Data(digest).base64EncodedString()
     }
 
+    // The Security framework's key-type constants are CFStrings. Hoist
+    // them into typed String constants once so the switch below can
+    // pattern-match against plain String values — `case (kSecAttr… as
+    // String, n)` in switch position doesn't actually bridge the
+    // CFString, it tries to *test* the cast and fails.
+    private static let kRSA: String = kSecAttrKeyTypeRSA as String
+    private static let kECSECPrimeRandom: String = kSecAttrKeyTypeECSECPrimeRandom as String
+
     // ASN.1 SubjectPublicKeyInfo prefix bytes per key type / size. These
     // are constants documented in the standard SPKI-pinning recipe (e.g.
     // OWASP MASTG, Moxie's 2011 pinning post). Adding more key types
     // means looking up the prefix once and dropping it into this table.
     private static func spkiHeader(keyType: String, sizeBits: Int) -> Data? {
         switch (keyType, sizeBits) {
-        case (kSecAttrKeyTypeRSA as String, 2048):
+        case (kRSA, 2048):
             return Data([
                 0x30, 0x82, 0x01, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
                 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x03, 0x82, 0x01, 0x0f, 0x00,
             ])
-        case (kSecAttrKeyTypeRSA as String, 4096):
+        case (kRSA, 4096):
             return Data([
                 0x30, 0x82, 0x02, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
                 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x03, 0x82, 0x02, 0x0f, 0x00,
             ])
-        case (kSecAttrKeyTypeECSECPrimeRandom as String, 256):
+        case (kECSECPrimeRandom, 256):
             return Data([
                 0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
                 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03,
                 0x42, 0x00,
             ])
-        case (kSecAttrKeyTypeECSECPrimeRandom as String, 384):
+        case (kECSECPrimeRandom, 384):
             return Data([
                 0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02,
                 0x01, 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00,
