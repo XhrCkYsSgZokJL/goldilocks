@@ -18,6 +18,7 @@ import { db } from '../db/client.js';
 import { billingCheckouts, clients } from '../db/schema.js';
 import { getStripe, isStripeConfigured } from '../billing/stripe.js';
 import { settle } from '../billing/balance.js';
+import { emitSecurityEvent } from '../observability/security-events.js';
 
 export default async function stripeWebhookRoutes(app: FastifyInstance) {
   // Stripe signs the exact raw request bytes, so we must verify against
@@ -41,6 +42,11 @@ export default async function stripeWebhookRoutes(app: FastifyInstance) {
 
     const signature = req.headers['stripe-signature'];
     if (typeof signature !== 'string') {
+      emitSecurityEvent(req.log, {
+        event: 'stripe.webhook.missing_signature',
+        ip: req.ip,
+        severity: 'warn',
+      });
       return reply.code(400).send({ error: 'missing_signature' });
     }
 
@@ -52,7 +58,17 @@ export default async function stripeWebhookRoutes(app: FastifyInstance) {
         config.STRIPE_WEBHOOK_SECRET,
       );
     } catch (err) {
-      req.log.warn({ err }, 'stripe webhook signature verification failed');
+      // Critical: someone is hitting our webhook with bad signatures.
+      // Stripe's own retries don't produce these — it's either a probe
+      // or a misconfigured environment. The error object is logged for
+      // diagnostics; its .message comes from the Stripe SDK and never
+      // contains the secret or the raw body.
+      emitSecurityEvent(req.log, {
+        event: 'stripe.webhook.invalid_signature',
+        ip: req.ip,
+        severity: 'critical',
+        context: { error: (err as Error).message },
+      });
       return reply.code(400).send({ error: 'invalid_signature' });
     }
 

@@ -18,6 +18,7 @@ import { requireJwt } from '../middleware/jwt.js';
 import { deviceKeyGenerator } from '../middleware/rate-limit-keys.js';
 import { buildSiweMessage, verifyChallenge } from '../auth/siwe.js';
 import { lookupHash } from '../crypto/lookup-hash.js';
+import { emitSecurityEvent } from '../observability/security-events.js';
 
 const ADMIN_UPGRADE_CODE_LOOKUP_LABEL = 'admin_inboxes.upgrade_code.lookup';
 
@@ -81,9 +82,29 @@ export default async function meRoutes(app: FastifyInstance) {
     // Refuse mismatched re-registrations — that's the impersonation guard.
     const [device] = await db.select().from(devices).where(eq(devices.deviceId, deviceId)).limit(1);
     if (device?.inboxId && device.inboxId !== inboxId) {
+      // Critical: this device is already bound to a different inbox.
+      // Either a real impersonation attempt or the rare case of a user
+      // restoring a device backup into a different XMTP install.
+      emitSecurityEvent(req.log, {
+        event: 'siwe.device_inbox_mismatch',
+        deviceId,
+        inboxId,
+        ip: req.ip,
+        severity: 'critical',
+        context: { reason: 'inbox_locked', expectedInbox: '<known>' },
+      });
       return reply.code(409).send({ error: 'device_inbox_locked' });
     }
     if (device?.ethAddress && device.ethAddress.toLowerCase() !== ethAddress.toLowerCase()) {
+      emitSecurityEvent(req.log, {
+        event: 'siwe.device_inbox_mismatch',
+        deviceId,
+        inboxId,
+        ethAddress,
+        ip: req.ip,
+        severity: 'critical',
+        context: { reason: 'eth_locked' },
+      });
       return reply.code(409).send({ error: 'device_eth_locked' });
     }
 
@@ -98,6 +119,14 @@ export default async function meRoutes(app: FastifyInstance) {
     });
 
     const siweMessage = buildSiweMessage({ inboxId, ethAddress, nonce });
+
+    emitSecurityEvent(req.log, {
+      event: 'siwe.challenge.issued',
+      deviceId,
+      inboxId,
+      ethAddress,
+      ip: req.ip,
+    });
 
     return reply.code(200).send({
       siweMessage,
@@ -312,9 +341,25 @@ export default async function meRoutes(app: FastifyInstance) {
       }
     }
     if (!slot) {
+      // Brute-force signal — combined with the 3/min/device rate limit,
+      // a sustained stream of these from a single device is suspicious.
+      emitSecurityEvent(req.log, {
+        event: 'admin.upgrade.invalid_code',
+        deviceId,
+        inboxId: device.inboxId,
+        ip: req.ip,
+        severity: 'warn',
+      });
       return reply.code(403).send({ error: 'invalid_code' });
     }
     if (slot.disabled) {
+      emitSecurityEvent(req.log, {
+        event: 'admin.upgrade.disabled_code',
+        deviceId,
+        inboxId: device.inboxId,
+        ip: req.ip,
+        severity: 'warn',
+      });
       return reply.code(403).send({ error: 'code_disabled' });
     }
 
@@ -330,6 +375,14 @@ export default async function meRoutes(app: FastifyInstance) {
       .update(adminInboxes)
       .set({ inboxId: device.inboxId, claimedAt: new Date() })
       .where(eq(adminInboxes.id, slot.id));
+
+    emitSecurityEvent(req.log, {
+      event: 'admin.upgrade.success',
+      deviceId,
+      inboxId: device.inboxId,
+      ip: req.ip,
+      context: { adminName: slot.name },
+    });
 
     return reply.code(200).send({ ok: true, isAdmin: true, inboxId: device.inboxId });
   });
@@ -401,6 +454,14 @@ export default async function meRoutes(app: FastifyInstance) {
     });
 
     if (!verification.ok) {
+      emitSecurityEvent(req.log, {
+        event: 'siwe.challenge.failed',
+        deviceId,
+        inboxId,
+        ip: req.ip,
+        severity: 'warn',
+        context: { reason: verification.reason },
+      });
       return reply.code(401).send({ error: 'verification_failed', reason: verification.reason });
     }
 
@@ -417,6 +478,14 @@ export default async function meRoutes(app: FastifyInstance) {
       .update(devices)
       .set({ inboxId, ethAddress: verification.ethAddress, updatedAt: sql`now()` })
       .where(eq(devices.deviceId, deviceId));
+
+    emitSecurityEvent(req.log, {
+      event: 'siwe.challenge.verified',
+      deviceId,
+      inboxId,
+      ethAddress: verification.ethAddress,
+      ip: req.ip,
+    });
 
     // If iOS claims the admin role AND the dev-mode gate is on,
     // promote the inbox NOW — *before* the clients insert. This makes

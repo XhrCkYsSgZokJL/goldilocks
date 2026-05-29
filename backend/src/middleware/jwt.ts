@@ -3,6 +3,7 @@ import { verifyToken } from '../auth/jwt.js';
 import { db } from '../db/client.js';
 import { sessions } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
+import { emitSecurityEvent } from '../observability/security-events.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -34,6 +35,13 @@ export async function requireJwt(req: FastifyRequest, reply: FastifyReply): Prom
   // Skip the lookup if you don't need revocation in dev.
   const [row] = await db.select().from(sessions).where(eq(sessions.jti, claims.jti)).limit(1);
   if (row?.revoked) {
+    emitSecurityEvent(req.log, {
+      event: 'auth.jwt.revoked_token_used',
+      deviceId: claims.sub,
+      ip: req.ip,
+      severity: 'warn',
+      context: { jti: claims.jti.slice(0, 8) + '…' },
+    });
     return reply.code(401).send({ error: 'token_revoked' });
   }
 

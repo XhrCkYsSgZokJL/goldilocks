@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db } from '../db/client.js';
 import { devices } from '../db/schema.js';
 import { sql } from 'drizzle-orm';
+import { emitSecurityEvent } from '../observability/security-events.js';
 
 const Body = z.object({
   deviceId: z.string().min(1).max(256),
@@ -49,6 +50,13 @@ export default async function deviceRoutes(app: FastifyInstance) {
           updatedAt: sql`now()`,
         },
       });
+
+    emitSecurityEvent(req.log, {
+      event: pushToken ? 'device.push_token_updated' : 'device.registered',
+      deviceId,
+      ip: req.ip,
+      context: { pushTokenType: pushTokenType ?? 'none', apnsEnv: apnsEnv ?? 'none' },
+    });
 
     return reply.code(200).send({});
   });

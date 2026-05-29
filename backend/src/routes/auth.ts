@@ -5,6 +5,7 @@ import { issueNewFamily, revokeFamilyByToken, rotateRefreshToken } from '../auth
 import { db } from '../db/client.js';
 import { devices, sessions } from '../db/schema.js';
 import { eq, sql } from 'drizzle-orm';
+import { emitSecurityEvent } from '../observability/security-events.js';
 
 const TokenBody = z.object({ deviceId: z.string().min(1).max(256) });
 const RefreshBody = z.object({ refreshToken: z.string().min(1).max(256) });
@@ -50,6 +51,15 @@ export default async function authRoutes(app: FastifyInstance) {
     const [device] = await db.select().from(devices).where(eq(devices.deviceId, deviceId)).limit(1);
     const refresh = await issueNewFamily(deviceId, device?.inboxId ?? null);
 
+    emitSecurityEvent(req.log, {
+      event: 'auth.token.issued',
+      deviceId,
+      inboxId: device?.inboxId ?? null,
+      familyId: refresh.familyId,
+      ip: req.ip,
+      context: { jti: jti.slice(0, 8) + '…' },
+    });
+
     return reply.code(200).send({
       token,
       refreshToken: refresh.token,
@@ -76,15 +86,41 @@ export default async function authRoutes(app: FastifyInstance) {
     const result = await rotateRefreshToken(parsed.data.refreshToken);
     switch (result.kind) {
       case 'invalid':
+        emitSecurityEvent(req.log, {
+          event: 'auth.refresh.invalid',
+          ip: req.ip,
+          severity: 'warn',
+        });
         return reply.code(401).send({ error: 'invalid_refresh_token' });
       case 'expired':
+        emitSecurityEvent(req.log, {
+          event: 'auth.refresh.expired',
+          ip: req.ip,
+        });
         return reply.code(401).send({ error: 'refresh_token_expired' });
       case 'reused':
-        req.log.warn({ familyId: result.familyId }, 'refresh token reused — family revoked');
+        // Critical: someone is replaying an already-consumed refresh
+        // token. Either a buggy client (unlikely with single-flight) or
+        // the legitimate user's token was stolen and is racing against
+        // the client. Family is already nuked at this point.
+        emitSecurityEvent(req.log, {
+          event: 'auth.refresh.reused_family_revoked',
+          familyId: result.familyId,
+          ip: req.ip,
+          severity: 'critical',
+        });
         return reply.code(401).send({ error: 'refresh_token_reused' });
       case 'rotated': {
         const { token, jti, expiresAt } = issueToken(result.deviceId);
         await db.insert(sessions).values({ jti, deviceId: result.deviceId, expiresAt });
+        emitSecurityEvent(req.log, {
+          event: 'auth.token.refreshed',
+          deviceId: result.deviceId,
+          inboxId: result.inboxId,
+          familyId: result.refresh.familyId,
+          ip: req.ip,
+          context: { jti: jti.slice(0, 8) + '…' },
+        });
         return reply.code(200).send({
           token,
           refreshToken: result.refresh.token,
@@ -109,7 +145,12 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_body' });
     }
-    await revokeFamilyByToken(parsed.data.refreshToken);
+    const revoked = await revokeFamilyByToken(parsed.data.refreshToken);
+    emitSecurityEvent(req.log, {
+      event: 'auth.logout',
+      ip: req.ip,
+      context: { revoked },
+    });
     return reply.code(204).send();
   });
 }

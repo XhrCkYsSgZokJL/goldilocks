@@ -181,4 +181,29 @@ describe('observability/redact-paths', () => {
       assert.ok(!line.includes(value), `Top-level "${value.slice(0, 16)}…" leaked`);
     }
   });
+
+  it('redacts JWT access tokens under every common spelling', () => {
+    const jwt = 'jwt_aaaaaaaaaaaaaa.bbbbbbbbbb.cccccccccc';
+    const { logger, output } = captureLogger();
+    logger.info({ token: jwt, accessToken: jwt, access_token: jwt, jwt }, 'jwt');
+    const line = output().join('');
+    assert.ok(!line.includes(jwt), 'JWT survived redaction');
+  });
+
+  it('redacts the X-Convos-AuthToken header', () => {
+    const jwt = 'header_jwt_xxxxxxxx';
+    const { logger, output } = captureLogger();
+    logger.info(
+      { req: { headers: { 'x-convos-authtoken': jwt } } },
+      'auth-header',
+    );
+    assert.ok(!output().join('').includes(jwt), 'X-Convos-AuthToken header leaked');
+  });
+
+  it('redacts both camelCase and snake_case spellings of refresh_token', () => {
+    const rt = 'refresh_xxx_yyy';
+    const { logger, output } = captureLogger();
+    logger.info({ refreshToken: rt, refresh_token: rt }, 'refresh');
+    assert.ok(!output().join('').includes(rt), 'refresh token leaked');
+  });
 });

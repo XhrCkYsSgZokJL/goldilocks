@@ -364,6 +364,45 @@ unreachable from the network or the internet.
   the iOS debug area. `disabled = true` revokes admin status
   immediately.
 
+### Security event logging
+
+Every interesting security event funnels through
+`src/observability/security-events.ts` (`emitSecurityEvent`) so each
+record has a consistent shape: a `security: true` tag, a
+`<area>.<noun>.<verb>` event name, and short-prefixed identifiers
+(`deviceId`, `inboxId`, `familyId`) that correlate across events
+without disclosing full pseudo-IDs. The `iOS` twin lives at
+`ConvosCore/Sources/ConvosCore/Logging/SecurityLog.swift` and emits
+to both the local log stream and a Sentry breadcrumb (plus a
+captured Sentry message at `.critical`).
+
+What to watch in the log stream — filter on `security: true`:
+
+| Event | Severity | What it means / what to do |
+|---|---|---|
+| `auth.token.issued` | info | Normal — a `/v2/auth/token` request succeeded. |
+| `auth.token.refreshed` | info | Normal — a `/v2/auth/refresh` rotation succeeded. |
+| `auth.refresh.invalid` | warn | A refresh token didn't match any known row. Single instance: probably a stale client. Bursts: probe. |
+| `auth.refresh.expired` | info | Normal lifecycle. |
+| `auth.refresh.reused_family_revoked` | **critical** | Theft detection fired — RFC 6819 §5.2.2.3. The family is already revoked. Investigate which device, when the family was issued, and whether the legitimate user is now stuck logged out. |
+| `auth.logout` | info | Normal user-initiated logout. |
+| `auth.jwt.revoked_token_used` | warn | Someone presented a previously-revoked JWT. Usually means a force-revoke happened and a stale client kept trying. |
+| `siwe.challenge.issued` / `verified` | info | Normal sign-in lifecycle. |
+| `siwe.challenge.failed` | warn | A signature failed verification. Include `context.reason` for the libviem failure code. |
+| `siwe.device_inbox_mismatch` | **critical** | A device is trying to claim a different inbox than its locked record. Impersonation guard; investigate. |
+| `admin.upgrade.success` | info | Admin slot claimed. |
+| `admin.upgrade.invalid_code` | warn | Wrong code. Combined with the 3/min/device rate limit, sustained streams from a single device are a brute-force signal. |
+| `admin.upgrade.disabled_code` | warn | Code is right but the slot has been disabled by the CLI. |
+| `device.registered` / `device.push_token_updated` | info | Normal device lifecycle. |
+| `stripe.webhook.missing_signature` | warn | Someone hit our webhook without a signature. Stripe never does this. |
+| `stripe.webhook.invalid_signature` | **critical** | A signed webhook failed verification. Either a forgery attempt or a misconfigured webhook secret. |
+
+iOS-side events follow the same naming. The user-visible ones —
+`pinning.mismatch`, `capture.screenshot_attempted`,
+`capture.recording_started`, `secure_window.install_failed` — also
+land in Sentry as breadcrumbs and (for critical events) as standalone
+captured messages.
+
 ### Filesystem and OS-level posture
 
 Not enforced by code, but verify before deploying:

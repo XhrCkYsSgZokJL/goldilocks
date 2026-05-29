@@ -49,6 +49,16 @@ dev_up() {
   echo "→ installing backend dependencies (npm install)"
   ( cd "$BACKEND" && npm install ) || { echo "❌  npm install failed"; return 1; }
 
+  # F5 TLS material — idempotent. The script mints the CA + Postgres
+  # server leaf (existing installs) and the client-{backend,agent,backup}
+  # leaves (introduced by the mTLS change in security plan item 33).
+  # Without these the backend's DATABASE_URL refers to certs that
+  # don't exist yet, and migrations crash with ENOENT before Postgres
+  # is ever asked to accept a connection.
+  echo "→ ensuring F5 TLS material exists (init-tls.sh, idempotent)"
+  ( cd "$BACKEND" && bash scripts/init-tls.sh dev ) \
+    || { echo "❌  init-tls.sh failed"; return 1; }
+
   echo "→ starting goldilocks-ios XMTP node"
   ( cd "$GOLDILOCKS_IOS" && ./dev/up ) || { echo "❌  XMTP node failed to start"; return 1; }
 

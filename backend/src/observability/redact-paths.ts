@@ -17,12 +17,16 @@ export const REDACT_PATHS = [
   // Headers
   'req.headers.authorization',
   'req.headers.cookie',
+  'req.headers["x-convos-authtoken"]',        // our JWT header
   'req.headers["stripe-signature"]',
   // Auth / SIWE bodies
   'req.body.signature',
   'req.body.siweMessage',
+  'req.body.message',                          // alternate SIWE field name
   // Refresh-token rotation
   'req.body.refreshToken',
+  'req.body.refresh_token',
+  'req.body.token',                            // any token in a body
   // Device registration
   'req.body.pushToken',
   // Admin upgrade code (16-digit, brute-force-sensitive)
@@ -31,12 +35,29 @@ export const REDACT_PATHS = [
   // Notification subscription HMAC keys
   'req.body.hmacKeys',
   'req.body.topics[*].hmacKeys',
-  // Generic top-level keys for ad-hoc structured logs
+  // Generic top-level keys for ad-hoc structured logs.
+  // If any of these strings appear as a JSON key anywhere in a log
+  // record (object passed to log.info / log.warn / log.error), Pino
+  // censors the value before serialisation.
   'pushToken',
   'upgradeCode',
   'signature',
   'siweMessage',
   'privateKey',
+  'private_key',
+  'privateKeyHex',
   'hmacKeys',
+  'hmac_keys',
   'refreshToken',
+  'refresh_token',
+  'token',                                      // catches JWT in many shapes
+  'accessToken',
+  'access_token',
+  'jwt',
+  'apiKey',
+  'api_key',
+  'webhookSecret',
+  'webhook_secret',
+  'sealedKey',
+  'agePrivateKey',
 ];
