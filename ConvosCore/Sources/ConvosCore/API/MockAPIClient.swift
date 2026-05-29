@@ -28,8 +28,12 @@ final class MockAPIClient: ConvosAPIClientProtocol, Sendable {
         // Mock implementation - no-op
     }
 
-    func authenticate(appCheckToken: String, retryCount: Int = 0) async throws -> String {
+    func authenticate(retryCount: Int = 0) async throws -> String {
         return "mock-jwt-token"
+    }
+
+    func logout() async {
+        // Mock implementation — no-op
     }
 
     func uploadAttachment(

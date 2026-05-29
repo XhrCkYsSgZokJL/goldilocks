@@ -12,9 +12,17 @@ class ConvosAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUser
     var pushNotificationRegistrar: (any PushNotificationRegistrarProtocol)?
     private var leftConversationObserver: Any?
     private var foregroundObserver: Any?
+    /// Public so the SwiftUI scene can drive the in-app capture overlay
+    /// (`.captureProtected(monitor:)`) from the same shared instance.
+    let captureMonitor: CaptureMonitor = .init()
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         SentryConfiguration.configure()
+        // Block screenshots + recordings app-wide. Off in dev via
+        // DEBUG_DISABLE_SECURE_WINDOW so engineers can capture bug-report
+        // screenshots; always on in TestFlight and production.
+        SecureWindow.installWhenWindowAppears()
+        captureMonitor.start()
         UNUserNotificationCenter.current().delegate = self
         application.registerForRemoteNotifications()
         leftConversationObserver = NotificationCenter.default.addObserver(

@@ -7,7 +7,12 @@ DEVELOPMENT_TEAM = FY4NZR34Z3
 // Swift compiler flags - define DEBUG for conditional compilation (if needed for dev/testflight)
 // Note: SWIFT_ACTIVE_COMPILATION_CONDITIONS propagates to Swift Package dependencies
 // Comment out the line below if you don't want DEBUG in TestFlight builds
-SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG
+//
+// DEBUG_DISABLE_SECURE_WINDOW disables the app-wide screenshot/recording
+// block (see Convos/Window/SecureWindow.swift) so engineers can capture
+// bug-report screenshots from dev builds. Strip this in TestFlight
+// builds intended for security testing.
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG DEBUG_DISABLE_SECURE_WINDOW
 
 // Override Swift Package optimization for debugging
 // This ensures ConvosCore and other Swift Packages are not optimized

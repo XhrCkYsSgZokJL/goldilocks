@@ -1013,13 +1013,8 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
             do {
                 try Task.checkCancellation()
 
-                Log.debug("Getting Firebase AppCheck token...")
-                let appCheckToken = try await FirebaseHelperCore.getAppCheckToken()
-
-                try Task.checkCancellation()
-
                 Log.debug("Authenticating with backend and storing JWT...")
-                _ = try await apiClient.authenticate(appCheckToken: appCheckToken, retryCount: 0)
+                _ = try await apiClient.authenticate(retryCount: 0)
                 Log.info("Successfully authenticated with backend")
                 return
             } catch is CancellationError {

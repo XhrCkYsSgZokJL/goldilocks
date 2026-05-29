@@ -361,6 +361,13 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
                     continuation.yield(.clearingDeviceRegistration)
                     DeviceRegistrationManager.clearRegistrationState(deviceInfo: self.platformProviders.deviceInfo)
 
+                    // Revoke the refresh-token family on the backend
+                    // before we drop local credentials, so a stolen
+                    // refresh token from this device can't outlive the
+                    // sign-out. Best-effort: a network failure here
+                    // does not block local teardown.
+                    await self.apiClient.logout()
+
                     let hasService = self.cachedMessagingService.withLock { $0 != nil }
                     continuation.yield(.stoppingServices(completed: 0, total: hasService ? 1 : 0))
 

@@ -383,9 +383,11 @@ private final class StubAPIClient: ConvosAPIClientProtocol, @unchecked Sendable 
 
     func registerDevice(deviceId: String, pushToken: String?) async throws {}
 
-    func authenticate(appCheckToken: String, retryCount: Int) async throws -> String {
+    func authenticate(retryCount: Int) async throws -> String {
         "stub-jwt"
     }
+
+    func logout() async {}
 
     func uploadAttachment(data: Data, filename: String, contentType: String, acl: String) async throws -> String {
         "https://example.com/\(filename)"

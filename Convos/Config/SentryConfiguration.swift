@@ -21,7 +21,10 @@ enum SentryConfiguration {
         SentrySDK.start { options in
             options.dsn = dsn
             options.debug = true
-            options.attachScreenshot = true
+            // Screenshots can capture conversation content, profile data, and other
+            // sensitive UI. View hierarchy is retained because it carries structure
+            // without rendered text.
+            options.attachScreenshot = false
             options.enableSigtermReporting = true
             options.attachStacktrace = true
             options.attachViewHierarchy = true

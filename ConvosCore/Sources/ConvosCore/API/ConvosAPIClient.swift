@@ -23,11 +23,17 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
                  method: String,
                  queryParameters: [String: String]?) throws -> URLRequest
 
-    /// Register device with AppCheck authentication (no JWT required - device-level operation)
+    /// Register device (no JWT required — device-level operation).
     func registerDevice(deviceId: String, pushToken: String?) async throws
 
-    func authenticate(appCheckToken: String,
-                      retryCount: Int) async throws -> String
+    func authenticate(retryCount: Int) async throws -> String
+
+    /// Revoke the saved refresh-token family on the backend and drop
+    /// both tokens from the local keychain. Idempotent — safe to call
+    /// even if no tokens are saved. Network failure does not block
+    /// local deletion; we prefer being signed-out-locally over staying
+    /// signed-in because the backend wasn't reachable at the moment.
+    func logout() async
 
     func uploadAttachment(
         data: Data,
@@ -161,6 +167,24 @@ extension ConvosAPIClientProtocol {
 ///
 /// The client automatically re-authenticates on 401 responses up to a maximum
 /// retry count and stores JWT tokens in keychain for persistence.
+/// Single-flight gate for token refresh. Concurrent 401 responses all
+/// await the same in-flight refresh task, so the backend never sees
+/// double-spend of a refresh token (which would otherwise trigger
+/// family revocation under our RFC 6819 §5.2.2.3 theft-detection rule).
+private actor TokenRefresher {
+    private var inflight: Task<String, Error>?
+
+    func refresh(_ work: @Sendable @escaping () async throws -> String) async throws -> String {
+        if let existing = inflight {
+            return try await existing.value
+        }
+        let task = Task { try await work() }
+        inflight = task
+        defer { inflight = nil }
+        return try await task.value
+    }
+}
+
 final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
     private let baseURL: URL
     private let session: URLSession
@@ -168,13 +192,27 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
     private let keychainService: any KeychainServiceProtocol = KeychainService()
     private let overrideJWTToken: String?  // Immutable JWT override from APNS payload
     private let maxRetryCount: Int = 3
+    private let tokenRefresher: TokenRefresher = .init()
 
     fileprivate init(environment: AppEnvironment, overrideJWTToken: String? = nil) {
         guard let apiBaseURL = URL(string: environment.apiBaseURL) else {
             fatalError("Failed constructing API base URL")
         }
         self.baseURL = apiBaseURL
-        self.session = URLSession(configuration: .default)
+        // Certificate pinning, when configured. `GoldilocksPinning` returns
+        // nil while no SPKI hashes are filled in; the client falls back to
+        // the OS-default URLSession in that case. First production release
+        // ships in `.shadow` mode (mismatches log to Sentry but don't
+        // break connections); flip to `.enforce` after a clean cycle.
+        if let pinner = GoldilocksPinning.defaultPinner(mode: .shadow) {
+            self.session = URLSession(
+                configuration: .default,
+                delegate: pinner,
+                delegateQueue: nil,
+            )
+        } else {
+            self.session = URLSession(configuration: .default)
+        }
         self.environment = environment
         self.overrideJWTToken = overrideJWTToken
     }
@@ -198,17 +236,14 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         return request
     }
 
-    /// Register device using AppCheck authentication
-    /// This is a device-level operation, not inbox-specific
+    /// Register device. Device-level operation, not inbox-specific. No JWT
+    /// or App Check — abuse on this endpoint is bounded by the backend's
+    /// per-route rate limit.
     func registerDevice(deviceId: String, pushToken: String?) async throws {
         let url = baseURL.appendingPathComponent("v2/device/register")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        // Get AppCheck token for authentication
-        let appCheckToken = try await FirebaseHelperCore.getAppCheckToken()
-        request.setValue(appCheckToken, forHTTPHeaderField: "X-Firebase-AppCheck")
 
         // Determine APNS environment and token type
         let apnsEnv: String?
@@ -247,11 +282,36 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
     // MARK: - Private Helpers
 
     private func reAuthenticate() async throws -> String {
-        let firebaseAppCheckToken = try await FirebaseHelperCore.getAppCheckToken()
-        return try await authenticate(
-            appCheckToken: firebaseAppCheckToken,
-            retryCount: 0
+        return try await authenticate(retryCount: 0)
+    }
+
+    func logout() async {
+        let deviceId = DeviceInfo.deviceIdentifier
+        let savedRefresh = try? keychainService.retrieveString(
+            account: KeychainAccount.refreshToken(deviceId: deviceId)
         )
+
+        if let savedRefresh, !savedRefresh.isEmpty {
+            // Best-effort: tell the backend to revoke the family. We
+            // ignore the response — local deletion happens regardless,
+            // because the user has decided to sign out and a network
+            // error shouldn't strand them in a half-state.
+            do {
+                let url = baseURL.appendingPathComponent("v2/auth/logout")
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                struct LogoutBody: Encodable { let refreshToken: String }
+                request.httpBody = try JSONEncoder().encode(LogoutBody(refreshToken: savedRefresh))
+                _ = try await session.data(for: request)
+            } catch {
+                Log.warning("Logout call failed (\(error.localizedDescription)); clearing local tokens anyway")
+            }
+        }
+
+        try? keychainService.delete(account: KeychainAccount.jwt(deviceId: deviceId))
+        try? keychainService.delete(account: KeychainAccount.refreshToken(deviceId: deviceId))
+        SecurityLog.event(.authLogout, deviceId: deviceId)
     }
 
     private func isJWTValid(_ token: String) -> Bool {
@@ -271,13 +331,10 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
 
     // MARK: - Authentication
 
-    /// Authenticates with the backend to obtain a JWT token
-    /// - Parameters:
-    ///   - appCheckToken: Firebase AppCheck token for authentication
-    ///   - retryCount: Number of retry attempts (for rate limiting)
-    /// - Returns: JWT token string
-    func authenticate(appCheckToken: String,
-                      retryCount: Int = 0) async throws -> String {
+    /// Authenticates with the backend to obtain a JWT token.
+    /// - Parameter retryCount: Number of retry attempts (for rate limiting).
+    /// - Returns: JWT token string.
+    func authenticate(retryCount: Int = 0) async throws -> String {
         let deviceId = DeviceInfo.deviceIdentifier
 
         // Check for existing valid JWT token first
@@ -294,7 +351,6 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
 
-        request.setValue(appCheckToken, forHTTPHeaderField: "X-Firebase-AppCheck")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         struct AuthRequest: Encodable {
@@ -326,8 +382,7 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
 
             // Sleep and then retry
             try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            return try await authenticate(appCheckToken: appCheckToken,
-                                          retryCount: retryCount + 1)
+            return try await authenticate(retryCount: retryCount + 1)
         }
 
         guard httpResponse.statusCode == 200 else {
@@ -336,18 +391,16 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
             throw APIError.authenticationFailed
         }
 
-        struct AuthResponse: Codable {
-            let token: String
-        }
-
-        let authResponse = try JSONDecoder().decode(AuthResponse.self, from: data)
-        try keychainService.saveString(
-            authResponse.token,
-            account: KeychainAccount.jwt(deviceId: deviceId)
-        )
-        Log.info("Successfully authenticated and stored JWT token")
+        let authResponse = try JSONDecoder().decode(AuthTokensResponse.self, from: data)
+        try saveAuthTokens(authResponse, deviceId: deviceId)
+        Log.info("Successfully authenticated and stored JWT + refresh tokens")
         return authResponse.token
     }
+
+    // MARK: - Refresh Tokens
+    //
+    // Implementation lives in the `ConvosAPIClient` extension below to
+    // keep the class body under SwiftLint's `type_body_length` ceiling.
 
     // MARK: - Private Helpers
 
@@ -445,8 +498,18 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
             throw APIError.notAuthenticated
         }
 
-        Log.info("Attempting re-authentication (attempt \(retryCount + 1) of \(maxRetryCount))")
-        let freshJWT = try await reAuthenticate()
+        Log.info("Attempting token refresh (attempt \(retryCount + 1) of \(maxRetryCount))")
+        let freshJWT = try await tokenRefresher.refresh { [self] in
+            // Prefer rotating the saved refresh token. Fall back to a
+            // full re-authentication (fresh family) only when the
+            // refresh token is missing, expired, or rejected.
+            do {
+                return try await refreshAccessToken()
+            } catch {
+                Log.info("Refresh-token rotation failed (\(error)); falling back to full re-auth")
+                return try await reAuthenticate()
+            }
+        }
         guard !freshJWT.isEmpty else {
             throw APIError.notAuthenticated
         }
@@ -927,6 +990,81 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
             }
         }
         return String(data: data, encoding: .utf8)
+    }
+}
+
+// MARK: - Refresh Tokens (extension)
+//
+// Pulled out of the main `ConvosAPIClient` body so the class stays under
+// SwiftLint's `type_body_length` ceiling. Same-file `private` access
+// means everything here still sees the class's private state.
+
+private extension ConvosAPIClient {
+    struct AuthTokensResponse: Codable {
+        let token: String
+        let refreshToken: String?
+        let refreshExpiresAt: String?
+    }
+
+    func saveAuthTokens(_ response: AuthTokensResponse, deviceId: String) throws {
+        try keychainService.saveString(
+            response.token,
+            account: KeychainAccount.jwt(deviceId: deviceId)
+        )
+        if let refresh = response.refreshToken, !refresh.isEmpty {
+            try keychainService.saveString(
+                refresh,
+                account: KeychainAccount.refreshToken(deviceId: deviceId)
+            )
+        }
+    }
+
+    /// Exchange the saved refresh token for a fresh access + refresh pair.
+    /// Throws `APIError.notAuthenticated` if there is no saved refresh
+    /// token, or if the backend rejects it (expired, invalid, or family
+    /// revoked due to replay). Callers should fall back to a full
+    /// `authenticate()` on failure.
+    func refreshAccessToken() async throws -> String {
+        let deviceId = DeviceInfo.deviceIdentifier
+        guard let savedRefresh = try? keychainService.retrieveString(
+            account: KeychainAccount.refreshToken(deviceId: deviceId)
+        ), !savedRefresh.isEmpty else {
+            throw APIError.notAuthenticated
+        }
+
+        let url = baseURL.appendingPathComponent("v2/auth/refresh")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        struct RefreshBody: Encodable { let refreshToken: String }
+        request.httpBody = try JSONEncoder().encode(RefreshBody(refreshToken: savedRefresh))
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        guard httpResponse.statusCode == 200 else {
+            // 401 from /v2/auth/refresh means the token is invalid,
+            // expired, or its family was revoked. Drop the saved refresh
+            // so we don't retry with a known-bad value. If the status
+            // indicates the backend explicitly revoked the family due to
+            // reuse, that's a critical security signal.
+            try? keychainService.delete(account: KeychainAccount.refreshToken(deviceId: deviceId))
+            let bodyText: String = String(data: data, encoding: .utf8) ?? ""
+            let isFamilyRevoked: Bool = bodyText.contains("refresh_token_reused")
+            SecurityLog.event(
+                isFamilyRevoked ? .authRefreshFamilyRevoked : .authRefreshRotationFailed,
+                severity: isFamilyRevoked ? .critical : .warn,
+                deviceId: deviceId,
+                context: ["status": String(httpResponse.statusCode)],
+            )
+            throw APIError.notAuthenticated
+        }
+        let parsed: AuthTokensResponse = try JSONDecoder().decode(AuthTokensResponse.self, from: data)
+        try saveAuthTokens(parsed, deviceId: deviceId)
+        SecurityLog.event(.authTokenRefreshed, deviceId: deviceId)
+        return parsed.token
     }
 }
 

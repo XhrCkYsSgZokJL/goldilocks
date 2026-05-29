@@ -468,7 +468,8 @@ final class ConfigurableMockAPIClient: ConvosAPIClientProtocol, @unchecked Senda
     }
 
     func registerDevice(deviceId: String, pushToken: String?) async throws {}
-    func authenticate(appCheckToken: String, retryCount: Int) async throws -> String { "token" }
+    func authenticate(retryCount: Int) async throws -> String { "token" }
+    func logout() async {}
     func uploadAttachment(data: Data, filename: String, contentType: String, acl: String) async throws -> String { "" }
     func uploadAttachmentAndExecute(data: Data, filename: String, afterUpload: @escaping (String) async throws -> Void) async throws -> String { "" }
     func subscribeToTopics(deviceId: String, clientId: String, topics: [String]) async throws {}

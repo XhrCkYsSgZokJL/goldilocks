@@ -44,18 +44,11 @@ struct ConvosApp: App {
         Log.info("Launch: version=\(appVersion) build=\(appBuild) commit=\(Secrets.GIT_COMMIT_SHA) environment=\(environment.name)")
         QAEvent.emit(.app, "launched", ["environment": environment.name])
 
-        // Firebase must be configured before ConvosClient is created so AppCheck is ready when auth begins
-        switch environment {
-        case .tests:
-            Log.info("Running in test environment, skipping Firebase config...")
-        default:
-            if let url = ConfigManager.shared.currentEnvironment.firebaseConfigURL {
-                let debugToken: String? = environment.isProduction ? nil : Secrets.FIREBASE_APP_CHECK_DEBUG_TOKEN
-                FirebaseHelperCore.configure(with: url, debugToken: debugToken)
-            } else {
-                Log.error("Missing Firebase plist URL for current environment")
-            }
-        }
+        // Firebase App Check is removed from Goldilocks (Path B of security
+        // plan item 7) — the backend doesn't verify the token, so sending
+        // one is dead weight. The unauth `/v2/auth/token` and
+        // `/v2/device/register` surface is defended by per-route rate
+        // limits (item 8) and SIWE signature verification.
 
         let agentKeyset = AgentKeyset(endpointURL: AgentKeyset.endpointURL(for: environment))
         AgentKeysetStore.instance.configure(agentKeyset)
@@ -83,6 +76,11 @@ struct ConvosApp: App {
             )
             .additionalTopSafeArea(DesignConstants.Spacing.stepX)
             .withSafeAreaEnvironment()
+            // Blur the app + show a clear "recording detected" cue
+            // whenever the system reports a screen capture is active.
+            // The compositor-level block sits in SecureWindow; this is
+            // the matching user-visible signal.
+            .captureProtected(monitor: appDelegate.captureMonitor)
         }
     }
 }

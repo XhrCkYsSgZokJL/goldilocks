@@ -66,24 +66,6 @@ public enum AppEnvironment: Sendable {
         case local, dev, production, tests
     }
 
-    public var firebaseConfigURL: URL? {
-        let resource: String
-        switch self {
-        case .local, .tests:
-            resource = "GoogleService-Info.Local"
-        case .dev:
-            resource = "GoogleService-Info.Dev"
-        case .production:
-            resource = "GoogleService-Info.Prod"
-        }
-
-        if let url = Bundle.main.url(forResource: resource, withExtension: "plist") {
-            return url
-        }
-
-        return nil
-    }
-
     var apiBaseURL: String {
         switch self {
         case .local(let config):
