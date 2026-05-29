@@ -32,7 +32,10 @@ public enum ClipIdentityBootstrap {
         platformProviders: PlatformProviders
     ) -> ClipSession {
         let databaseManager = DatabaseManager(environment: environment)
-        let identityStore = KeychainIdentityStore(accessGroup: environment.keychainAccessGroup)
+        let identityStore = KeychainIdentityStore(
+            accessGroup: environment.keychainAccessGroup,
+            keyWrapper: platformProviders.identityKeyWrapper,
+        )
         let sessionManager = SessionManager(
             databaseWriter: databaseManager.dbWriter,
             databaseReader: databaseManager.dbReader,

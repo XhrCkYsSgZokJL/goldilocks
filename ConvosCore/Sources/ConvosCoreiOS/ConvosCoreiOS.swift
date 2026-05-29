@@ -37,7 +37,7 @@ extension PlatformProviders {
     ///
     /// Must be called from the main actor (typically during app initialization).
     @MainActor
-    public static var iOS: PlatformProviders {
+    public static func iOS(accessGroup: String) -> PlatformProviders {
         let appLifecycle = IOSAppLifecycleProvider()
         let deviceInfo = IOSDeviceInfo()
         let pushNotificationRegistrar = IOSPushNotificationRegistrar()
@@ -53,7 +53,8 @@ extension PlatformProviders {
             pushNotificationRegistrar: pushNotificationRegistrar,
             notificationCenter: UNUserNotificationCenter.current(),
             backgroundUploadManager: BackgroundUploadManager.shared,
-            oauthSessionProvider: IOSOAuthSessionProvider()
+            oauthSessionProvider: IOSOAuthSessionProvider(),
+            identityKeyWrapper: makeIdentityKeyWrapper(accessGroup: accessGroup),
         )
     }
 
@@ -62,13 +63,31 @@ extension PlatformProviders {
     /// Unlike `.iOS`, this does not require main actor isolation since extensions
     /// may initialize providers outside of the main actor context. Uses mock providers
     /// for components that aren't needed in extensions.
-    public static var iOSExtension: PlatformProviders {
+    public static func iOSExtension(accessGroup: String) -> PlatformProviders {
         PlatformProviders(
             appLifecycle: MockAppLifecycleProvider(),
             deviceInfo: MockDeviceInfoProvider(),
             pushNotificationRegistrar: MockPushNotificationRegistrarProvider(),
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            identityKeyWrapper: makeIdentityKeyWrapper(accessGroup: accessGroup),
         )
+    }
+
+    /// Best-effort SE-backed wrapper. Falls back to the pass-through on
+    /// hardware that lacks an SE (Intel-Mac simulators, CI) so the code
+    /// path still works for development. Production iOS devices have an
+    /// SE since the iPhone 5s, so this only no-ops in non-shipping
+    /// configurations.
+    private static func makeIdentityKeyWrapper(accessGroup: String) -> any IdentityKeyWrapper {
+        do {
+            return try SecureEnclaveIdentityKeyWrapper(
+                service: "org.convos.ios.SecureEnclaveWrapper.v1",
+                account: "convos-se-identity-wrapper",
+                accessGroup: accessGroup,
+            )
+        } catch {
+            return PassThroughIdentityKeyWrapper()
+        }
     }
 }
 

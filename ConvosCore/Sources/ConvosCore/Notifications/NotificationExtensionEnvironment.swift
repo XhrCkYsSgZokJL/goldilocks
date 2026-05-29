@@ -32,7 +32,10 @@ public struct NotificationExtensionEnvironment {
     ) throws -> CachedPushNotificationHandler {
         let environment = try getEnvironment()
         let databaseManager = DatabaseManager(environment: environment)
-        let identityStore = KeychainIdentityStore(accessGroup: environment.keychainAccessGroup)
+        let identityStore = KeychainIdentityStore(
+            accessGroup: environment.keychainAccessGroup,
+            keyWrapper: platformProviders.identityKeyWrapper,
+        )
 
         Log.info("Creating CachedPushNotificationHandler with environment: \(environment.name)")
 

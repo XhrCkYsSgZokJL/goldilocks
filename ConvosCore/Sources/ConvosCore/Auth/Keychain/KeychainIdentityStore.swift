@@ -114,8 +114,8 @@ private struct KeychainQuery {
         account: String,
         service: String,
         accessGroup: String,
-        accessible: CFString = kSecAttrAccessibleAfterFirstUnlock,
-        synchronizable: Bool = true
+        accessible: CFString = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        synchronizable: Bool = false,
     ) {
         self.account = account
         self.service = service
@@ -168,16 +168,23 @@ public protocol KeychainIdentityStoreProtocol: Actor {
 
 /// Secure storage for the user's XMTP identity keys in the device keychain.
 ///
-/// The app holds one identity per install. iCloud Keychain sync is enabled via
-/// `kSecAttrSynchronizable = true` + `kSecAttrAccessibleAfterFirstUnlock` so the
-/// identity follows the user across devices on the same Apple ID. The item is
-/// stored in the app-group keychain so the Notification Service Extension can
-/// read it.
+/// The app holds one identity per install. After F8.1, the identity is
+/// **device-bound**: the secp256k1 private key bytes are wrapped by a
+/// Secure-Enclave-backed key (via the injected `IdentityKeyWrapper`)
+/// before they ever touch the keychain, and the keychain item itself is
+/// `ThisDeviceOnly` + non-synchronizable. Restoring on a new device
+/// requires re-onboarding via SIWE — a deliberate trade-off so the raw
+/// key bytes never exist in an extractable form on disk.
+///
+/// The item is still stored in the app-group keychain so the
+/// Notification Service Extension can read the wrapped blob; unwrapping
+/// it requires the SE, which lives on the main device.
 public final actor KeychainIdentityStore: KeychainIdentityStoreProtocol {
     // MARK: - Properties
 
     private let keychainService: String
     private let keychainAccessGroup: String
+    private let keyWrapper: any IdentityKeyWrapper
 
     static let defaultService: String = "org.convos.ios.KeychainIdentityStore.v3"
 
@@ -200,9 +207,19 @@ public final actor KeychainIdentityStore: KeychainIdentityStoreProtocol {
 
     // MARK: - Initialization
 
-    public init(accessGroup: String) {
+    /// - Parameter accessGroup: Keychain access group shared with the
+    ///   Notification Service Extension.
+    /// - Parameter keyWrapper: SE-backed wrapping layer. Default
+    ///   `PassThroughIdentityKeyWrapper` keeps tests and macOS builds
+    ///   running without an SE — production injects the real one from
+    ///   `ConvosCoreiOS`.
+    public init(
+        accessGroup: String,
+        keyWrapper: any IdentityKeyWrapper = PassThroughIdentityKeyWrapper(),
+    ) {
         self.keychainAccessGroup = accessGroup
         self.keychainService = Self.defaultService
+        self.keyWrapper = keyWrapper
     }
 
     // MARK: - Public Interface
@@ -213,29 +230,40 @@ public final actor KeychainIdentityStore: KeychainIdentityStoreProtocol {
 
     public func save(inboxId: String, clientId: String, keys: KeychainIdentityKeys) throws -> KeychainIdentity {
         let identity = KeychainIdentity(inboxId: inboxId, clientId: clientId, keys: keys)
-        let data = try JSONEncoder().encode(identity)
+        let plain = try JSONEncoder().encode(identity)
+        // F8.1 — wrap with the SE-backed key before the bytes ever
+        // touch the keychain. PassThroughIdentityKeyWrapper makes this
+        // a no-op on macOS / tests.
+        let wrapped = try keyWrapper.wrap(plain)
         let query = KeychainQuery(
             account: Self.identityAccount,
             service: keychainService,
-            accessGroup: keychainAccessGroup
+            accessGroup: keychainAccessGroup,
         )
-        try saveData(data, with: query)
+        try saveData(wrapped, with: query)
         return identity
     }
 
     public func load() throws -> KeychainIdentity? {
-        try loadSync()
+        try loadSyncInternal(unwrap: keyWrapper.unwrap)
     }
 
     public nonisolated func loadSync() throws -> KeychainIdentity? {
+        // `keyWrapper` is `let` on a `Sendable` type — Swift treats it
+        // as implicitly nonisolated, so it's safe to read from here.
+        try loadSyncInternal(unwrap: keyWrapper.unwrap)
+    }
+
+    private nonisolated func loadSyncInternal(unwrap: (Data) throws -> Data) throws -> KeychainIdentity? {
         let query = KeychainQuery(
             account: Self.identityAccount,
             service: keychainService,
-            accessGroup: keychainAccessGroup
+            accessGroup: keychainAccessGroup,
         )
         do {
-            let data = try Self.loadKeychainData(with: query.toReadDictionary())
-            return try JSONDecoder().decode(KeychainIdentity.self, from: data)
+            let wrapped = try Self.loadKeychainData(with: query.toReadDictionary())
+            let plain = try unwrap(wrapped)
+            return try JSONDecoder().decode(KeychainIdentity.self, from: plain)
         } catch KeychainIdentityStoreError.identityNotFound {
             return nil
         }

@@ -46,13 +46,20 @@ public struct PlatformProviders: Sendable {
     /// Provider for OAuth session presentation (e.g. ASWebAuthenticationSession on iOS)
     public let oauthSessionProvider: any OAuthSessionProvider
 
+    /// Wraps the identity's private key bytes with a device-bound key
+    /// before they reach the keychain. iOS injects an SE-backed wrapper;
+    /// tests + the macOS build default to a pass-through. F8.1 in
+    /// docs/encryption-and-backup-plan.md (goldilocks-backend).
+    public let identityKeyWrapper: any IdentityKeyWrapper
+
     public init(
         appLifecycle: any AppLifecycleProviding,
         deviceInfo: any DeviceInfoProviding,
         pushNotificationRegistrar: any PushNotificationRegistrarProtocol,
         notificationCenter: any UserNotificationCenterProtocol,
         backgroundUploadManager: any BackgroundUploadManagerProtocol = UnavailableBackgroundUploadManager(),
-        oauthSessionProvider: any OAuthSessionProvider = UnavailableOAuthSessionProvider()
+        oauthSessionProvider: any OAuthSessionProvider = UnavailableOAuthSessionProvider(),
+        identityKeyWrapper: any IdentityKeyWrapper = PassThroughIdentityKeyWrapper(),
     ) {
         self.appLifecycle = appLifecycle
         self.deviceInfo = deviceInfo
@@ -60,6 +67,7 @@ public struct PlatformProviders: Sendable {
         self.notificationCenter = notificationCenter
         self.backgroundUploadManager = backgroundUploadManager
         self.oauthSessionProvider = oauthSessionProvider
+        self.identityKeyWrapper = identityKeyWrapper
     }
 }
 

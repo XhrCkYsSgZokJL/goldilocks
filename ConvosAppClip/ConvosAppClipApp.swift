@@ -29,7 +29,10 @@ struct ConvosAppClipApp: App {
         // unused-conversation prewarm — all wasted (or actively wrong) in
         // the clip's ephemeral runtime.
         clipSession = MainActor.assumeIsolated {
-            ClipIdentityBootstrap.bootstrap(environment: environment, platformProviders: .iOS)
+            ClipIdentityBootstrap.bootstrap(
+                environment: environment,
+                platformProviders: .iOS(accessGroup: environment.keychainAccessGroup),
+            )
         }
     }
 

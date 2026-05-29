@@ -29,7 +29,7 @@ private let globalPushHandler: CachedPushNotificationHandler? = {
         Log.info("Launch: version=\(nseVersion) build=\(nseBuild) commit=\(BuildInfo.commitHash) environment=\(environment.name)")
 
         return try NotificationExtensionEnvironment.createPushNotificationHandler(
-            platformProviders: .iOSExtension
+            platformProviders: .iOSExtension(accessGroup: environment.keychainAccessGroup),
         )
     } catch {
         let errorMsg = "Failed to initialize global push handler: \(error.localizedDescription)"

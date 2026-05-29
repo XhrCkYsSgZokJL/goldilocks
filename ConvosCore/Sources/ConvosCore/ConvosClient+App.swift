@@ -9,7 +9,10 @@ extension ConvosClient {
         let databaseManager = DatabaseManager(environment: environment)
         let databaseWriter = databaseManager.dbWriter
         let databaseReader = databaseManager.dbReader
-        let identityStore = KeychainIdentityStore(accessGroup: environment.keychainAccessGroup)
+        let identityStore = KeychainIdentityStore(
+            accessGroup: environment.keychainAccessGroup,
+            keyWrapper: platformProviders.identityKeyWrapper,
+        )
         let sessionManager = SessionManager(
             databaseWriter: databaseWriter,
             databaseReader: databaseReader,

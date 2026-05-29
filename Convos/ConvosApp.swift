@@ -60,7 +60,10 @@ struct ConvosApp: App {
         let agentKeyset = AgentKeyset(endpointURL: AgentKeyset.endpointURL(for: environment))
         AgentKeysetStore.instance.configure(agentKeyset)
 
-        self.convos = .client(environment: environment, platformProviders: .iOS)
+        self.convos = .client(
+            environment: environment,
+            platformProviders: .iOS(accessGroup: environment.keychainAccessGroup),
+        )
 
         let dbWriter = convos.databaseWriter
         Task {
