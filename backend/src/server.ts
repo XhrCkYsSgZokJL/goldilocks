@@ -15,6 +15,7 @@ import channelRoutes from './routes/channels.js';
 import peopleListRoutes from './routes/people-list.js';
 import billingRoutes from './routes/billing.js';
 import stripeWebhookRoutes from './routes/stripe-webhook.js';
+import { REDACT_PATHS } from './observability/redact-paths.js';
 
 async function build() {
   const app = Fastify({
@@ -23,6 +24,11 @@ async function build() {
     trustProxy: true,
     logger: {
       level: config.LOG_LEVEL,
+      redact: {
+        paths: REDACT_PATHS,
+        censor: '[redacted]',
+        remove: false,
+      },
       transport:
         config.NODE_ENV === 'production'
           ? undefined

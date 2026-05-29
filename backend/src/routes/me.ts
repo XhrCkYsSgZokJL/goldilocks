@@ -10,12 +10,16 @@
 import type { FastifyInstance } from 'fastify';
 import { randomBytes, randomInt } from 'node:crypto';
 import { z } from 'zod';
-import { and, eq, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db } from '../db/client.js';
 import { adminInboxes, authChallenges, clients, devices, serverAgents, serverGroups } from '../db/schema.js';
 import { requireJwt } from '../middleware/jwt.js';
+import { deviceKeyGenerator } from '../middleware/rate-limit-keys.js';
 import { buildSiweMessage, verifyChallenge } from '../auth/siwe.js';
+import { lookupHash } from '../crypto/lookup-hash.js';
+
+const ADMIN_UPGRADE_CODE_LOOKUP_LABEL = 'admin_inboxes.upgrade_code.lookup';
 
 const ChallengeBody = z.object({
   inboxId: z.string().regex(/^[a-f0-9]{64}$/i, 'inboxId must be 64-char hex'),
@@ -51,7 +55,21 @@ export default async function meRoutes(app: FastifyInstance) {
   // body: { inboxId, ethAddress }
   // returns: { siweMessage, nonce, expiresAt }
   // ---------------------------------------------------------------------
-  app.post('/v2/auth/challenge', async (req, reply) => {
+  app.post('/v2/auth/challenge', {
+    config: {
+      // Tighter than the global limit: a normal app flow does one
+      // challenge → me. Repeated challenge fetches are either retries
+      // (rare) or someone trying to harvest server-side nonces. Keyed
+      // per-device via the JWT — `deviceKeyGenerator` does its own
+      // cheap verify because rate-limit's hook runs before
+      // requireJwt's preHandler populates `req.deviceId`.
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 minute',
+        keyGenerator: deviceKeyGenerator,
+      },
+    },
+  }, async (req, reply) => {
     const parsed = ChallengeBody.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
@@ -187,7 +205,18 @@ export default async function meRoutes(app: FastifyInstance) {
   // GOLDILOCKS_ALLOW_SELF_PROMOTE so a stray production deploy can't be
   // self-claimed for admin.
   // ---------------------------------------------------------------------
-  app.post('/v2/admin/promote-self', async (req, reply) => {
+  app.post('/v2/admin/promote-self', {
+    config: {
+      // Dev-only, but defensive: tight per-device limit so a stray prod
+      // build with the feature flag flipped on is bounded even before
+      // the JWT preHandler runs.
+      rateLimit: {
+        max: 3,
+        timeWindow: '1 minute',
+        keyGenerator: deviceKeyGenerator,
+      },
+    },
+  }, async (req, reply) => {
     if (!config.GOLDILOCKS_ALLOW_SELF_PROMOTE) {
       return reply.code(403).send({ error: 'self_promote_disabled' });
     }
@@ -198,12 +227,14 @@ export default async function meRoutes(app: FastifyInstance) {
       return reply.code(409).send({ error: 'device_not_registered' });
     }
 
+    const promoteCode = generateUpgradeCode();
     await db
       .insert(adminInboxes)
       .values({
         inboxId: device.inboxId,
         name: 'Self-promoted (dev)',
-        upgradeCode: generateUpgradeCode(),
+        upgradeCode: promoteCode,
+        upgradeCodeLookup: lookupHash(promoteCode, ADMIN_UPGRADE_CODE_LOOKUP_LABEL),
         claimedAt: new Date(),
       })
       .onConflictDoNothing();
@@ -221,7 +252,20 @@ export default async function meRoutes(app: FastifyInstance) {
   // adds the inbox to the cross-admin groups + every Advisory. A wrong
   // code, or a code whose slot has been disabled by the CLI, is rejected.
   // ---------------------------------------------------------------------
-  app.post('/v2/admin/upgrade', async (req, reply) => {
+  app.post('/v2/admin/upgrade', {
+    config: {
+      // The brute-force-sensitive surface: a 16-digit upgrade code
+      // unlocks admin. 3 / minute / device holds even an attacker who
+      // has stolen a single JWT to a glacial guess rate against the
+      // 10^16 code space. Falls back to per-IP keying when the JWT
+      // is missing (which `requireJwt` would reject anyway).
+      rateLimit: {
+        max: 3,
+        timeWindow: '1 minute',
+        keyGenerator: deviceKeyGenerator,
+      },
+    },
+  }, async (req, reply) => {
     const parsed = z.object({ code: z.string().min(1).max(64) }).safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_body' });
@@ -236,12 +280,37 @@ export default async function meRoutes(app: FastifyInstance) {
       return reply.code(409).send({ error: 'device_not_registered' });
     }
 
-    // The code identifies a specific admin slot created in the CLI.
-    const [slot] = await db
+    // `upgrade_code` is F4-encrypted (fresh AES-GCM nonce per write),
+    // so equality filters against the ciphertext column never match.
+    // We look the slot up by the deterministic keyed hash sidecar
+    // (`upgrade_code_lookup`) instead — O(1) via the unique index.
+    //
+    // Rows that predate migration 019 may still have a NULL lookup
+    // column; the legacy in-app scan is the fallback. Each successful
+    // legacy match opportunistically backfills the hash so the next
+    // attempt for the same slot is O(1).
+    const codeLookup = lookupHash(code, ADMIN_UPGRADE_CODE_LOOKUP_LABEL);
+    const [hashedSlot] = await db
       .select()
       .from(adminInboxes)
-      .where(eq(adminInboxes.upgradeCode, code))
+      .where(eq(adminInboxes.upgradeCodeLookup, codeLookup))
       .limit(1);
+
+    let slot = hashedSlot;
+    if (!slot) {
+      const legacyRows = await db
+        .select()
+        .from(adminInboxes)
+        .where(isNull(adminInboxes.upgradeCodeLookup));
+      const legacyMatch = legacyRows.find((row) => row.upgradeCode === code);
+      if (legacyMatch) {
+        await db
+          .update(adminInboxes)
+          .set({ upgradeCodeLookup: codeLookup })
+          .where(eq(adminInboxes.id, legacyMatch.id));
+        slot = { ...legacyMatch, upgradeCodeLookup: codeLookup };
+      }
+    }
     if (!slot) {
       return reply.code(403).send({ error: 'invalid_code' });
     }
@@ -359,12 +428,14 @@ export default async function meRoutes(app: FastifyInstance) {
     // on the network. Production (gate off) ignores the flag; admin
     // promotion stays a separate authenticated path.
     if (claimAdminRole && config.GOLDILOCKS_ALLOW_SELF_PROMOTE) {
+      const bootstrapCode = generateUpgradeCode();
       await db
         .insert(adminInboxes)
         .values({
           inboxId,
           name: 'Self-promoted (dev)',
-          upgradeCode: generateUpgradeCode(),
+          upgradeCode: bootstrapCode,
+          upgradeCodeLookup: lookupHash(bootstrapCode, ADMIN_UPGRADE_CODE_LOOKUP_LABEL),
           claimedAt: new Date(),
         })
         .onConflictDoNothing();

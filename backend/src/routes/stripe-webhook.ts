@@ -27,7 +27,14 @@ export default async function stripeWebhookRoutes(app: FastifyInstance) {
     done(null, body);
   });
 
-  app.post('/v2/stripe/webhook', async (req, reply) => {
+  app.post('/v2/stripe/webhook', {
+    config: {
+      // Stripe's retry policy can fire bursts of webhook deliveries; the
+      // signature check is the real defence. Skip the global rate limit
+      // here so a legitimate burst from Stripe isn't dropped.
+      rateLimit: false,
+    },
+  }, async (req, reply) => {
     if (!isStripeConfigured() || !config.STRIPE_WEBHOOK_SECRET) {
       return reply.code(503).send({ error: 'billing_unavailable' });
     }

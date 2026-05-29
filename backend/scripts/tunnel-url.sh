@@ -8,18 +8,22 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-COMPOSE="docker compose --env-file .env.prod -f docker-compose.prod.yml"
+# `compose logs` reads existing container output and doesn't actually need
+# substituted YAML values, but compose still warns about unset variables.
+# Wrap in with-prod-secrets.sh so the YAML resolves cleanly.
+WITH_SECRETS=./scripts/with-prod-secrets.sh
+COMPOSE=(docker compose -f docker-compose.prod.yml)
 
-url=$($COMPOSE logs cloudflared 2>&1 \
+url=$("${WITH_SECRETS}" "${COMPOSE[@]}" logs cloudflared 2>&1 \
   | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' \
   | tail -n 1 || true)
 
 if [ -z "$url" ]; then
   echo "✗ No trycloudflare.com URL found in the cloudflared logs."
-  echo "  Is the tunnel running?    $COMPOSE ps cloudflared"
+  echo "  Is the tunnel running?    ${WITH_SECRETS} ${COMPOSE[*]} ps cloudflared"
   echo "  If the logs have rotated past the startup banner, restart it to"
   echo "  print a fresh URL (note: a restart issues a NEW url):"
-  echo "    $COMPOSE restart cloudflared"
+  echo "    ${WITH_SECRETS} ${COMPOSE[*]} restart cloudflared"
   exit 1
 fi
 

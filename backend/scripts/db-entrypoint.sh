@@ -36,6 +36,30 @@ chown postgres:postgres "${DST_DIR}/server.crt" "${DST_DIR}/server.key" "${DST_D
 chmod 0600 "${DST_DIR}/server.key"
 chmod 0644 "${DST_DIR}/server.crt" "${DST_DIR}/ca.crt"
 
-# Hand off to the postgres image's stock entrypoint with all of the
-# command-line flags compose passed in.
-exec docker-entrypoint.sh "$@"
+# F5 mTLS — generate a pg_hba.conf that requires SSL + a valid client
+# certificate (auth method `cert`, implies clientcert=verify-full) on
+# every TCP connection. Unix-socket connections (used by pg_dump from
+# inside this container during backups) stay password-less via `trust`
+# because the only thing that can reach them is already running inside
+# this container's filesystem.
+#
+# `cert` maps the client cert's CN onto the requested DB role: the
+# backend, agent, and backup leaves all share CN=goldilocks so they
+# connect as that role. To add another role, mint a leaf with the new
+# CN and add an `hostssl` line for it here.
+HBA_FILE="${DST_DIR}/pg_hba.conf"
+cat > "${HBA_FILE}" <<'EOF'
+# Goldilocks F5 mTLS pg_hba — clients MUST present a CA-signed leaf.
+local   all all                  trust
+hostssl all all 0.0.0.0/0         cert
+hostssl all all ::/0              cert
+EOF
+chown postgres:postgres "${HBA_FILE}"
+chmod 0600 "${HBA_FILE}"
+
+# Tell the standard entrypoint to point Postgres at our generated hba
+# rather than the image default. The official postgres image honours
+# `POSTGRES_HOST_AUTH_METHOD` and `PGDATA`, but the cleanest knob for a
+# fully-managed hba file is the `-c hba_file=…` command-line flag, which
+# we append to whatever compose passed in.
+exec docker-entrypoint.sh "$@" -c "hba_file=${HBA_FILE}"

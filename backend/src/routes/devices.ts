@@ -15,7 +15,17 @@ export default async function deviceRoutes(app: FastifyInstance) {
   // POST /v2/device/register
   // Called BEFORE the iOS client has a JWT, so this endpoint is unauthenticated.
   // Add device attestation here if needed (e.g. Apple DeviceCheck).
-  app.post('/v2/device/register', async (req, reply) => {
+  app.post('/v2/device/register', {
+    config: {
+      // Unauthenticated — key per IP. Device registration is a one-shot
+      // per install; 5/min/IP comfortably covers normal retries while
+      // throttling automated enrolment from a single source.
+      rateLimit: {
+        max: 5,
+        timeWindow: '1 minute',
+      },
+    },
+  }, async (req, reply) => {
     const parsed = Body.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });

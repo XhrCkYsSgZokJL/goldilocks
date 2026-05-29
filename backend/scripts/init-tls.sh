@@ -35,6 +35,13 @@ PG_CRT="${TLS_DIR}/postgres.crt"
 PG_KEY="${TLS_DIR}/postgres.key"
 EXT_FILE="${TLS_DIR}/.postgres.ext.cnf"
 
+# F5 mTLS — one client leaf per consumer process so a single key
+# compromise revokes a single role rather than every container's
+# access. All three are signed by the same CA the server trusts, with
+# CN=goldilocks so Postgres's `cert` auth method maps the client cert
+# straight to the matching DB role.
+CLIENT_NAMES=("backend" "agent" "backup")
+
 mkdir -p "${TLS_DIR}"
 
 # Run openssl from inside the backup image. openssl is bundled in
@@ -118,6 +125,48 @@ EOF
   chmod 0640 "${PG_KEY}"
   chmod 0644 "${PG_CRT}"
 fi
+
+# ----- 3. client leaves (mTLS) -------------------------------------------
+
+for name in "${CLIENT_NAMES[@]}"; do
+  CLIENT_CRT="${TLS_DIR}/client-${name}.crt"
+  CLIENT_KEY="${TLS_DIR}/client-${name}.key"
+  if [[ -f "${CLIENT_CRT}" && -f "${CLIENT_KEY}" && "${FORCE}" != "--force" ]]; then
+    log "client leaf for ${name} already exists at ${CLIENT_CRT} — keeping it"
+    continue
+  fi
+
+  log "minting client leaf for ${name}"
+  openssl_run ecparam -name prime256v1 -genkey -noout -out "${CLIENT_KEY}"
+  openssl_run req -new \
+    -key "${CLIENT_KEY}" \
+    -subj "/CN=goldilocks/O=Goldilocks/OU=${ENV_NAME}-${name}" \
+    -out "${TLS_DIR}/.${name}.csr"
+
+  # extendedKeyUsage = clientAuth — narrows the leaf so it can't double
+  # as a server cert against any host that trusts our CA.
+  cat > "${TLS_DIR}/.${name}.ext.cnf" <<EOF
+extendedKeyUsage = clientAuth
+basicConstraints = critical, CA:false
+EOF
+
+  openssl_run x509 -req \
+    -in "${TLS_DIR}/.${name}.csr" \
+    -CA "${CA_CRT}" \
+    -CAkey "${CA_KEY}" \
+    -CAcreateserial \
+    -days 365 \
+    -sha256 \
+    -extfile "${TLS_DIR}/.${name}.ext.cnf" \
+    -out "${CLIENT_CRT}"
+  rm -f "${TLS_DIR}/.${name}.csr" "${TLS_DIR}/.${name}.ext.cnf" "${TLS_DIR}/ca.srl"
+
+  # libpq reads the key file via the connecting user (uid 1000 / `node`
+  # in our backend image). mode 0600 with no group access keeps it
+  # unreadable by anyone else.
+  chmod 0600 "${CLIENT_KEY}"
+  chmod 0644 "${CLIENT_CRT}"
+done
 
 log "done."
 log ""

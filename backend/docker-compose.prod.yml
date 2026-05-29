@@ -69,23 +69,56 @@ services:
     depends_on:
       goldilocks-db:
         condition: service_healthy
-    env_file: .env.prod
+    # No `env_file:` — secrets enter compose's process env via
+    # `sops exec-env secrets/prod.env.enc <command>` (see scripts/deploy.sh)
+    # and are forwarded into the container by the list below. The bare
+    # `KEY` form pulls KEY from compose's process env; `KEY=value` is a
+    # literal. Plaintext `.env.prod` never touches disk.
     environment:
-      NODE_ENV: production
-      HOST: 0.0.0.0
-      PORT: 4000
-      # F5 — TLS-pinned connection to postgres. sslmode=verify-full means
-      # the backend verifies the server certificate against the pinned
-      # CA AND the hostname. The CA is mounted in below.
-      DATABASE_URL: postgres://${POSTGRES_USER:-goldilocks}:${POSTGRES_PASSWORD}@goldilocks-db:5432/${POSTGRES_DB:-goldilocks}?sslmode=verify-full&sslrootcert=/etc/goldilocks-tls/ca.crt
+      # --- literals ---
+      - NODE_ENV=production
+      - HOST=0.0.0.0
+      - PORT=4000
+      # F5 — mTLS to Postgres. sslmode=verify-full pins the server cert
+      # against the CA AND verifies the hostname. sslcert+sslkey present
+      # this container's CA-signed client leaf, which Postgres maps onto
+      # the matching DB role via the `cert` auth method in
+      # scripts/db-entrypoint.sh.
+      - DATABASE_URL=postgres://${POSTGRES_USER:-goldilocks}:${POSTGRES_PASSWORD}@goldilocks-db:5432/${POSTGRES_DB:-goldilocks}?sslmode=verify-full&sslrootcert=/etc/goldilocks-tls/ca.crt&sslcert=/etc/goldilocks-tls/client.crt&sslkey=/etc/goldilocks-tls/client.key
       # Self-promote is a dev-only backdoor. Hard-off in production.
-      GOLDILOCKS_ALLOW_SELF_PROMOTE: "false"
-      # Attachment bytes (STORAGE_PROVIDER=local) are written here, onto the
-      # goldilocks-attachments volume below.
-      LOCAL_STORAGE_DIR: /var/lib/goldilocks-attachments
+      - GOLDILOCKS_ALLOW_SELF_PROMOTE=false
+      # Attachment bytes (STORAGE_PROVIDER=local) are written here.
+      - LOCAL_STORAGE_DIR=/var/lib/goldilocks-attachments
+      # --- forwarded from compose process env (populated by sops exec-env) ---
+      # Add new vars here AND to secrets/prod.env.enc. Listed explicitly so
+      # we can audit which variables reach the container.
+      - JWT_SECRET
+      - JWT_TTL_SECONDS
+      - REFRESH_TTL_DAYS
+      - APP_ENCRYPTION_KEY
+      - ENCRYPT_AT_REST_V1
+      - CORS_ORIGIN
+      - LOG_LEVEL
+      - PUBLIC_BASE_URL
+      - SIWE_DOMAIN
+      - SIWE_URI
+      - STORAGE_PROVIDER
+      - LIGHTHOUSE_API_KEY
+      - LIGHTHOUSE_WALLET_PRIVATE_KEY
+      - IPFS_GATEWAY
+      - XMTP_GRPC_URL
+      - XMTP_GRPC_SECURE
+      - XMTP_NETWORK
+      - XMTP_API_URL
+      - STRIPE_SECRET_KEY
+      - STRIPE_WEBHOOK_SECRET
+      - STRIPE_SUCCESS_URL
+      - STRIPE_CANCEL_URL
     volumes:
       - goldilocks-attachments:/var/lib/goldilocks-attachments
       - ./secrets/tls/ca.crt:/etc/goldilocks-tls/ca.crt:ro
+      - ./secrets/tls/client-backend.crt:/etc/goldilocks-tls/client.crt:ro
+      - ./secrets/tls/client-backend.key:/etc/goldilocks-tls/client.key:ro
     # No host port published — the Cloudflare tunnel reaches this over the
     # internal compose network. Nothing is directly exposed.
     expose:
@@ -102,11 +135,23 @@ services:
         condition: service_healthy
       backend:
         condition: service_started
-    env_file: .env.prod
+    # See backend service above — no env_file, secrets arrive via
+    # `sops exec-env` into compose's process env.
     environment:
-      NODE_ENV: production
-      DATABASE_URL: postgres://${POSTGRES_USER:-goldilocks}:${POSTGRES_PASSWORD}@goldilocks-db:5432/${POSTGRES_DB:-goldilocks}?sslmode=verify-full&sslrootcert=/etc/goldilocks-tls/ca.crt
-      AGENT_DB_DIR: /var/lib/goldilocks-agent
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://${POSTGRES_USER:-goldilocks}:${POSTGRES_PASSWORD}@goldilocks-db:5432/${POSTGRES_DB:-goldilocks}?sslmode=verify-full&sslrootcert=/etc/goldilocks-tls/ca.crt&sslcert=/etc/goldilocks-tls/client.crt&sslkey=/etc/goldilocks-tls/client.key
+      - AGENT_DB_DIR=/var/lib/goldilocks-agent
+      # Forwarded from compose process env
+      - LOG_LEVEL
+      - APP_ENCRYPTION_KEY
+      - ENCRYPT_AT_REST_V1
+      - AGENT_DB_ENCRYPTION_KEY
+      - XMTP_GRPC_URL
+      - XMTP_GRPC_SECURE
+      - XMTP_NETWORK
+      - XMTP_API_URL
+      - SIWE_DOMAIN
+      - SIWE_URI
     volumes:
       - goldilocks-agent-data:/var/lib/goldilocks-agent
       - ./secrets/tls/ca.crt:/etc/goldilocks-tls/ca.crt:ro
@@ -173,9 +218,14 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD}
       PGUSER: ${POSTGRES_USER:-goldilocks}
       PGDATABASE: ${POSTGRES_DB:-goldilocks}
-      # F5 — pg_dump also goes over TLS to the SSL-only postgres above.
+      # F5 — pg_dump also goes over mTLS to the SSL-only postgres above.
+      # PGSSLCERT + PGSSLKEY present the backup-specific client leaf so
+      # postgres can identify this caller distinctly from the backend
+      # and agent in audit logs.
       PGSSLMODE: verify-full
       PGSSLROOTCERT: /backup/secrets/tls/ca.crt
+      PGSSLCERT: /backup/secrets/tls/client-backup.crt
+      PGSSLKEY: /backup/secrets/tls/client-backup.key
       RESTIC_REPOSITORY: /repo
       RESTIC_PASSWORD_FILE: /run/secrets/restic_password
       # Repos to bundle. The CLI resolves HOST_GOLDILOCKS_IOS_DIR via
@@ -197,8 +247,10 @@ services:
       # produced /snapshot/secrets/secrets/, and the resulting restore
       # then recreated ./secrets/secrets/ on the host, growing one
       # nesting level per backup/restore cycle.
+      # The sealed `secrets/prod.env.enc` lives under this mount, so the
+      # encrypted env is backed up as part of the secrets bundle — there
+      # is no plaintext .env.prod on the host to mount.
       - ./secrets:/backup/secrets:ro
-      - ./.env.prod:/backup/env-files/.env.prod:ro
       # Restic passphrase. The operator chooses where this lives —
       # default is ./.restic-passphrase.prod (chmod 600, gitignored).
       - ./.restic-passphrase.prod:/run/secrets/restic_password:ro

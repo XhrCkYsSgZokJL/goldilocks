@@ -32,6 +32,11 @@ const TARGETS: readonly ColumnTarget[] = [
   { table: 'billing_checkouts', column: 'stripe_session_id', label: 'billing_checkouts.stripe_session_id' },
   { table: 'billing_checkouts', column: 'stripe_payment_intent_id', label: 'billing_checkouts.stripe_payment_intent_id' },
   { table: 'devices', column: 'push_token', label: 'devices.push_token' },
+  // Migration 017 moved hmac_keys from jsonb to text. Existing rows hold
+  // plaintext JSON arrays (`[...]`); the codec stringifies on write,
+  // parses on read. encryptAtRest treats the JSON text the same as any
+  // other UTF-8 string.
+  { table: 'subscriptions', column: 'hmac_keys', label: 'subscriptions.hmac_keys' },
 ] as const;
 
 const DRY_RUN = process.argv.includes('--dry-run');

@@ -21,7 +21,15 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 chars (use: openssl rand -hex 32)'),
-  JWT_TTL_SECONDS: z.coerce.number().int().positive().default(86400),
+  // Access-token TTL. Short by design — refresh tokens (30-day default)
+  // cover continuity. See src/auth/refresh-tokens.ts and security plan
+  // item 11.
+  JWT_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
+  // Refresh-token TTL. 30 days matches the default mobile-OS app-resume
+  // window before the user re-logins. Lower it (e.g. 7) for high-risk
+  // deployments; raise it (e.g. 90) if you accept the longer theft
+  // window in exchange for fewer re-auths.
+  REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
   // `local` writes attachment bytes to LOCAL_STORAGE_DIR on the backend
   // host and serves them via /v2/_local-asset/... — the path the iOS

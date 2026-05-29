@@ -170,6 +170,15 @@ A few values the wizard leaves at their defaults:
 `.env.prod`; it's gitignored. `GOLDILOCKS_ALLOW_SELF_PROMOTE` is absent on
 purpose — `docker-compose.prod.yml` forces it off.
 
+> **At-rest secrets**: the CLI seals `.env.prod` into `secrets/prod.env.enc`
+> (SOPS + age) and unseals it for editing in **Settings → Keys**. The
+> sealed file is what gets backed up and what the deploy reads.
+> `scripts/with-prod-secrets.sh` decrypts it into the deploy process env
+> in-memory before exec'ing `docker compose` — the runtime path never
+> requires `.env.prod` to exist on disk. After editing + re-sealing,
+> `rm .env.prod` to shrink the plaintext window on the box. See F3 in
+> `docs/encryption-and-backup-plan.md`.
+
 ## 2. The Cloudflare quick tunnel
 
 There is nothing to set up. The `cloudflared` service in
@@ -221,10 +230,15 @@ migrations, and starts/updates the stack.
 Check it came up:
 
 ```
-docker compose --env-file .env.prod -f docker-compose.prod.yml ps
-docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f backend
+./scripts/with-prod-secrets.sh docker compose -f docker-compose.prod.yml ps
+./scripts/with-prod-secrets.sh docker compose -f docker-compose.prod.yml logs -f backend
 curl "$(./scripts/tunnel-url.sh)/healthz"
 ```
+
+`with-prod-secrets.sh` decrypts `secrets/prod.env.enc` into the deploy
+shell's env in-memory and execs the given command — plaintext
+`.env.prod` is never written to disk on the box. Compose forwards only
+the explicit list of variables in `docker-compose.prod.yml`.
 
 Everything has `restart: unless-stopped`, so the stack comes back on its own
 after a crash or a reboot. Note that a reboot gives `cloudflared` a **new**
@@ -279,11 +293,12 @@ volume off-box separately.
 **Restore the database** — stop the app, restore, start it again:
 
 ```
-docker compose --env-file .env.prod -f docker-compose.prod.yml stop backend agent
-cat backups/db-YYYYMMDD-HHMMSS.dump | docker compose --env-file .env.prod \
+W=./scripts/with-prod-secrets.sh
+$W docker compose -f docker-compose.prod.yml stop backend agent
+cat backups/db-YYYYMMDD-HHMMSS.dump | $W docker compose \
   -f docker-compose.prod.yml exec -T goldilocks-db \
   pg_restore -U goldilocks -d goldilocks --clean --if-exists --no-owner
-docker compose --env-file .env.prod -f docker-compose.prod.yml start backend agent
+$W docker compose -f docker-compose.prod.yml start backend agent
 ```
 
 **Restore the agent identities** — stop the `agent`, clear the
@@ -326,6 +341,51 @@ Then:
 6. Set `SIWE_DOMAIN` / `SIWE_URI`, `CORS_ORIGIN`, and `PUBLIC_BASE_URL` to
    the new `api.<domain>` values, point the iOS app at it, and redeploy.
 
+## One-time migration: Postgres mTLS
+
+Migration introduced by security plan item 33 — Postgres now refuses
+TCP connections that don't present a CA-signed client certificate.
+`scripts/init-tls.sh` mints three client leaves (one each for
+`backend`, `agent`, `backup`) alongside the existing CA + server
+leaf. On an existing install:
+
+```
+./scripts/init-tls.sh prod
+```
+
+is idempotent — the CA and server leaf are preserved, the missing
+client leaves are minted. Then the next `./scripts/deploy.sh`
+rebuilds the goldilocks-db container (which regenerates
+`pg_hba.conf` requiring client certs) and starts the backend / agent
+containers with the new `DATABASE_URL` parameters.
+
+If you have shells or external pg clients that connected to the dev
+DB on `localhost:25433` with the old one-way-TLS URL, update them
+with the new `&sslcert=…&sslkey=…` parameters (or copy
+`secrets/tls/client-backend.{crt,key}` into your client's keychain).
+
+## One-time migration: backend runs as non-root
+
+The backend and agent containers now drop to the `node` user (uid 1000) before
+`CMD`. On the next deploy, the `goldilocks-attachments` and `goldilocks-agent-data`
+named volumes — created under previous root-running deploys — will still be
+owned by root and the container won't be able to write to them.
+
+Run this once on the host before redeploying:
+
+```
+./scripts/with-prod-secrets.sh docker compose -f docker-compose.prod.yml stop backend agent
+docker run --rm \
+  -v goldilocks-prod_goldilocks-attachments:/att \
+  -v goldilocks-prod_goldilocks-agent-data:/agent \
+  alpine sh -c 'chown -R 1000:1000 /att /agent'
+./scripts/deploy.sh
+```
+
+Fresh installs (volumes don't exist yet) don't need this — the Dockerfile
+pre-creates the mount points under node ownership, which Docker inherits when
+the empty volume is first attached.
+
 ## Operations cheatsheet
 
 Day-to-day operations go through the interactive control CLI. It always
@@ -355,12 +415,15 @@ npm run cli -- --prod admins list
 npm run cli -- --prod clients list
 ```
 
-The raw commands still work if you prefer them:
+The raw commands still work if you prefer them. Wrap any `docker compose`
+invocation in `scripts/with-prod-secrets.sh` so the SOPS-sealed env is
+decrypted in-memory for that command and never written to disk:
 
 ```
-docker compose --env-file .env.prod -f docker-compose.prod.yml ps
-docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f backend
-docker compose --env-file .env.prod -f docker-compose.prod.yml restart backend
+W=./scripts/with-prod-secrets.sh
+$W docker compose -f docker-compose.prod.yml ps
+$W docker compose -f docker-compose.prod.yml logs -f backend
+$W docker compose -f docker-compose.prod.yml restart backend
 ./scripts/deploy.sh
 ./scripts/tunnel-url.sh
 ```

@@ -1,9 +1,12 @@
 // Lightweight migration runner — reads ./migrations/*.sql in lexicographic order
-// and applies any not yet recorded in schema_migrations.
+// and applies any not yet recorded in schema_migrations. After SQL migrations
+// finish, runs any application-level backfills that need to keep up with
+// schema changes (e.g. the deterministic lookup column added in 019).
 import { readdir, readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pool } from './client.js';
+import { backfillAdminUpgradeLookups } from './backfill-admin-upgrade-lookups.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'migrations');
@@ -50,6 +53,12 @@ async function main() {
     }
   }
   console.log('Migrations complete.');
+
+  // Application-level backfills. These run on every invocation because
+  // they're idempotent and the work is bounded by the number of rows
+  // that haven't already been backfilled.
+  await backfillAdminUpgradeLookups();
+
   await pool.end();
 }
 

@@ -105,10 +105,11 @@ services:
     environment:
       PORT: 4000
       HOST: 0.0.0.0
-      # F5 — TLS-pinned connection to postgres, matches the prod shape.
-      DATABASE_URL: postgres://goldilocks:goldilocks@goldilocks-db:5432/goldilocks?sslmode=verify-full&sslrootcert=/etc/goldilocks-tls/ca.crt
+      # F5 — mTLS to postgres, matches the prod shape. Server cert
+      # pinned via sslrootcert; client identifies via sslcert + sslkey.
+      DATABASE_URL: postgres://goldilocks:goldilocks@goldilocks-db:5432/goldilocks?sslmode=verify-full&sslrootcert=/etc/goldilocks-tls/ca.crt&sslcert=/etc/goldilocks-tls/client.crt&sslkey=/etc/goldilocks-tls/client.key
       JWT_SECRET: ${JWT_SECRET:-dev_only_secret_replace_me_with_openssl_rand_hex_32_xx}
-      JWT_TTL_SECONDS: 86400
+      JWT_TTL_SECONDS: 3600
       STORAGE_PROVIDER: ${STORAGE_PROVIDER:-mock}
       LIGHTHOUSE_API_KEY: ${LIGHTHOUSE_API_KEY:-}
       IPFS_GATEWAY: ${IPFS_GATEWAY:-https://gateway.lighthouse.storage/ipfs}
@@ -121,6 +122,8 @@ services:
       - "${HOST_BACKEND_PORT:-4000}:4000"
     volumes:
       - ./secrets/tls/ca.crt:/etc/goldilocks-tls/ca.crt:ro
+      - ./secrets/tls/client-backend.crt:/etc/goldilocks-tls/client.crt:ro
+      - ./secrets/tls/client-backend.key:/etc/goldilocks-tls/client.key:ro
 
   # Server-side XMTP agents (admins-agent + reports-agent). Maintains the
   # cross-admin Admins group, every client's Advisory group, and owns
@@ -186,9 +189,11 @@ services:
       PGPASSWORD: goldilocks
       PGUSER: goldilocks
       PGDATABASE: goldilocks
-      # F5 — pg_dump also goes over TLS against the SSL-only postgres.
+      # F5 — pg_dump also goes over mTLS to the SSL-only postgres.
       PGSSLMODE: verify-full
       PGSSLROOTCERT: /backup/secrets/tls/ca.crt
+      PGSSLCERT: /backup/secrets/tls/client-backup.crt
+      PGSSLKEY: /backup/secrets/tls/client-backup.key
       RESTIC_REPOSITORY: /repo
       RESTIC_PASSWORD_FILE: /run/secrets/restic_password
       BACKUP_SOURCE_REPOS: /source/goldilocks-backend,/source/goldilocks-ios

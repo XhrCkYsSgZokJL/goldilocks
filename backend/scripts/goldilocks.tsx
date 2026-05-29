@@ -19,6 +19,28 @@
 import { config as loadEnv } from 'dotenv';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes, randomInt } from 'node:crypto';
+import { decryptAtRest, encryptAtRest, isEncryptedAtRest } from '../src/crypto/at-rest.js';
+import { lookupHash } from '../src/crypto/lookup-hash.js';
+
+const ADMIN_UPGRADE_CODE_LABEL = 'admin_inboxes.upgrade_code';
+const ADMIN_UPGRADE_CODE_LOOKUP_LABEL = 'admin_inboxes.upgrade_code.lookup';
+
+/** Decrypt the stored upgrade_code if it carries the v1 envelope; pass
+ *  through otherwise (rows from before encryption was enabled, or rows
+ *  in dev with ENCRYPT_AT_REST_V1=false). */
+function decodeUpgradeCode(stored: string): string {
+  return isEncryptedAtRest(stored) ? decryptAtRest(stored, ADMIN_UPGRADE_CODE_LABEL) : stored;
+}
+
+/** Build the pair of column values to write for a new admin slot —
+ *  encrypted upgrade_code (or plain if encryption is off) plus the
+ *  deterministic lookup hash. */
+function encodeUpgradeCode(plain: string): { stored: string; lookup: string } {
+  const shouldEncrypt = process.env.ENCRYPT_AT_REST_V1 === 'true';
+  const stored = shouldEncrypt ? encryptAtRest(plain, ADMIN_UPGRADE_CODE_LABEL) : plain;
+  const lookup = lookupHash(plain, ADMIN_UPGRADE_CODE_LOOKUP_LABEL);
+  return { stored, lookup };
+}
 import {
   chmodSync, closeSync, existsSync, mkdirSync, openSync,
   readFileSync, statSync, unlinkSync, writeFileSync, writeSync,
@@ -189,12 +211,33 @@ function runInherit(command: string, args: string[], cwd: string = REPO_ROOT): P
 }
 
 // docker compose args for the current environment's compose file.
+//
+// Dev keeps the simple `--env-file .env.dev` form. Prod wraps the docker
+// invocation in scripts/with-prod-secrets.sh so the SOPS-sealed env
+// (secrets/prod.env.enc) is decrypted in-memory and exported into
+// compose's process env — plaintext `.env.prod` never touches disk.
 function dockerComposeArgs(rest: string[]): string[] {
+  if (ENV === 'prod') {
+    return ['compose', '-f', composeFile(), ...rest];
+  }
   return ['compose', '--env-file', `.env.${ENV}`, '-f', composeFile(), ...rest];
 }
 
+// Returns the spawn target for `docker compose ...` — handles the
+// prod sops exec-env wrap.
+function dockerComposeSpawn(rest: string[]): { command: string; args: string[] } {
+  if (ENV === 'prod') {
+    return {
+      command: scriptPath('with-prod-secrets.sh'),
+      args: ['docker', ...dockerComposeArgs(rest)],
+    };
+  }
+  return { command: 'docker', args: dockerComposeArgs(rest) };
+}
+
 function composeInherit(rest: string[]): Promise<number> {
-  return runInherit('docker', dockerComposeArgs(rest));
+  const { command, args } = dockerComposeSpawn(rest);
+  return runInherit(command, args);
 }
 
 function bashInherit(name: string, args: string[] = []): Promise<number> {
@@ -289,6 +332,189 @@ async function finalizeTunnel(previous: string, append: (line: string) => void):
   for (const line of syncIosConfig(url)) append(line);
 }
 
+// --- security: iOS file editors -------------------------------------------
+//
+// The iOS pin set + pinning mode + secure-window debug flag are all kept
+// in source files. Editing them by hand is brittle (and easy to forget),
+// so the CLI Security menu (screen === 'security') reads + writes them
+// with deterministic regex anchors. If you rename one of these symbols
+// in the iOS source, update the matching anchor here too.
+
+function iosCertificatePinnerPath(): string {
+  return join(iosRepoDir(), 'ConvosCore', 'Sources', 'ConvosCore', 'Networking', 'CertificatePinner.swift');
+}
+
+function iosConvosApiClientPath(): string {
+  return join(iosRepoDir(), 'ConvosCore', 'Sources', 'ConvosCore', 'API', 'ConvosAPIClient.swift');
+}
+
+function iosDevXcconfigPath(): string {
+  return join(iosRepoDir(), 'Convos', 'Config', 'Dev.xcconfig');
+}
+
+/** Parse `apiSpkiHashes: Set<String> = [ "…", "…" ]` out of CertificatePinner.swift. */
+function readIosPinHashes(): string[] | null {
+  try {
+    const text = readFileSync(iosCertificatePinnerPath(), 'utf8');
+    const m = text.match(/apiSpkiHashes:\s*Set<String>\s*=\s*\[([\s\S]*?)\]/);
+    if (!m || m[1] === undefined) return null;
+    return m[1]
+      .split(',')
+      .map((s) => s.trim().replace(/^"/, '').replace(/"$/, ''))
+      .filter((s) => s.length > 0);
+  } catch {
+    return null;
+  }
+}
+
+function writeIosPinHashes(hashes: string[]): { ok: boolean; message: string } {
+  try {
+    const path = iosCertificatePinnerPath();
+    const text = readFileSync(path, 'utf8');
+    const re = /(apiSpkiHashes:\s*Set<String>\s*=\s*)\[[\s\S]*?\]/;
+    if (!re.test(text)) return { ok: false, message: 'apiSpkiHashes anchor not found' };
+    const body = hashes.length === 0
+      ? '[]'
+      : `[\n        ${hashes.map((h) => `"${h}"`).join(',\n        ')},\n    ]`;
+    writeFileSync(path, text.replace(re, (_, prefix: string) => `${prefix}${body}`));
+    return { ok: true, message: `Wrote ${hashes.length} pin(s) to ${path}` };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
+function readIosPinMode(): 'shadow' | 'enforce' | null {
+  try {
+    const text = readFileSync(iosConvosApiClientPath(), 'utf8');
+    const m = text.match(/GoldilocksPinning\.defaultPinner\(mode:\s*\.(shadow|enforce)\)/);
+    return m && (m[1] === 'shadow' || m[1] === 'enforce') ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeIosPinMode(mode: 'shadow' | 'enforce'): { ok: boolean; message: string } {
+  try {
+    const path = iosConvosApiClientPath();
+    const text = readFileSync(path, 'utf8');
+    const replaced = text.replace(
+      /GoldilocksPinning\.defaultPinner\(mode:\s*\.(shadow|enforce)\)/,
+      `GoldilocksPinning.defaultPinner(mode: .${mode})`,
+    );
+    if (replaced === text) return { ok: false, message: 'pin mode anchor not found' };
+    writeFileSync(path, replaced);
+    return { ok: true, message: `Pinning mode set to .${mode}` };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
+function readSecureWindowDebugFlag(): boolean | null {
+  try {
+    const text = readFileSync(iosDevXcconfigPath(), 'utf8');
+    const m = text.match(/^SWIFT_ACTIVE_COMPILATION_CONDITIONS\s*=\s*(.*)$/m);
+    if (!m || m[1] === undefined) return null;
+    return m[1].split(/\s+/).includes('DEBUG_DISABLE_SECURE_WINDOW');
+  } catch {
+    return null;
+  }
+}
+
+function writeSecureWindowDebugFlag(enabled: boolean): { ok: boolean; message: string } {
+  try {
+    const path = iosDevXcconfigPath();
+    const text = readFileSync(path, 'utf8');
+    const re = /^(SWIFT_ACTIVE_COMPILATION_CONDITIONS\s*=\s*)(.*)$/m;
+    const m = text.match(re);
+    if (!m || m[1] === undefined || m[2] === undefined) {
+      return { ok: false, message: 'SWIFT_ACTIVE_COMPILATION_CONDITIONS not found in Dev.xcconfig' };
+    }
+    const tokens = m[2].split(/\s+/).filter(Boolean);
+    const has = tokens.includes('DEBUG_DISABLE_SECURE_WINDOW');
+    if (enabled === has) return { ok: true, message: 'no change' };
+    const next = enabled
+      ? [...tokens, 'DEBUG_DISABLE_SECURE_WINDOW']
+      : tokens.filter((t) => t !== 'DEBUG_DISABLE_SECURE_WINDOW');
+    writeFileSync(path, text.replace(re, `${m[1]}${next.join(' ')}`));
+    return { ok: true, message: `DEBUG_DISABLE_SECURE_WINDOW ${enabled ? 'enabled' : 'disabled'}` };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
+/** Securely delete .env.<env>. Tries shred → srm → overwrite-then-unlink. */
+function shredPlaintextEnv(): { ok: boolean; message: string } {
+  const path = envFilePath();
+  if (!existsSync(path)) return { ok: true, message: '.env was not present — nothing to shred.' };
+  const tryRun = (cmd: string, args: string[]): boolean => {
+    const r = spawnSync(cmd, args, { stdio: 'pipe' });
+    return r.status === 0;
+  };
+  if (tryRun('shred', ['-u', '-z', path])) return { ok: true, message: `Shredded ${path} via shred.` };
+  if (tryRun('srm', ['-m', path])) return { ok: true, message: `Shredded ${path} via srm.` };
+  try {
+    const size = readFileSync(path).length;
+    writeFileSync(path, Buffer.alloc(size, 0));
+    unlinkSync(path);
+    return { ok: true, message: `Shredded ${path} via overwrite+unlink fallback.` };
+  } catch (err) {
+    return { ok: false, message: `Failed to shred ${path}: ${(err as Error).message}` };
+  }
+}
+
+/** Unseal → set one env key → reseal → shred plaintext. */
+function editEnvKeyAndReseal(key: string, newValue: string): { ok: boolean; message: string } {
+  try {
+    if (!existsSync(envFilePath()) && existsSync(sealedEnvFile())) {
+      const un = unsealEnvSync();
+      if (!un.ok) return un;
+    }
+    const text = existsSync(envFilePath()) ? readFileSync(envFilePath(), 'utf8') : '';
+    const updated = setEnvValue(text, key, newValue);
+    writeFileSync(envFilePath(), updated, { mode: 0o600 });
+    chmodSync(envFilePath(), 0o600);
+    const seal = sealEnvSync();
+    if (!seal.ok) return seal;
+    const shred = shredPlaintextEnv();
+    return { ok: true, message: `Set ${key}=${newValue}. ${shred.message}` };
+  } catch (err) {
+    return { ok: false, message: `Failed to update ${key}: ${(err as Error).message}` };
+  }
+}
+
+/**
+ * Compute the base64-encoded SHA-256 of the SubjectPublicKeyInfo of a
+ * PEM-encoded X.509 certificate. The resulting string is the literal
+ * value the iOS client compares against in `apiSpkiHashes`. Uses the
+ * openssl bundled in the goldilocks-backup image.
+ */
+function computeSpkiHashFromPem(pemPath: string): { ok: boolean; hash?: string; message: string } {
+  if (!existsSync(pemPath)) return { ok: false, message: `${pemPath} not found` };
+  const absDir = dirname(pemPath);
+  const base = pemPath.replace(/^.*\//, '');
+  const result = spawnSync(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '-v',
+      `${absDir}:/work:ro`,
+      '-w',
+      '/work',
+      '--entrypoint',
+      'sh',
+      'goldilocks-backup:latest',
+      '-c',
+      `openssl x509 -in '${base}' -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64 -A`,
+    ],
+    { stdio: 'pipe' },
+  );
+  if (result.status !== 0) {
+    return { ok: false, message: result.stderr?.toString().trim() || 'openssl exited non-zero' };
+  }
+  return { ok: true, hash: result.stdout.toString().trim(), message: 'ok' };
+}
+
 // --- database --------------------------------------------------------------
 
 // Connection settings for the current environment. Dev uses DATABASE_URL
@@ -333,7 +559,12 @@ async function loadAdmins(client: pg.Client): Promise<AdminRow[]> {
        FROM admin_inboxes
        ORDER BY created_at ASC`,
   );
-  return res.rows;
+  // `upgrade_code` is F4-encrypted at rest. Decrypt before handing rows
+  // back so the rest of the CLI (formatters, search) sees plaintext.
+  return res.rows.map((row) => ({
+    ...row,
+    upgrade_code: decodeUpgradeCode(row.upgrade_code),
+  }));
 }
 
 // Plain ANSI listing — used only by the non-interactive subcommands.
@@ -380,7 +611,13 @@ function formatCode(code: string): string {
 async function uniqueCode(client: pg.Client): Promise<string> {
   for (let i = 0; i < 25; i += 1) {
     const code = generateCode();
-    const res = await client.query('SELECT 1 FROM admin_inboxes WHERE upgrade_code = $1', [code]);
+    // The deterministic lookup hash is what supports the UNIQUE index
+    // — query against it, not the (non-deterministic) encrypted column.
+    const hash = lookupHash(code, ADMIN_UPGRADE_CODE_LOOKUP_LABEL);
+    const res = await client.query(
+      'SELECT 1 FROM admin_inboxes WHERE upgrade_code_lookup = $1',
+      [hash],
+    );
     if (res.rows.length === 0) return code;
   }
   throw new Error('could not generate a unique upgrade code');
@@ -389,7 +626,11 @@ async function uniqueCode(client: pg.Client): Promise<string> {
 // Inserts an admin slot, returns the generated upgrade code.
 async function addAdmin(client: pg.Client, name: string): Promise<string> {
   const code = await uniqueCode(client);
-  await client.query('INSERT INTO admin_inboxes (name, upgrade_code) VALUES ($1, $2)', [name, code]);
+  const { stored, lookup } = encodeUpgradeCode(code);
+  await client.query(
+    'INSERT INTO admin_inboxes (name, upgrade_code, upgrade_code_lookup) VALUES ($1, $2, $3)',
+    [name, stored, lookup],
+  );
   return code;
 }
 
@@ -946,7 +1187,8 @@ function stopDevProcess(name: string): string {
 
 // True if the named compose service has a running container.
 async function composeServiceRunning(service: string): Promise<boolean> {
-  const r = await capture('docker', dockerComposeArgs(['ps', '-q', service]));
+  const { command, args } = dockerComposeSpawn(['ps', '-q', service]);
+  const r = await capture(command, args);
   return r.code === 0 && r.out.trim().length > 0;
 }
 
@@ -2267,7 +2509,8 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
   // --- command builders ----------------------------------------------------
 
   const runDocker = (title: string, rest: string[], returnTo: string, spec?: Partial<CommandSpec>): void => {
-    startCommand({ title, command: 'docker', args: dockerComposeArgs(rest), returnTo, ...spec });
+    const { command, args } = dockerComposeSpawn(rest);
+    startCommand({ title, command, args, returnTo, ...spec });
   };
   const runBash = (title: string, name: string, args: string[], returnTo: string, spec?: Partial<CommandSpec>): void => {
     startCommand({ title, command: 'bash', args: [scriptPath(name), ...args], returnTo, ...spec });
@@ -2444,6 +2687,7 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
       menu.push({ label: 'Production stack', value: 'stack', hint: 'status, start / stop, restart' });
       menu.push({ label: 'Cloudflare tunnel', value: 'tunnel', hint: 'start / stop, public URL' });
     }
+    menu.push({ label: 'Security', value: 'security', hint: 'pinning, TTLs, sealed-env, mTLS' });
     menu.push({ label: 'Settings', value: 'settings', hint: '.env config' });
     if (ENV === 'dev') {
       menu.push({ label: 'Systems', value: 'systems', hint: 'start / stop the dev environment' });
@@ -2474,6 +2718,156 @@ function App({ initialEnv }: { initialEnv: Env | null }): React.ReactElement {
         ) : null}
         <SectionLabel text="Manage" />
         <SelectList key="dashboard" choices={menu} onSelect={onSelect} />
+      </Box>
+    );
+  }
+
+  // Security — one-stop screen for every toggle that doesn't need a
+  // redeploy. Mirrors the layout in docs/security-architecture.md.
+  if (screen === 'security') {
+    const pins = readIosPinHashes();
+    const pinMode = readIosPinMode();
+    const secureWindowFlag = readSecureWindowDebugFlag();
+    const envValues = envFileExists() ? readEnvFile() : {};
+    const jwtTtl = envValues.JWT_TTL_SECONDS ?? '(default 3600)';
+    const refreshTtl = envValues.REFRESH_TTL_DAYS ?? '(default 30)';
+    const masterKey = envValues.APP_ENCRYPTION_KEY ?? '';
+    const encV1 = (envValues.ENCRYPT_AT_REST_V1 ?? '').toLowerCase() === 'true';
+    const tlsDir = join(REPO_ROOT, 'secrets/tls');
+    const mtlsReady = existsSync(join(tlsDir, 'client-backend.crt'))
+      && existsSync(join(tlsDir, 'client-agent.crt'))
+      && existsSync(join(tlsDir, 'client-backup.crt'));
+
+    const statusLines: string[] = [
+      `iOS pin hashes: ${pins === null ? 'unreadable' : `${pins.length} pin(s)`}${pins && pins.length === 0 ? ' (inert — no pinning until ≥1 hash)' : ''}`,
+      `iOS pinning mode: ${pinMode ?? 'unknown'}${pinMode === 'shadow' ? ' (logs only)' : ''}`,
+      `iOS secure-window debug flag: ${secureWindowFlag === null ? 'unknown' : secureWindowFlag ? 'ON — screenshots NOT blocked in dev' : 'off — blocked everywhere'}`,
+      `JWT access TTL: ${jwtTtl}s    Refresh TTL: ${refreshTtl}d`,
+      `F4 ENCRYPT_AT_REST_V1: ${encV1 ? 'on' : 'off'}    APP_ENCRYPTION_KEY: ${masterKey.length === 64 ? 'present' : 'missing'}`,
+      `F5 mTLS client certs: ${mtlsReady ? 'present' : 'missing — run init-tls'}`,
+      `F3 sealed env: ${existsSync(sealedEnvFile()) ? (envFileExists() ? (sealedNewerThanPlain() ? 'sealed (no drift)' : 'plaintext newer — re-seal') : 'sealed') : 'not sealed'}`,
+    ];
+
+    const menuChoices: Choice<string>[] = [
+      { label: 'Set iOS cert pins from a PEM file', value: 'pin-set', hint: 'compute SPKI hash + write CertificatePinner.swift' },
+      { label: 'Clear iOS cert pins', value: 'pin-clear', hint: 'empties the hash set (pinner falls back to OS trust)' },
+      { label: `Switch pinning mode (now: ${pinMode ?? '?'})`, value: 'pin-mode', hint: 'shadow ↔ enforce' },
+      { label: `Toggle secure-window debug flag (now: ${secureWindowFlag === null ? '?' : secureWindowFlag ? 'ON' : 'off'})`, value: 'sw-flag', hint: 'Dev.xcconfig' },
+      { label: 'Edit JWT access-token TTL', value: 'jwt-ttl', hint: 'unseal → set → reseal → shred' },
+      { label: 'Edit refresh-token TTL', value: 'refresh-ttl', hint: 'unseal → set → reseal → shred' },
+      { label: 'Seal + shred .env now', value: 'seal-shred', hint: 'force re-seal and delete plaintext' },
+      { label: 'Reissue F5 mTLS client + server certs', value: 'mtls-init', hint: 'idempotent: keeps CA, mints missing leaves' },
+      { label: 'Back', value: 'back' },
+    ];
+
+    const promptForString = (msg: string, onValue: (v: string) => void): void => {
+      setInputState({
+        prompt: msg,
+        value: '',
+        onSubmit: (raw) => {
+          setInputState(null);
+          onValue(raw.trim());
+        },
+      });
+    };
+
+    const onSelect = (v: string): void => {
+      if (v === 'back') { go('dashboard'); return; }
+      if (v === 'pin-set') {
+        promptForString('Path to the cert PEM file (e.g. /tmp/api.goldilocksdigital.xyz.pem):', (pemPath) => {
+          if (!pemPath) { setNotice('Cancelled.'); return; }
+          const computed = computeSpkiHashFromPem(pemPath);
+          if (!computed.ok || !computed.hash) { setNotice(`Hash failed: ${computed.message}`); return; }
+          const existing = readIosPinHashes() ?? [];
+          if (existing.includes(computed.hash)) {
+            setNotice(`Pin ${computed.hash.slice(0, 12)}… already present.`);
+            return;
+          }
+          const next = [...existing, computed.hash];
+          const w = writeIosPinHashes(next);
+          setNotice(w.ok
+            ? `Added pin ${computed.hash.slice(0, 12)}… (${next.length} total). Rebuild iOS to apply.`
+            : `Write failed: ${w.message}`);
+          refresh();
+        });
+        return;
+      }
+      if (v === 'pin-clear') {
+        setConfirmState({
+          message: 'Clear ALL iOS pin hashes? The pinner will fall back to OS-default trust.',
+          onYes: () => {
+            const w = writeIosPinHashes([]);
+            setNotice(w.ok ? 'Cleared all pin hashes.' : `Write failed: ${w.message}`);
+            refresh();
+          },
+        });
+        return;
+      }
+      if (v === 'pin-mode') {
+        const next: 'shadow' | 'enforce' = pinMode === 'enforce' ? 'shadow' : 'enforce';
+        setConfirmState({
+          message: `Switch iOS pinning mode from .${pinMode ?? '?'} to .${next}? Rebuild iOS to apply.`,
+          onYes: () => {
+            const w = writeIosPinMode(next);
+            setNotice(w.ok ? w.message : `Write failed: ${w.message}`);
+            refresh();
+          },
+        });
+        return;
+      }
+      if (v === 'sw-flag') {
+        if (secureWindowFlag === null) { setNotice('Could not read Dev.xcconfig.'); return; }
+        const next = !secureWindowFlag;
+        const w = writeSecureWindowDebugFlag(next);
+        setNotice(w.ok ? w.message : `Write failed: ${w.message}`);
+        refresh();
+        return;
+      }
+      if (v === 'jwt-ttl') {
+        promptForString(`New JWT_TTL_SECONDS (current: ${jwtTtl}):`, (raw) => {
+          if (!raw || !/^\d+$/.test(raw)) { setNotice('Cancelled — expected an integer number of seconds.'); return; }
+          const r = editEnvKeyAndReseal('JWT_TTL_SECONDS', raw);
+          setNotice(r.message);
+          refresh();
+        });
+        return;
+      }
+      if (v === 'refresh-ttl') {
+        promptForString(`New REFRESH_TTL_DAYS (current: ${refreshTtl}):`, (raw) => {
+          if (!raw || !/^\d+$/.test(raw)) { setNotice('Cancelled — expected an integer number of days.'); return; }
+          const r = editEnvKeyAndReseal('REFRESH_TTL_DAYS', raw);
+          setNotice(r.message);
+          refresh();
+        });
+        return;
+      }
+      if (v === 'seal-shred') {
+        setConfirmState({
+          message: `Re-seal ${envFilePath()} into ${sealedEnvFile()} and shred the plaintext?`,
+          onYes: () => {
+            const seal = sealEnvSync();
+            if (!seal.ok) { setNotice(`Seal failed: ${seal.message}`); return; }
+            const shred = shredPlaintextEnv();
+            setNotice(`${seal.message} ${shred.message}`);
+            refresh();
+          },
+        });
+        return;
+      }
+      if (v === 'mtls-init') {
+        runBash('Reissue F5 TLS material', 'init-tls.sh', [ENV], 'security');
+        return;
+      }
+    };
+
+    return (
+      <Box flexDirection="column">
+        <Text bold>Security</Text>
+        <Box marginTop={1}>
+          <Panel title={`Current state — env=${ENV}`} lines={statusLines} />
+        </Box>
+        <SectionLabel text="Actions" />
+        <SelectList key="security" choices={menuChoices} onSelect={onSelect} />
       </Box>
     );
   }
