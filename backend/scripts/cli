@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Goldilocks CLI bootstrap.
+#
+# Make sure node_modules is in place (running `npm install` once on
+# first use), then exec the real CLI. Works both via
+#   npm run cli -- --dev
+# and as a direct executable:
+#   ./scripts/cli --dev
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "${REPO_ROOT}"
+
+# node_modules might exist from a previous bootstrap but be missing
+# tsx (e.g. someone ran `npm install --production`). Check for tsx
+# directly — it's our actual hard dependency.
+if [[ ! -d node_modules || ! -d node_modules/tsx ]]; then
+  printf '[cli] First-time bootstrap — installing dependencies…\n'
+  npm install
+  printf '[cli] Dependencies installed.\n\n'
+fi
+
+exec npx tsx scripts/goldilocks.tsx "$@"

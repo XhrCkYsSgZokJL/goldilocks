@@ -1,0 +1,30 @@
+name: audit
+
+# Runs on every PR and weekly on main. Fails on `high` or `critical`
+# advisories against production dependencies — dev-only vulns are noted
+# but don't block.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 13 * * 1' # Mondays 13:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Production audit (fail on high+)
+        run: npm audit --production --audit-level=high
+      - name: Full audit (informational)
+        if: always()
+        run: npm audit --audit-level=low || true

@@ -1,0 +1,48 @@
+# HTTPS reverse proxy for the dev backend.
+#
+# Why this exists: the XMTP iOS SDK rejects RemoteAttachments whose URL
+# scheme isn't `https://`. Local goldilocks-backend serves attachments
+# over plain http, which iOS won't fetch. Caddy terminates TLS here on
+# port 4443 and forwards to the backend's http port 4000. Set
+# PUBLIC_BASE_URL=https://<lan-ip>:4443 in .env.dev so the local
+# storage provider builds asset URLs against this proxy.
+#
+# `tls internal` makes Caddy mint its own cert from a per-host root CA
+# it generates at first run. The dev CLI installs that root into both
+# the macOS System keychain and the booted iOS Simulator's keychain
+# automatically on `up` / `restart` — you should never need to run
+# `caddy trust` or `xcrun simctl keychain` by hand.
+#
+# Bring it up:
+#   brew install caddy
+#   npm run cli -- --dev        # dashboard → Systems → Start
+#
+# Foreground fallback (rarely needed):
+#   ./dev/up-caddy
+
+{
+    # Admin API stays on (default localhost:2019). `caddy trust` reads
+    # the local CA from it to install in the macOS keychain, so this
+    # has to be reachable before the one-time trust step.
+    log {
+        output stdout
+        format console
+    }
+}
+
+# Name the site `localhost` explicitly. With just `:4443` Caddy can't
+# pick a hostname to issue a cert for and the handshake fails with
+# "tlsv1 alert internal error". Naming it pins the SNI Caddy expects
+# and lets `tls internal` mint a cert whose CN/SAN includes localhost.
+localhost:4443 {
+    # Self-signed cert from Caddy's per-host local CA. iOS Simulator
+    # inherits the host's System keychain trust, so a one-time
+    # `caddy trust` is enough — no per-simulator cert install needed.
+    tls internal
+
+    # All goldilocks-backend traffic — API, auth, asset downloads —
+    # passes through. iOS uses this URL only for the RemoteAttachment
+    # asset GET; the rest of the API still reaches the backend over
+    # http via apiBaseURL in iOS Secrets.swift.
+    reverse_proxy localhost:4000
+}
