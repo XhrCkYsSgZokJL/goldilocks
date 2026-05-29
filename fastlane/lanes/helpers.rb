@@ -18,12 +18,5 @@ platform :ios do
     setup_app_store_connect_api_key
     UI.success "API key OK"
   end
-  lane :latest_build do
-    setup_app_store_connect_api_key
-    latest = latest_testflight_build_number(
-      app_identifier: "org.convos.ios-preview",
-    )
-    UI.message "Latest TF build: #{latest}"
-  end
 end
 

@@ -1,7 +1,12 @@
-# Dev TestFlight Release
+# Prod TestFlight Release
 #
-# Builds the Convos (Dev) scheme for the App Store on every push to `dev`
-# and uploads the IPA to TestFlight's internal tester groups.
+# Builds the Convos (Prod) scheme for the App Store on every push to `dev`
+# and uploads the IPA to the prod app's internal TestFlight tester groups.
+# These builds are signed with the prod bundle ID (org.convos.ios) and talk
+# to the prod backend (config.prod.json) - testers are exercising prod.
+#
+# PR ad-hoc builds (firebase-pr.yml) are unaffected: they keep the dev bundle
+# ID, the dev network, and Firebase App Distribution.
 #
 # Concurrency: only the latest commit's build completes. If a new commit
 # lands while a previous build is running, the in-flight build is cancelled.
@@ -15,16 +20,11 @@
 #   APP_STORE_CONNECT_ISSUER_ID        - Issuer ID for the ASC API key
 #   APP_STORE_CONNECT_API_PRIVATE_KEY  - Raw .p8 contents of the ASC API key
 #   CACHIX_AUTH_TOKEN                  - Auth token for the xmtp Cachix cache
-#   SENTRY_DSN_DEV                     - Sentry DSN used by the Dev build
-#                                        (consumed by generate-secrets script)
-#   SENTRY_AUTH_TOKEN                  - Sentry auth token with project:write
-#                                        scope; used by sentry_upload_dif
 #
-# Required repository variables:
-#   SENTRY_ORG_SLUG                    - Sentry organization slug
-#   SENTRY_PROJECT_SLUG                - Sentry project slug for the Dev app
+# Prod builds disable Sentry at compile time (generate-secrets-secure.sh sets
+# an empty DSN for the Release configuration), so no Sentry secrets are wired.
 
-name: Dev TestFlight Release
+name: Prod TestFlight Release
 
 on:
   push:
@@ -34,12 +34,12 @@ on:
 # Single-slot queue: a new commit on dev cancels the in-flight build so
 # only the latest commit's build reaches TestFlight.
 concurrency:
-  group: testflight-dev
+  group: testflight-prod
   cancel-in-progress: true
 
 jobs:
-  testflight_dev:
-    name: Build & upload to TestFlight (Dev)
+  testflight_prod:
+    name: Build & upload to TestFlight (Prod)
     runs-on: warp-macos-latest-arm64-12x
     timeout-minutes: 45
     permissions:
@@ -99,11 +99,10 @@ jobs:
 
       - name: Generate Secrets.swift
         env:
-          BUILD_CONFIGURATION: Dev
-          SENTRY_DSN_DEV: ${{ secrets.SENTRY_DSN_DEV }}
+          BUILD_CONFIGURATION: Prod
         run: ./Scripts/generate-secrets-secure.sh
 
-      - name: Run fastlane testflight_dev
+      - name: Run fastlane testflight_prod
         env:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           # CI uses the local match checkout; local dev uses SSH (Matchfile default).
@@ -113,19 +112,16 @@ jobs:
           # Passed directly to fastlane's app_store_connect_api_key via key_content;
           # stays in memory, never written to disk, redacted from logs.
           APP_STORE_CONNECT_API_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG_SLUG: ${{ vars.SENTRY_ORG_SLUG }}
-          SENTRY_PROJECT_SLUG: ${{ vars.SENTRY_PROJECT_SLUG }}
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
-        run: fastlane testflight_dev
+        run: fastlane testflight_prod
 
       - name: Upload IPA artifact
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: Convos-Dev-TestFlight-${{ github.run_id }}
-          path: build/Convos-Dev-TestFlight.ipa
+          name: Convos-Prod-TestFlight-${{ github.run_id }}
+          path: build/Convos-Prod-TestFlight.ipa
           if-no-files-found: warn
           retention-days: 14
 
