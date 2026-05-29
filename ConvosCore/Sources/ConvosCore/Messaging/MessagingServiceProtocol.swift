@@ -1,0 +1,59 @@
+import Combine
+import Foundation
+
+public enum MessagingServiceState {
+    case registering, authorized(String)
+}
+
+extension MessagingServiceProtocol {
+    public var state: MessagingServiceState {
+        switch sessionStateManager.currentState {
+        case .ready(let result):
+            return .authorized(result.client.inboxId)
+        default:
+            return .registering
+        }
+    }
+}
+
+public protocol MessagingServiceProtocol: AnyObject, Sendable {
+    var state: MessagingServiceState { get }
+    var sessionStateManager: any SessionStateManagerProtocol { get }
+
+    func stop()
+    func stop() async
+    func stopAndDelete()
+    func stopAndDelete() async
+    func waitForDeletionComplete() async
+
+    func myProfileWriter() -> any MyProfileWriterProtocol
+
+    func conversationStateManager() -> any ConversationStateManagerProtocol
+    func conversationStateManager(for conversationId: String) -> any ConversationStateManagerProtocol
+
+    func conversationConsentWriter() -> any ConversationConsentWriterProtocol
+    func conversationLocalStateWriter() -> any ConversationLocalStateWriterProtocol
+
+    func messageWriter(
+        for conversationId: String,
+        backgroundUploadManager: any BackgroundUploadManagerProtocol
+    ) -> any OutgoingMessageWriterProtocol
+    func reactionWriter() -> any ReactionWriterProtocol
+    func readReceiptWriter() -> any ReadReceiptWriterProtocol
+    func replyWriter() -> any ReplyMessageWriterProtocol
+
+    func conversationMetadataWriter() -> any ConversationMetadataWriterProtocol
+    func conversationExplosionWriter() -> any ConversationExplosionWriterProtocol
+    func conversationPermissionsRepository() -> any ConversationPermissionsRepositoryProtocol
+    func connectionGrantWriter() -> any ConnectionGrantWriterProtocol
+
+    func uploadImage(data: Data, filename: String) async throws -> String
+    func uploadImageAndExecute(
+        data: Data,
+        filename: String,
+        afterUpload: @escaping (String) async throws -> Void
+    ) async throws -> String
+
+    func setConversationNotificationsEnabled(_ enabled: Bool, for conversationId: String) async throws
+    func sendTypingIndicator(isTyping: Bool, for conversationId: String) async throws
+}

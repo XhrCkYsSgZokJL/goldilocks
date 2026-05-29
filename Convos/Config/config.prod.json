@@ -1,0 +1,13 @@
+{
+  "environment": "production",
+  "backendUrl": "https://api.prod.convos.xyz/api",
+  "xmtpNetwork": "production",
+  "bundleId": "org.convos.ios",
+  "appGroupIdentifier": "group.org.convos.ios",
+  "relyingPartyIdentifier": "convos.org",
+  "associatedDomains": [
+    "popup.convos.org",
+    "app.convos.org"
+  ],
+  "appUrlScheme": "convos"
+}

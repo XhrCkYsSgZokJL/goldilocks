@@ -1,0 +1,265 @@
+import Foundation
+
+public struct Profile: Codable, Identifiable, Hashable, Sendable {
+    public var id: String { "\(inboxId)@\(conversationId)" }
+    public let inboxId: String
+    /// Always conversation-scoped — a member's display name, avatar, and
+    /// metadata are per-conversation (`DBMemberProfile` is keyed on
+    /// `(conversationId, inboxId)`). Carrying this on `Profile` itself
+    /// keeps the image cache key non-colliding and makes it impossible to
+    /// construct a profile that would be cached by bare `inboxId`.
+    public let conversationId: String
+    public let name: String?
+    public let avatar: String?
+    public let avatarSalt: Data?
+    public let avatarNonce: Data?
+    public let avatarKey: Data?
+    public let isAgent: Bool
+    public let metadata: ProfileMetadata?
+
+    private enum CodingKeys: String, CodingKey {
+        case inboxId, conversationId, name, avatar, avatarSalt, avatarNonce, avatarKey, isAgent, metadata
+    }
+
+    public init(
+        inboxId: String,
+        conversationId: String,
+        name: String?,
+        avatar: String?,
+        avatarSalt: Data? = nil,
+        avatarNonce: Data? = nil,
+        avatarKey: Data? = nil,
+        isAgent: Bool = false,
+        metadata: ProfileMetadata? = nil
+    ) {
+        self.inboxId = inboxId
+        self.conversationId = conversationId
+        self.name = name
+        self.avatar = avatar
+        self.avatarSalt = avatarSalt
+        self.avatarNonce = avatarNonce
+        self.avatarKey = avatarKey
+        self.isAgent = isAgent
+        self.metadata = metadata
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.inboxId = try container.decode(String.self, forKey: .inboxId)
+        self.conversationId = try container.decode(String.self, forKey: .conversationId)
+        self.name = try container.decodeIfPresent(String.self, forKey: .name)
+        self.avatar = try container.decodeIfPresent(String.self, forKey: .avatar)
+        self.avatarSalt = try container.decodeIfPresent(Data.self, forKey: .avatarSalt)
+        self.avatarNonce = try container.decodeIfPresent(Data.self, forKey: .avatarNonce)
+        self.avatarKey = try container.decodeIfPresent(Data.self, forKey: .avatarKey)
+        self.isAgent = try container.decodeIfPresent(Bool.self, forKey: .isAgent) ?? false
+        self.metadata = try container.decodeIfPresent(ProfileMetadata.self, forKey: .metadata)
+    }
+
+    public var avatarURL: URL? {
+        guard let avatar, let url = URL(string: avatar) else {
+            return nil
+        }
+        return url
+    }
+
+    public var isAvatarEncrypted: Bool {
+        avatarSalt?.count == 32 && avatarNonce?.count == 12
+    }
+
+    public var displayName: String {
+        if let name, !name.isEmpty { return name }
+        return "Somebody"
+    }
+
+    public var profileEmoji: String? {
+        metadata?[Constant.emojiMetadataKey]?.stringValue.flatMap { value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+    }
+
+    public func verifyAgentAttestation(keyset: any AgentKeysetProviding) async -> AgentVerification {
+        guard isAgent else {
+            return .unverified
+        }
+        guard let attestation = metadata?["attestation"],
+              let timestamp = metadata?["attestation_ts"],
+              let kid = metadata?["attestation_kid"],
+              case .string(let sig) = attestation,
+              case .string(let ts) = timestamp,
+              case .string(let keyId) = kid
+        else {
+            let hasAttestation = metadata?["attestation"] != nil
+            let hasTs = metadata?["attestation_ts"] != nil
+            let hasKid = metadata?["attestation_kid"] != nil
+            Log.info("[Attestation] agent \(inboxId.prefix(8)) missing fields — att: \(hasAttestation), ts: \(hasTs), kid: \(hasKid)")
+            return .unverified
+        }
+        Log.info("[Attestation] verifying agent \(inboxId.prefix(8)) with kid=\(keyId)")
+        let result = await AssistantAttestationVerifier.verify(
+            inboxId: inboxId,
+            attestation: sig,
+            attestationTimestamp: ts,
+            kid: keyId,
+            keyset: keyset
+        )
+        Log.info("[Attestation] agent \(inboxId.prefix(8)) result: \(result)")
+        return result
+    }
+
+    public func verifyCachedAgentAttestation(keyset: any AgentKeysetProviding) -> AgentVerification {
+        guard isAgent else {
+            return .unverified
+        }
+        guard let attestation = metadata?["attestation"],
+              let timestamp = metadata?["attestation_ts"],
+              let kid = metadata?["attestation_kid"],
+              case .string(let sig) = attestation,
+              case .string(let ts) = timestamp,
+              case .string(let keyId) = kid
+        else {
+            Log.info("[Attestation] agent \(inboxId.prefix(8)) missing metadata (cached path) — keys: \(metadata?.keys.sorted() ?? [])")
+            return .unverified
+        }
+        let result = AssistantAttestationVerifier.verifyCached(
+            inboxId: inboxId,
+            attestation: sig,
+            attestationTimestamp: ts,
+            kid: keyId,
+            keyset: keyset
+        )
+        Log.info("[Attestation] agent \(inboxId.prefix(8)) cached result: \(result), kid=\(keyId)")
+        return result
+    }
+
+    public func verifyCachedAgentAttestation() -> AgentVerification {
+        guard let keyset = AgentKeysetStore.instance.shared else {
+            Log.info("[Attestation] no keyset configured")
+            return .unverified
+        }
+        return verifyCachedAgentAttestation(keyset: keyset)
+    }
+
+    public var isOutOfCredits: Bool {
+        guard let credits = metadata?["credits"] else { return false }
+        switch credits {
+        case .number(let value):
+            return value <= 0
+        case .bool(let value):
+            return !value
+        case .string:
+            return false
+        }
+    }
+
+    public func with(inboxId: String) -> Profile {
+        .init(
+            inboxId: inboxId,
+            conversationId: conversationId,
+            name: name,
+            avatar: avatar,
+            avatarSalt: avatarSalt,
+            avatarNonce: avatarNonce,
+            avatarKey: avatarKey,
+            isAgent: isAgent,
+            metadata: metadata
+        )
+    }
+
+    public static func empty(inboxId: String = "", conversationId: String = "") -> Profile {
+        .init(
+            inboxId: inboxId,
+            conversationId: conversationId,
+            name: nil,
+            avatar: nil
+        )
+    }
+
+    public static func mock(
+        inboxId: String = "mock-inbox-id",
+        conversationId: String = "mock-conversation-id",
+        name: String = "Jane Doe"
+    ) -> Profile {
+        .init(
+            inboxId: inboxId,
+            conversationId: conversationId,
+            name: name,
+            avatar: "https://example.com/avatar.jpg"
+        )
+    }
+
+    private enum Constant {
+        static let emojiMetadataKey: String = "emoji"
+    }
+}
+
+// MARK: - Array Extensions
+
+public extension Array where Element == Profile {
+    var formattedNamesString: String {
+        let namedProfiles = filter { $0.name != nil && $0.name?.isEmpty == false }
+            .map { $0.displayName }
+            .sorted()
+        let anonymousCount = filter { $0.name == nil || $0.name?.isEmpty == true }.count
+        let totalCount = namedProfiles.count + anonymousCount
+
+        if namedProfiles.isEmpty {
+            if anonymousCount == 0 {
+                return ""
+            } else if anonymousCount == 1 {
+                return "Somebody"
+            } else {
+                return "Somebodies"
+            }
+        }
+
+        let maxNames = NameLimits.maxDisplayedMemberNames
+
+        if totalCount <= maxNames {
+            var allNames = namedProfiles
+            if anonymousCount > 1 {
+                allNames.append("Somebodies")
+            } else if anonymousCount == 1 {
+                allNames.append("Somebody")
+            }
+
+            switch allNames.count {
+            case 1:
+                return allNames[0]
+            case 2:
+                return allNames.joined(separator: " & ")
+            default:
+                return allNames.joined(separator: ", ")
+            }
+        }
+
+        let namesPrefix = namedProfiles.prefix(maxNames)
+        let othersCount = totalCount - namesPrefix.count
+        let othersText = othersCount == 1 ? "1 other" : "\(othersCount) others"
+
+        return namesPrefix.joined(separator: ", ") + " and " + othersText
+    }
+
+    var hasAnyNamedProfile: Bool {
+        contains { $0.name != nil && $0.name?.isEmpty == false }
+    }
+
+    var hasAnyAvatar: Bool {
+        contains { $0.avatarURL != nil || $0.profileEmoji != nil }
+    }
+
+    func sortedForCluster() -> [Profile] {
+        sorted { p1, p2 in
+            let p1HasAvatar = p1.avatarURL != nil || p1.profileEmoji != nil
+            let p2HasAvatar = p2.avatarURL != nil || p2.profileEmoji != nil
+            if p1HasAvatar != p2HasAvatar { return p1HasAvatar }
+
+            let p1HasName = p1.name != nil && !(p1.name ?? "").isEmpty
+            let p2HasName = p2.name != nil && !(p2.name ?? "").isEmpty
+            if p1HasName != p2HasName { return p1HasName }
+
+            return p1.inboxId < p2.inboxId
+        }
+    }
+}

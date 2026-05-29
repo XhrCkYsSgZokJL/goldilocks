@@ -1,0 +1,178 @@
+import Foundation
+import GRDB
+
+public protocol AttachmentLocalStateWriterProtocol: Sendable {
+    func markRevealed(attachmentKey: String, conversationId: String) async throws
+    func markHidden(attachmentKey: String, conversationId: String) async throws
+    func saveWithDimensions(
+        attachmentKey: String,
+        conversationId: String,
+        width: Int,
+        height: Int
+    ) async throws
+    func saveWithDimensions(
+        attachmentKey: String,
+        conversationId: String,
+        width: Int,
+        height: Int,
+        mimeType: String?
+    ) async throws
+    func migrateKey(from oldKey: String, to newKey: String) async throws
+    func saveWaveformLevels(_ levels: [Float], for attachmentKey: String) async throws
+    func saveDuration(_ duration: Double, for attachmentKey: String) async throws
+}
+
+public final class AttachmentLocalStateWriter: AttachmentLocalStateWriterProtocol, Sendable {
+    private let databaseWriter: any DatabaseWriter
+
+    public init(databaseWriter: any DatabaseWriter) {
+        self.databaseWriter = databaseWriter
+    }
+
+    public func markRevealed(attachmentKey: String, conversationId: String) async throws {
+        try await databaseWriter.write { db in
+            let existing = try AttachmentLocalState
+                .filter(AttachmentLocalState.Columns.attachmentKey == attachmentKey)
+                .fetchOne(db)
+
+            let record = AttachmentLocalState(
+                attachmentKey: attachmentKey,
+                conversationId: conversationId,
+                isRevealed: true,
+                revealedAt: Date(),
+                width: existing?.width,
+                height: existing?.height,
+                isHiddenByOwner: false,
+                mimeType: existing?.mimeType
+            )
+            try record.save(db)
+        }
+    }
+
+    public func markHidden(attachmentKey: String, conversationId: String) async throws {
+        try await databaseWriter.write { db in
+            let existing = try AttachmentLocalState
+                .filter(AttachmentLocalState.Columns.attachmentKey == attachmentKey)
+                .fetchOne(db)
+
+            let record = AttachmentLocalState(
+                attachmentKey: attachmentKey,
+                conversationId: conversationId,
+                isRevealed: false,
+                revealedAt: nil,
+                width: existing?.width,
+                height: existing?.height,
+                isHiddenByOwner: true,
+                mimeType: existing?.mimeType
+            )
+            try record.save(db)
+        }
+    }
+
+    public func saveWithDimensions(
+        attachmentKey: String,
+        conversationId: String,
+        width: Int,
+        height: Int
+    ) async throws {
+        try await saveWithDimensions(
+            attachmentKey: attachmentKey,
+            conversationId: conversationId,
+            width: width,
+            height: height,
+            mimeType: nil
+        )
+    }
+
+    public func saveWithDimensions(
+        attachmentKey: String,
+        conversationId: String,
+        width: Int,
+        height: Int,
+        mimeType: String?
+    ) async throws {
+        try await databaseWriter.write { db in
+            if let existing = try AttachmentLocalState
+                .filter(AttachmentLocalState.Columns.attachmentKey == attachmentKey)
+                .fetchOne(db) {
+                let updated = AttachmentLocalState(
+                    attachmentKey: existing.attachmentKey,
+                    conversationId: existing.conversationId,
+                    isRevealed: existing.isRevealed,
+                    revealedAt: existing.revealedAt,
+                    width: width,
+                    height: height,
+                    isHiddenByOwner: existing.isHiddenByOwner,
+                    mimeType: mimeType ?? existing.mimeType
+                )
+                try updated.update(db)
+            } else {
+                let record = AttachmentLocalState(
+                    attachmentKey: attachmentKey,
+                    conversationId: conversationId,
+                    isRevealed: false,
+                    revealedAt: nil,
+                    width: width,
+                    height: height,
+                    isHiddenByOwner: false,
+                    mimeType: mimeType
+                )
+                try record.insert(db)
+            }
+        }
+    }
+
+    public func migrateKey(from oldKey: String, to newKey: String) async throws {
+        try await databaseWriter.write { db in
+            guard let existing = try AttachmentLocalState
+                .filter(AttachmentLocalState.Columns.attachmentKey == oldKey)
+                .fetchOne(db) else {
+                Log.info("[AttachmentLocalState] No existing state to migrate from key: \(oldKey.prefix(50))...")
+                return
+            }
+
+            let migrated = AttachmentLocalState(
+                attachmentKey: newKey,
+                conversationId: existing.conversationId,
+                isRevealed: existing.isRevealed,
+                revealedAt: existing.revealedAt,
+                width: existing.width,
+                height: existing.height,
+                isHiddenByOwner: existing.isHiddenByOwner,
+                mimeType: existing.mimeType,
+                waveformLevels: existing.waveformLevels,
+                duration: existing.duration
+            )
+            try migrated.save(db)
+
+            _ = try AttachmentLocalState
+                .filter(AttachmentLocalState.Columns.attachmentKey == oldKey)
+                .deleteAll(db)
+
+            Log.info("[AttachmentLocalState] Migrated from \(oldKey.prefix(30))... to \(newKey.prefix(30))... (dims: \(existing.width ?? -1)x\(existing.height ?? -1))")
+        }
+    }
+
+    public func saveWaveformLevels(_ levels: [Float], for attachmentKey: String) async throws {
+        let levelsJSON = String(data: try JSONEncoder().encode(levels), encoding: .utf8)
+        try await databaseWriter.write { db in
+            let count = try AttachmentLocalState
+                .filter(AttachmentLocalState.Columns.attachmentKey == attachmentKey)
+                .updateAll(db, AttachmentLocalState.Columns.waveformLevels.set(to: levelsJSON))
+            if count == 0 {
+                Log.error("[AttachmentLocalState] No record found for waveform levels save: \(attachmentKey.prefix(50))...")
+            }
+        }
+    }
+
+    public func saveDuration(_ duration: Double, for attachmentKey: String) async throws {
+        try await databaseWriter.write { db in
+            let count = try AttachmentLocalState
+                .filter(AttachmentLocalState.Columns.attachmentKey == attachmentKey)
+                .updateAll(db, AttachmentLocalState.Columns.duration.set(to: duration))
+            if count == 0 {
+                Log.error("[AttachmentLocalState] No record found for duration save: \(attachmentKey.prefix(50))...")
+            }
+        }
+    }
+}

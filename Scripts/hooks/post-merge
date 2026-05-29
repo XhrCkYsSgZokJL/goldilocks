@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+# post-merge
+#
+# https://git-scm.com/docs/githooks#_post_merge
+
+git_root="$(git rev-parse --show-toplevel)"
+
+# Git
+cd "${git_root}" && git submodule update --init --recursive
+
+# Ensure minimal Secrets.swift exists first (important for first-time setup)
+./Scripts/generate-secrets-local.sh --ensure-only
+
+# Generate full secrets (smart detection: local vs CI)
+make secrets

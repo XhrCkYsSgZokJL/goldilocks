@@ -1,0 +1,478 @@
+import ConvosCore
+import SwiftUI
+
+struct ConversationsView: View {
+    @State var viewModel: ConversationsViewModel
+    @Bindable var quicknameViewModel: QuicknameSettingsViewModel
+
+    @Namespace private var namespace: Namespace.ID
+    @State private var presentingAppSettings: Bool = false
+    @State private var appSettingsInitialRoute: AppSettingsRoute?
+    @Environment(\.dismiss) private var dismiss: DismissAction
+    @State private var sidebarWidth: CGFloat = 0.0
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass: UserInterfaceSizeClass?
+    @Environment(\.colorScheme) private var colorScheme: ColorScheme
+    @State private var conversationPendingExplosion: Conversation?
+    @State private var preferredColumn: NavigationSplitViewColumn = .sidebar
+
+    var focusCoordinator: FocusCoordinator {
+        viewModel.focusCoordinator
+    }
+
+    var emptyConversationsViewScrollable: some View {
+        ScrollView {
+            LazyVStack(spacing: 0.0) {
+                emptyConversationsView
+            }
+        }
+    }
+
+    var emptyConversationsView: some View {
+        ConversationsListEmptyCTA(
+            onStartConvo: viewModel.onOpenGoldilocksGroup,
+            onJoinConvo: viewModel.onJoinConvo
+        )
+    }
+
+    @ViewBuilder
+    private var adminBanner: some View {
+        // Read role from the observable session so the banner updates
+        // immediately if the user upgrades to admin mid-session.
+        let role = GoldilocksSession.shared.role
+        let clientNumber = GoldilocksSession.shared.clientNumber
+        let label: String = {
+            switch role {
+            case .admin:
+                if let n = clientNumber { return "Admin #\(n)" }
+                return "Admin"
+            case .client:
+                if let n = clientNumber { return "Client #\(n)" }
+                return "Client"
+            }
+        }()
+        let icon: String = {
+            switch role {
+            case .admin:  return "shield.lefthalf.filled"
+            case .client: return "person.crop.circle.fill"
+            }
+        }()
+        HStack(spacing: DesignConstants.Spacing.step2x) {
+            let openMyInfo = {
+                appSettingsInitialRoute = .myInfo
+                presentingAppSettings = true
+            }
+            Button(action: openMyInfo) {
+                goldilocksChip(icon: icon, label: label, labelTint: .primary)
+            }
+            .buttonStyle(.plain)
+
+            // Admins are also clients with their own membership plan, so
+            // the tier + pending-invoice chips show in both roles.
+            let tier = membershipTier
+            let openMembership = {
+                appSettingsInitialRoute = .membership
+                presentingAppSettings = true
+            }
+            Button(action: openMembership) {
+                goldilocksChip(icon: tier.iconName, label: tier.displayName, iconTint: tier.accentColor, labelTint: .primary)
+            }
+            .buttonStyle(.plain)
+
+            if GoldilocksSession.shared.hasPendingInvoice {
+                let openInvoices = {
+                    appSettingsInitialRoute = nil
+                    presentingAppSettings = true
+                }
+                Button(action: openInvoices) {
+                    goldilocksChip(icon: "doc.text.fill", label: "Pending", labelTint: .primary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, DesignConstants.Spacing.step4x)
+        .padding(.vertical, DesignConstants.Spacing.step2x)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A small capsule chip — used for the role badge and the tier badge.
+    /// `iconTint` and `labelTint` colour the icon and label separately;
+    /// both default to secondary for the neutral role chip, while the
+    /// tier chip tints only its icon and leaves the name as primary text.
+    private func goldilocksChip(icon: String, label: String, iconTint: Color = .secondary, labelTint: Color = .secondary) -> some View {
+        return HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.caption2)
+                .foregroundStyle(iconTint)
+            Text(label)
+                .font(.caption2)
+                .fontWeight(.medium)
+                .foregroundStyle(labelTint)
+        }
+        .padding(.horizontal, DesignConstants.Spacing.step3x)
+        .padding(.vertical, 4)
+        // Liquid Glass capsule so the conversation rows show through /
+        // scroll behind the chip, matching the glass toolbar title.
+        .glassEffect(.regular, in: Capsule())
+    }
+
+    /// The viewer's Bronze/Silver/Gold/Emerald membership tier, shown as
+    /// a chip beside the role chip. Bronze is the free tier; Silver and
+    /// Gold require active coverage, set by the active-member count.
+    /// Emerald is an admin-controlled override that trumps the
+    /// automatic rules — driven by the `emeraldMembershipEnabled` flag
+    /// the backend returns on `/v2/me`. Without this override the chip
+    /// stays on whatever the seats + coverage math produces, so admins
+    /// who are also Emerald-tier clients still see the Emerald badge.
+    private var membershipTier: GoldilocksMembershipTier {
+        let plan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
+        let emerald: Bool = GoldilocksSession.shared.identity?.emeraldMembershipEnabled ?? false
+        return GoldilocksMembershipTier(
+            activeMembers: plan.billableSeatCount,
+            hasActiveCoverage: plan.coverageActive,
+            emeraldEnabled: emerald
+        )
+    }
+
+    var filteredEmptyStateView: some View {
+        FilteredEmptyStateView(
+            message: viewModel.activeFilter.emptyStateMessage,
+            onShowAll: { viewModel.activeFilter = .all }
+        )
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, DesignConstants.Spacing.step6x)
+        .padding(.top, DesignConstants.Spacing.step6x)
+    }
+
+    var conversationsCollectionView: some View {
+        ConversationsViewRepresentable(
+            pinnedConversations: viewModel.pinnedConversations,
+            unpinnedConversations: viewModel.unpinnedConversations,
+            selectedConversationId: viewModel.selectedConversationId,
+            isFilteredResultEmpty: viewModel.isFilteredResultEmpty,
+            filterEmptyMessage: viewModel.activeFilter.emptyStateMessage,
+            hasCreatedMoreThanOneConvo: viewModel.hasCreatedMoreThanOneConvo,
+            onSelectConversation: { conversation in
+                viewModel.selectedConversationId = conversation.id
+            },
+            onConfirmedDeleteConversation: { conversation in
+                viewModel.leave(conversation: conversation)
+            },
+            onExplodeConversation: { conversation in
+                conversationPendingExplosion = conversation
+            },
+            onToggleMute: { conversation in
+                viewModel.toggleMute(conversation: conversation)
+            },
+            onToggleReadState: { conversation in
+                viewModel.toggleReadState(conversation: conversation)
+            },
+            onTogglePin: { conversation in
+                viewModel.togglePin(conversation: conversation)
+            },
+            onStartConvo: viewModel.onOpenGoldilocksGroup,
+            onJoinConvo: viewModel.onJoinConvo,
+            onShowAllFilter: { viewModel.activeFilter = .all }
+        )
+        .ignoresSafeArea(edges: [.top, .bottom])
+    }
+
+    private var filterMenu: some View {
+        let isFiltered: Bool = viewModel.activeFilter != .all
+        return Menu {
+            let allAction = { viewModel.activeFilter = .all }
+            Button(action: allAction) {
+                if viewModel.activeFilter == .all {
+                    Label("All", systemImage: "checkmark")
+                } else {
+                    Text("All")
+                }
+            }
+
+            let unreadAction = {
+                viewModel.activeFilter = viewModel.activeFilter == .unread ? .all : .unread
+            }
+            Button(action: unreadAction) {
+                if viewModel.activeFilter == .unread {
+                    Label("Unread", systemImage: "checkmark")
+                } else {
+                    Text("Unread")
+                }
+            }
+
+            let explodingAction = {
+                viewModel.activeFilter = viewModel.activeFilter == .exploding ? .all : .exploding
+            }
+            Button(action: explodingAction) {
+                if viewModel.activeFilter == .exploding {
+                    Label("Exploding", systemImage: "checkmark")
+                } else {
+                    Text("Exploding")
+                }
+            }
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease")
+                .foregroundStyle(isFiltered ? .colorTextPrimaryInverted : .colorFillPrimary)
+                .frame(width: 32, height: 32)
+                .background(isFiltered ? .colorFillPrimary : .clear)
+                .mask(Circle())
+                .overlay(Circle().stroke(isFiltered ? .colorFillPrimary : .clear, lineWidth: 2))
+                .accessibilityLabel(isFiltered ? "Filter active" : "Filter conversations")
+                .accessibilityIdentifier("filter-button")
+        }
+        .disabled(!viewModel.hasUnpinnedConversations)
+    }
+
+    @ViewBuilder
+    private var sidebarContent: some View {
+        VStack(spacing: 0) {
+            // zIndex keeps the chips drawing above the conversation rows —
+            // the list ignores the top safe area and extends up behind
+            // them, so without this the rows would render over the chips.
+            adminBanner
+                .zIndex(1)
+            if viewModel.unpinnedConversations.isEmpty && viewModel.pinnedConversations.isEmpty && viewModel.activeFilter == .all && horizontalSizeClass == .compact {
+                emptyConversationsViewScrollable
+            } else if viewModel.isFilteredResultEmpty && viewModel.pinnedConversations.isEmpty && horizontalSizeClass == .compact {
+                ScrollView {
+                    filteredEmptyStateView
+                }
+            } else {
+                conversationsCollectionView
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var sidebarToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            ConvosToolbarButton(padding: false) {
+                appSettingsInitialRoute = nil
+                presentingAppSettings = true
+            }
+            .accessibilityLabel("Convos settings")
+            .accessibilityIdentifier("app-settings-button")
+        }
+        .matchedTransitionSource(id: "app-settings-transition-source", in: namespace)
+
+        ToolbarItem(placement: .topBarTrailing) {
+            filterMenu
+        }
+        .matchedTransitionSource(id: "filter-view-transition-source", in: namespace)
+
+        ToolbarItem(placement: .bottomBar) {
+            Spacer()
+        }
+
+        ToolbarItem(placement: .bottomBar) {
+            Button("Scan", systemImage: "viewfinder") {
+                viewModel.onJoinConvo()
+            }
+            .accessibilityLabel("Scan to join a conversation")
+            .accessibilityIdentifier("scan-button")
+            .disabled(!viewModel.canStartNewConversation)
+        }
+        .matchedTransitionSource(id: "composer-transition-source", in: namespace)
+
+        ToolbarItem(placement: .bottomBar) {
+            Button("Compose", systemImage: "square.and.pencil") {
+                viewModel.onStartConvo()
+            }
+            .accessibilityLabel("Start a new conversation")
+            .accessibilityIdentifier("compose-button")
+            .disabled(!viewModel.canStartNewConversation)
+        }
+        .matchedTransitionSource(id: "composer-transition-source", in: namespace)
+    }
+
+    var body: some View {
+        ConversationPresenter(
+            viewModel: viewModel.selectedConversationViewModel,
+            focusCoordinator: focusCoordinator,
+            insetsTopSafeArea: true,
+            sidebarColumnWidth: $sidebarWidth
+        ) { focusState, coordinator in
+            NavigationSplitView(preferredCompactColumn: $preferredColumn) {
+                sidebarContent
+                    .onGeometryChange(for: CGSize.self) {
+                        $0.size
+                    } action: { newValue in
+                        sidebarWidth = newValue.width
+                    }
+                .background(.colorBackgroundSurfaceless)
+                .toolbarTitleDisplayMode(.inline)
+                .toolbar { sidebarToolbar }
+                .toolbar(removing: .sidebarToggle)
+            } detail: {
+                if let conversationViewModel = viewModel.selectedConversationViewModel {
+                    ConversationView(
+                        viewModel: conversationViewModel,
+                        quicknameViewModel: quicknameViewModel,
+                        focusState: focusState,
+                        focusCoordinator: coordinator,
+                        onScanInviteCode: {},
+                        onDeleteConversation: {},
+                        messagesTopBarTrailingItem: .share,
+                        messagesTopBarTrailingItemEnabled: !conversationViewModel.conversation.isPendingInvite,
+                        messagesTextFieldEnabled: !conversationViewModel.conversation.isPendingInvite,
+                        bottomBarContent: { EmptyView() }
+                    )
+                } else if horizontalSizeClass != .compact {
+                    emptyConversationsViewScrollable
+                } else {
+                    EmptyView()
+                }
+            }
+            .onAppear {
+                if viewModel.selectedConversationViewModel != nil {
+                    preferredColumn = .detail
+                }
+                viewModel.onAppear()
+            }
+            .onDisappear {
+                viewModel.onDisappear()
+            }
+            .onChange(of: viewModel.selectedConversationViewModel == nil) { _, isNil in
+                preferredColumn = isNil ? .sidebar : .detail
+            }
+            .onChange(of: viewModel.selectedConversationViewModel?.explodeState) { _, newState in
+                guard let newState, case .exploded = newState else { return }
+                viewModel.selectedConversationId = nil
+                preferredColumn = .sidebar
+            }
+            .onChange(of: preferredColumn) { _, newColumn in
+                if newColumn == .sidebar && horizontalSizeClass == .compact {
+                    viewModel.selectedConversationId = nil
+                }
+            }
+        }
+        .focusable(false)
+        .focusEffectDisabled()
+        .modifier(ConversationsSheetModifier(
+            presentingAppSettings: $presentingAppSettings,
+            appSettingsInitialRoute: appSettingsInitialRoute,
+            viewModel: viewModel,
+            quicknameViewModel: quicknameViewModel,
+            conversationPendingExplosion: $conversationPendingExplosion,
+            namespace: namespace
+        ))
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+            if let url = activity.webpageURL {
+                viewModel.handleURL(url)
+            }
+        }
+        .onOpenURL { url in
+            viewModel.handleURL(url)
+        }
+    }
+}
+
+private struct ConversationsSheetModifier: ViewModifier {
+    @Binding var presentingAppSettings: Bool
+    let appSettingsInitialRoute: AppSettingsRoute?
+    @Bindable var viewModel: ConversationsViewModel
+    let quicknameViewModel: QuicknameSettingsViewModel
+    @Binding var conversationPendingExplosion: Conversation?
+    var namespace: Namespace.ID
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: $presentingAppSettings) {
+                AppSettingsView(
+                    viewModel: viewModel.appSettingsViewModel,
+                    quicknameViewModel: quicknameViewModel,
+                    session: viewModel.session,
+                    onDeleteAllData: viewModel.deleteAllData,
+                    initialRoute: appSettingsInitialRoute
+                )
+                .navigationTransition(
+                    .zoom(sourceID: "app-settings-transition-source", in: namespace)
+                )
+                .interactiveDismissDisabled(viewModel.appSettingsViewModel.isDeleting)
+            }
+            .sheet(item: $viewModel.newConversationViewModel) { newConvoViewModel in
+                NewConversationView(
+                    viewModel: newConvoViewModel,
+                    quicknameViewModel: quicknameViewModel
+                )
+                .background(.colorBackgroundSurfaceless)
+                .presentationSizing(.page)
+                .navigationTransition(
+                    .zoom(sourceID: "composer-transition-source", in: namespace)
+                )
+            }
+            .sheet(item: $viewModel.pendingGrantRequest) { request in
+                let dismissAction = { viewModel.pendingGrantRequest = nil }
+                ConnectionGrantRequestSheet(
+                    viewModel: viewModel.makeGrantRequestSheetViewModel(for: request),
+                    onDismiss: dismissAction
+                )
+                .presentationDetents([.medium])
+            }
+            .selfSizingSheet(isPresented: $viewModel.presentingExplodeInfo) {
+                ExplodeInfoView()
+            }
+            .selfSizingSheet(isPresented: $viewModel.presentingPinLimitInfo) {
+                PinLimitInfoView()
+            }
+            .background {
+                Color.clear
+                    .fullScreenCover(item: $conversationPendingExplosion) { conversation in
+                        ExplodeConvoSheet(
+                            isScheduled: conversation.scheduledExplosionDate != nil,
+                            onSchedule: { date in
+                                viewModel.scheduleConversationExplosion(conversation, at: date)
+                                conversationPendingExplosion = nil
+                            },
+                            onExplodeNow: {
+                                viewModel.explodeConversation(conversation)
+                                conversationPendingExplosion = nil
+                            },
+                            onDismiss: {
+                                conversationPendingExplosion = nil
+                            }
+                        )
+                        .presentationBackground(.clear)
+                    }
+                    .transaction { transaction in
+                        transaction.disablesAnimations = true
+                    }
+            }
+    }
+}
+
+#Preview("With Many Conversations") {
+    @Previewable @State var viewModel = ConversationsViewModel.preview(
+        conversations: [
+            Conversation.mock(id: "pinned-1", name: "Ephemeral", isUnread: true, isPinned: true),
+            Conversation.mock(id: "pinned-2", name: "Shane", isUnread: false, isPinned: true),
+            Conversation.mock(id: "pinned-3", name: "Fam", isUnread: true, isPinned: true),
+            Conversation.mock(id: "convo-1", name: "Convo 84B", isUnread: true),
+            Conversation.mock(id: "convo-2", name: "NYC June 2025", isUnread: false),
+            Conversation.mock(id: "convo-3", name: "Convo 75X", isUnread: false),
+            Conversation.mock(id: "convo-4", name: "Goonies Soccer", isUnread: false),
+            Conversation.mock(id: "convo-5", name: "darick@bluesky.social", isUnread: true),
+            Conversation.mock(id: "convo-6", name: "Saul", isUnread: false),
+            Conversation.mock(id: "convo-7", name: "Convo 21Z", isUnread: false),
+            Conversation.mock(id: "convo-8", name: "Weekend Plans", isUnread: true),
+            Conversation.mock(id: "convo-9", name: "Project Team", isUnread: false),
+            Conversation.mock(id: "convo-10", name: "Random Chat", isUnread: false),
+            Conversation.mockPendingInvite(id: "draft-pending-1", name: "Secret Club")
+        ]
+    )
+    let quicknameViewModel = QuicknameSettingsViewModel.shared
+
+    ConversationsView(
+        viewModel: viewModel,
+        quicknameViewModel: quicknameViewModel
+    )
+}
+
+#Preview("Original") {
+    let convos = ConvosClient.mock()
+    let viewModel = ConversationsViewModel(session: convos.session)
+    let quicknameViewModel = QuicknameSettingsViewModel.shared
+    ConversationsView(
+        viewModel: viewModel,
+        quicknameViewModel: quicknameViewModel
+    )
+}

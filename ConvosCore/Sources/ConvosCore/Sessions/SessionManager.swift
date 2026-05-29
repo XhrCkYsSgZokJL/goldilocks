@@ -1,0 +1,862 @@
+import Combine
+import Foundation
+import GRDB
+import os
+
+public extension Notification.Name {
+    static let leftConversationNotification: Notification.Name = Notification.Name("LeftConversationNotification")
+    static let activeConversationChanged: Notification.Name = Notification.Name("ActiveConversationChanged")
+}
+
+public typealias AnyMessagingService = any MessagingServiceProtocol
+public typealias AnyClientProvider = any XMTPClientProvider
+
+/// Coordinates the XMTP inbox that backs the app.
+///
+/// On first access (`prepareNewConversation` / `messagingService`) the
+/// manager either loads the existing identity from the keychain and
+/// authorizes its `MessagingService`, or registers a fresh identity.
+/// Subsequent calls return the same service.
+///
+/// @unchecked Sendable: mutable state is protected by `cachedMessagingService`. Long-lived
+/// tasks (initialization, foreground observation, asset renewal) are created
+/// during init and cancelled in deinit.
+public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
+    /// Pending invite drafts older than this are removed during cleanup.
+    public static let stalePendingInviteInterval: TimeInterval = 24 * 60 * 60
+
+    private var foregroundObserverTask: Task<Void, Never>?
+    private var assetRenewalTask: Task<Void, Never>?
+    private var activeConversationObserver: NSObjectProtocol?
+
+    /// Tracks the user's current screen context. Used by
+    /// `shouldDisplayNotification(for:)` to suppress in-app banners when they
+    /// would be redundant — either because the user is already viewing the
+    /// target conversation, or because they're on the list where the new-
+    /// message indicator already surfaces the update.
+    private let screenStateLock: OSAllocatedUnfairLock<ScreenState> = .init(initialState: ScreenState())
+
+    private struct ScreenState {
+        var activeConversationId: String?
+        var isOnConversationsList: Bool = false
+    }
+
+    private let databaseWriter: any DatabaseWriter
+    private let databaseReader: any DatabaseReader
+    private let environment: AppEnvironment
+    private let identityStore: any KeychainIdentityStoreProtocol
+    private var initializationTask: Task<Void, Never>?
+    private let voiceMemoTranscriptionServiceLock: NSLock = NSLock()
+    private var _voiceMemoTranscriptionService: (any VoiceMemoTranscriptionServicing)?
+    private let deviceRegistrationManager: any DeviceRegistrationManagerProtocol
+    private let notificationChangeReporter: any NotificationChangeReporterType
+    private let platformProviders: PlatformProviders
+    private let apiClient: any ConvosAPIClientProtocol
+    private let unusedConversationCache: any UnusedConversationCacheProtocol
+
+    /// Single-inbox means a single cached `MessagingService`. The lock
+    /// serializes every construction path — any sync or async caller that
+    /// hits a cache miss builds the service under this lock, so two
+    /// concurrent callers can never spawn two `AuthorizeInboxOperation`s.
+    private let cachedMessagingService: OSAllocatedUnfairLock<MessagingService?> = .init(initialState: nil)
+
+    /// Wall-clock of the last `identityStore.loadSync()` failure, lock-
+    /// protected via the same lock as `cachedMessagingService` (both live
+    /// inside the same `withLock` block). Used together with
+    /// `consecutiveKeychainReadFailures` to short-circuit `loadSync`
+    /// reads during a persistent keychain error.
+    private var lastKeychainReadFailure: Date?
+    private var consecutiveKeychainReadFailures: Int = 0
+
+    /// How long `loadOrCreateService` holds off re-calling
+    /// `identityStore.loadSync()` once we've seen two consecutive failures.
+    /// The first retry after any failure is always free so transient
+    /// errors (locked keychain at first-unlock, iCloud Keychain not yet
+    /// synced) recover on the very next accessor call. A second failure
+    /// signals "probably persistent" (access-group mismatch, corrupt
+    /// data); the backoff then prevents SwiftUI-driven repeat reads from
+    /// hammering `securityd` at 60fps. 5s is short enough to pick up a
+    /// delayed iCloud sync without noticeable user-facing lag.
+    private static let keychainRetryBackoff: TimeInterval = 5
+
+    /// Runtime context for the owning binary. The main app needs the full
+    /// session machinery (push-token registration, asset renewal, prewarm,
+    /// worker timers); the App Clip just needs to seed the keychain
+    /// identity and hand off. The clip context skips the post-init
+    /// background work — see `ClipIdentityBootstrap`.
+    enum Mode: Sendable {
+        case fullApp
+        case clipBootstrap
+    }
+
+    init(databaseWriter: any DatabaseWriter,
+         databaseReader: any DatabaseReader,
+         environment: AppEnvironment,
+         identityStore: any KeychainIdentityStoreProtocol,
+         unusedConversationCache: (any UnusedConversationCacheProtocol)? = nil,
+         platformProviders: PlatformProviders,
+         mode: Mode = .fullApp) {
+        self.databaseWriter = databaseWriter
+        self.databaseReader = databaseReader
+        self.environment = environment
+        self.identityStore = identityStore
+        self.platformProviders = platformProviders
+        self.deviceRegistrationManager = DeviceRegistrationManager(
+            environment: environment,
+            platformProviders: platformProviders
+        )
+        self.apiClient = ConvosAPIClientFactory.client(environment: environment)
+        self.unusedConversationCache = unusedConversationCache ?? UnusedConversationCache(
+            identityStore: identityStore
+        )
+        self.notificationChangeReporter = NotificationChangeReporter(databaseWriter: databaseWriter)
+
+        observe()
+
+        guard mode == .fullApp else {
+            // Clip bootstrap: skip everything below. The clip writes the
+            // keychain identity during its one `messagingService()` call
+            // and the main app picks it up via the shared access group —
+            // no push token to register (clip lacks the entitlement), no
+            // prewarm to do, no renewal to run.
+            initializationTask = nil
+            return
+        }
+
+        initializationTask = Task { [weak self] in
+            guard let self else { return }
+            guard !Task.isCancelled else { return }
+
+            // Register device on app launch
+            await self.deviceRegistrationManager.registerDeviceIfNeeded()
+            guard !Task.isCancelled else { return }
+
+            // Start observing push token changes for automatic re-registration
+            await self.deviceRegistrationManager.startObservingPushTokenChanges()
+            guard !Task.isCancelled else { return }
+
+            await self.prewarmUnusedConversation()
+
+            guard !Task.isCancelled else { return }
+            self.assetRenewalTask = Task(priority: .utility) { [weak self] in
+                guard let self, !Task.isCancelled else { return }
+                let recoveryHandler = ExpiredAssetRecoveryHandler(databaseWriter: self.databaseWriter)
+                let renewalManager = AssetRenewalManager(
+                    databaseWriter: self.databaseWriter,
+                    apiClient: self.apiClient,
+                    recoveryHandler: recoveryHandler
+                )
+                await renewalManager.performRenewalIfNeeded()
+            }
+        }
+    }
+
+    deinit {
+        initializationTask?.cancel()
+        foregroundObserverTask?.cancel()
+        assetRenewalTask?.cancel()
+        if let activeConversationObserver {
+            NotificationCenter.default.removeObserver(activeConversationObserver)
+        }
+    }
+
+    // MARK: - Private Methods
+
+    private func observe() {
+        // Observe foreground notifications to refresh GRDB observers with changes from notification extension
+        foregroundObserverTask = Task { [weak self, platformProviders] in
+            let foregroundNotifications = NotificationCenter.default.notifications(
+                named: platformProviders.appLifecycle.willEnterForegroundNotification
+            )
+            for await _ in foregroundNotifications {
+                guard let self else { return }
+                self.notificationChangeReporter.notifyChangesInDatabase()
+            }
+        }
+
+        activeConversationObserver = NotificationCenter.default.addObserver(
+            forName: .activeConversationChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let conversationId = notification.userInfo?["conversationId"] as? String
+            self?.updateActiveConversation(conversationId)
+        }
+    }
+
+    private func updateActiveConversation(_ conversationId: String?) {
+        screenStateLock.withLock { state in
+            state.activeConversationId = (conversationId?.isEmpty == false) ? conversationId : nil
+        }
+    }
+
+    /// Goldilocks: the unused-conversation prewarm is disabled. Goldilocks
+    /// clients and admins never start ad-hoc group chats — Advisory, Reports
+    /// and the cross-admin groups are all agent-created — so pre-publishing
+    /// an empty MLS group on every launch only littered the XMTP network and
+    /// could surface as a stray "New Channel" row once consumed.
+    private func prewarmUnusedConversation() async {
+        // No-op: prewarm intentionally disabled for Goldilocks.
+    }
+
+    /// Single entry point for the process-wide `MessagingService`. Every
+    /// public messaging-service accessor — sync or async, from the main app
+    /// or the unused-conversation prewarm — funnels through here. The lock
+    /// guarantees exactly one `AuthorizeInboxOperation` for the process:
+    /// whichever caller takes it first builds + installs, everyone else
+    /// sees the cache hit.
+    ///
+    /// **Cache invariant:** `cached` non-nil means "one service per process",
+    /// *not* "the cached service has a usable identity." During the
+    /// registering window the service exists but its sessionStateManager
+    /// hasn't reached `.ready`; callers needing a ready inbox must
+    /// `await waitForInboxReadyResult()`, never read
+    /// `currentState.inboxId` directly.
+    ///
+    /// Identity disposition is strict:
+    /// - `loadSync` returns `nil` → keychain confirmed empty, safe to `.register`.
+    /// - `loadSync` returns an identity → `.authorize` path.
+    /// - `loadSync` throws → keychain is populated-but-unreadable (daemon
+    ///   error, corrupt JSON, iCloud sync in flight). Registering on top
+    ///   would overwrite a potentially-recoverable identity, so we cache
+    ///   a dedicated `FailedIdentityLoadOperation`-backed service that
+    ///   reports the real error via `sessionStateManager.currentState`.
+    ///   On the next call we retry `loadSync` inside the lock; on success
+    ///   the errored cache is replaced by a real service, on continued
+    ///   failure the cached errored instance is returned unchanged (no
+    ///   fresh allocation, no fresh state machine, no fresh task — this
+    ///   fix collapses the pre-refactor thrash where every call rebuilt).
+    private func loadOrCreateService() -> MessagingService {
+        cachedMessagingService.withLock { cached in
+            let previousWasErrored: Bool
+            if let existing = cached {
+                if case .error = existing.sessionStateManager.currentState {
+                    previousWasErrored = true
+                } else {
+                    return existing
+                }
+            } else {
+                previousWasErrored = false
+            }
+
+            // Skip the keychain read entirely if we've seen two or more
+            // consecutive failures within the backoff window. First
+            // retry after any failure is always free, so transient
+            // errors (locked keychain, iCloud Keychain not yet synced)
+            // recover on the very next accessor call without waiting
+            // out the backoff. Subsequent retries within the window
+            // short-circuit to prevent SwiftUI-driven repeat reads
+            // from turning a persistent failure into sustained
+            // `securityd` IPC traffic.
+            if previousWasErrored,
+               let existing = cached,
+               consecutiveKeychainReadFailures >= 2,
+               let lastFailure = lastKeychainReadFailure,
+               Date().timeIntervalSince(lastFailure) < Self.keychainRetryBackoff {
+                return existing
+            }
+
+            let identity: KeychainIdentity?
+            do {
+                identity = try identityStore.loadSync()
+                lastKeychainReadFailure = nil
+                consecutiveKeychainReadFailures = 0
+            } catch {
+                lastKeychainReadFailure = Date()
+                consecutiveKeychainReadFailures += 1
+                if previousWasErrored, let existing = cached {
+                    // Still unhappy; return the frozen errored service we
+                    // cached on the previous call. No rebuild thrash.
+                    return existing
+                }
+                Log.error("Keychain identity read failed (\(error)); caching dedicated error-state service until next successful read.")
+                let errored = MessagingService(
+                    identityReadFailure: error,
+                    databaseWriter: databaseWriter,
+                    databaseReader: databaseReader,
+                    identityStore: identityStore,
+                    environment: environment,
+                    backgroundUploadManager: platformProviders.backgroundUploadManager
+                )
+                cached = errored
+                return errored
+            }
+
+            let service = buildMessagingService(for: identity)
+            cached = service
+            return service
+        }
+    }
+
+    /// Build a `MessagingService` for the keychain's current identity, or
+    /// register a new one if the keychain is empty. Pure function — no
+    /// caching, no mutation outside of what `AuthorizeInboxOperation`'s
+    /// state machine does on its own.
+    private func buildMessagingService(for identity: KeychainIdentity?) -> MessagingService {
+        let op: AuthorizeInboxOperation
+        if let identity {
+            op = AuthorizeInboxOperation.authorize(
+                inboxId: identity.inboxId,
+                clientId: identity.clientId,
+                identityStore: identityStore,
+                databaseReader: databaseReader,
+                databaseWriter: databaseWriter,
+                environment: environment,
+                startsStreamingServices: true,
+                platformProviders: platformProviders,
+                deviceRegistrationManager: deviceRegistrationManager,
+                apiClient: apiClient
+            )
+        } else {
+            op = AuthorizeInboxOperation.register(
+                identityStore: identityStore,
+                databaseReader: databaseReader,
+                databaseWriter: databaseWriter,
+                environment: environment,
+                platformProviders: platformProviders,
+                deviceRegistrationManager: deviceRegistrationManager,
+                apiClient: apiClient
+            )
+        }
+        return MessagingService(
+            authorizationOperation: op,
+            databaseWriter: databaseWriter,
+            databaseReader: databaseReader,
+            identityStore: identityStore,
+            environment: environment,
+            backgroundUploadManager: platformProviders.backgroundUploadManager
+        )
+    }
+
+    // MARK: - Inbox Management
+
+    public func prepareNewConversation() async -> (service: AnyMessagingService, conversationId: String?) {
+        let service = loadOrCreateService()
+        // Goldilocks: prewarm is disabled (see `prewarmUnusedConversation`),
+        // so there is no cached conversation to hand back — `conversationId`
+        // is nil and callers create one on demand. We also don't re-arm it.
+        let conversationId = await unusedConversationCache.consumeUnusedConversationId(
+            databaseWriter: databaseWriter
+        )
+        return (service, conversationId)
+    }
+
+    public func deleteAllInboxes() async throws {
+        for try await _ in deleteAllInboxesWithProgress() {}
+    }
+
+    public func deleteAllInboxesWithProgress() -> AsyncThrowingStream<InboxDeletionProgress, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task { [weak self] in
+                guard let self else {
+                    continuation.finish()
+                    return
+                }
+
+                do {
+                    // Yield progress events in lockstep with the work they
+                    // describe: the UI reads the stream in order and expects
+                    // each event to correspond to the phase that is about to
+                    // run (or has just run).
+                    continuation.yield(.clearingDeviceRegistration)
+                    DeviceRegistrationManager.clearRegistrationState(deviceInfo: self.platformProviders.deviceInfo)
+
+                    // Revoke the refresh-token family on the backend
+                    // before we drop local credentials, so a stolen
+                    // refresh token from this device can't outlive the
+                    // sign-out. Best-effort: a network failure here
+                    // does not block local teardown.
+                    await self.apiClient.logout()
+
+                    let hasService = self.cachedMessagingService.withLock { $0 != nil }
+                    continuation.yield(.stoppingServices(completed: 0, total: hasService ? 1 : 0))
+
+                    continuation.yield(.deletingFromDatabase)
+                    try await self.tearDownInbox()
+
+                    if hasService {
+                        continuation.yield(.stoppingServices(completed: 1, total: 1))
+                    }
+
+                    continuation.yield(.completed)
+                    continuation.finish()
+                } catch {
+                    // Still clear device registration on the failure path so
+                    // we don't leave a dangling APNs record pointed at a
+                    // half-torn-down install.
+                    DeviceRegistrationManager.clearRegistrationState(deviceInfo: self.platformProviders.deviceInfo)
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private func tearDownInbox() async throws {
+        await unusedConversationCache.cancel()
+
+        // Keep the cached service reference live through the entire teardown.
+        // A concurrent `loadOrCreateService()` (push arriving mid-delete,
+        // SwiftUI sync accessor, etc.) will then observe the being-torn-down
+        // service rather than building a second one that would open the same
+        // SQLCipher xmtp-*.db3 files while the first is being deleted. The
+        // cache is cleared only after the XMTP client, keychain, and DBInbox
+        // rows are fully gone — at which point any new caller correctly
+        // builds a fresh registering-state service.
+        let existing = cachedMessagingService.withLock { $0 }
+
+        if let existing {
+            Log.info("Tearing down authorized inbox")
+            await existing.stopAndDelete()
+            await existing.waitForDeletionComplete()
+        }
+
+        try await identityStore.delete()
+
+        try await wipeResidualInboxRows()
+
+        cachedMessagingService.withLock { $0 = nil }
+    }
+
+    private func wipeResidualInboxRows() async throws {
+        try await databaseWriter.write { db in
+            // A prior process may have left `isUnused == true` rows from an
+            // interrupted prewarm. Under a nil cached service the MLS-side
+            // `cleanupInboxData` never runs, so those rows would otherwise
+            // survive into the next session and hand out unusable conversation
+            // ids via `consumeUnusedConversationId`.
+            try DBConversation
+                .filter(DBConversation.Columns.isUnused == true)
+                .deleteAll(db)
+            try DBInbox.deleteAll(db)
+
+            // DBConnection has no FK to DBInbox or DBConversation, so the MLS
+            // cleanup path and the deletes above both miss it. Wipe it here so
+            // "Delete All Data" doesn't leave the next identity holding stale
+            // Composio entity/connection ids from the previous user. The FK
+            // cascade from DBConnection removes DBConnectionGrant as well.
+            //
+            // Server-side revoke is intentionally skipped: by the time this
+            // runs, identityStore.delete() has already nuked the JWT signer
+            // so apiClient.revokeConnection would fail auth, and the abandoned
+            // entity ids aren't reachable from any new identity anyway.
+            try DBConnection.deleteAll(db)
+        }
+    }
+
+    // MARK: - Messaging Services
+
+    public func messagingService() -> AnyMessagingService {
+        loadOrCreateService()
+    }
+
+    /// Synchronous accessor for SwiftUI code paths that can't suspend (e.g.
+    /// `ConversationsViewModel.updateSelectionState`). Cache hits are free;
+    /// cache misses do a keychain `loadSync` plus `AuthorizeInboxOperation`
+    /// construction under the service-state lock — typically a few ms, with
+    /// worst-case keychain IPC in the tens of ms range. Called once per
+    /// process in practice, since the cache fills on first use.
+    public func messagingServiceSync() -> AnyMessagingService {
+        loadOrCreateService()
+    }
+
+    // MARK: - Factory methods for repositories
+
+    public func inviteRepository(for conversationId: String) -> any InviteRepositoryProtocol {
+        InviteRepository(
+            databaseReader: databaseReader,
+            conversationId: conversationId,
+            conversationIdPublisher: Just(conversationId).eraseToAnyPublisher()
+        )
+    }
+
+    public func requestAgentJoin(slug: String, instructions: String, forceErrorCode: Int? = nil) async throws -> ConvosAPI.AgentJoinResponse {
+        try await apiClient.requestAgentJoin(slug: slug, instructions: instructions, forceErrorCode: forceErrorCode)
+    }
+
+    public func redeemInviteCode(_ code: String) async throws -> ConvosAPI.InviteCodeStatus {
+        try await apiClient.redeemInviteCode(code)
+    }
+
+    public func fetchInviteCodeStatus(_ code: String) async throws -> ConvosAPI.InviteCodeStatus {
+        try await apiClient.fetchInviteCodeStatus(code)
+    }
+
+    /// SIWE handshake against the Goldilocks backend. Loads the device's
+    /// XMTP private key from the keychain, has it sign a challenge, posts
+    /// the message + signature to /v2/me, returns the assigned client info.
+    public func registerWithGoldilocks(claimAdminRole: Bool) async throws -> GoldilocksAuth.Identity {
+        // Ensure the XMTP inbox is authorized before reading its keys. On a
+        // fresh install nothing else has triggered AuthorizeInboxOperation
+        // yet, so `identityStore.load()` would otherwise race ahead and
+        // return nil. (The unused-conversation prewarm used to warm this
+        // early as a side effect; that prewarm is intentionally disabled.)
+        let service = loadOrCreateService()
+        _ = try await service.sessionStateManager.waitForInboxReadyResult()
+
+        guard let identity = try await identityStore.load() else {
+            throw GoldilocksAuth.AuthError.missingPrivateKey
+        }
+        return try await GoldilocksAuth.register(
+            inboxId: identity.inboxId,
+            privateKey: identity.keys.privateKey,
+            apiClient: apiClient,
+            claimAdminRole: claimAdminRole
+        )
+    }
+
+    public func refreshGoldilocksIdentity() async throws -> GoldilocksAuth.Identity {
+        let response = try await apiClient.fetchGoldilocksMe()
+        return GoldilocksAuth.Identity(from: response)
+    }
+
+    public func promoteSelfToAdminDev() async throws {
+        try await apiClient.promoteSelfToAdminDev()
+    }
+
+    public func upgradeGoldilocksAdmin(code: String) async throws {
+        try await apiClient.upgradeGoldilocksAdmin(code: code)
+    }
+
+    public func downgradeGoldilocksAdmin() async throws {
+        try await apiClient.downgradeGoldilocksAdmin()
+    }
+
+    public func createGoldilocksCheckout(
+        paymentMethod: GoldilocksPaymentMethod,
+        durationMonths: Int,
+        seats: Int
+    ) async throws -> ConvosAPI.GoldilocksCheckoutResponse {
+        let request = ConvosAPI.GoldilocksCheckoutRequest(
+            paymentMethod: paymentMethod.rawValue,
+            durationMonths: durationMonths,
+            seats: seats
+        )
+        return try await apiClient.createGoldilocksCheckout(request)
+    }
+
+    public func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        try await apiClient.fetchGoldilocksBillingStatus()
+    }
+
+    public func syncGoldilocksSeats(seats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        let request = ConvosAPI.GoldilocksSeatsRequest(seats: seats)
+        return try await apiClient.syncGoldilocksSeats(request)
+    }
+
+    public func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
+        try await apiClient.cancelGoldilocksBilling()
+    }
+
+    public func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        try await apiClient.fetchGoldilocksPeopleList()
+    }
+
+    public func saveGoldilocksPeopleList(ciphertext: String, salt: String, nonce: String, baseVersion: Int) async throws -> Int {
+        let request = ConvosAPI.GoldilocksPeopleListSaveRequest(ciphertext: ciphertext, salt: salt, nonce: nonce, baseVersion: baseVersion)
+        let response = try await apiClient.saveGoldilocksPeopleList(request)
+        return response.version
+    }
+
+    public func groupEncryptionKey(forConversationId conversationId: String) async throws -> Data {
+        let inboxReady = try await messagingService().sessionStateManager.waitForInboxReadyResult()
+        guard let conversation = try await inboxReady.client.conversation(with: conversationId),
+              case .group(let group) = conversation else {
+            throw ImageEncryptionError.missingEncryptionKey
+        }
+        return try await group.ensureImageEncryptionKey()
+    }
+
+    public func fetchAdminPeopleList(clientInboxId: String) async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        try await apiClient.fetchAdminPeopleList(clientInboxId: clientInboxId)
+    }
+
+    public func saveAdminPeopleList(
+        clientInboxId: String,
+        ciphertext: String,
+        salt: String,
+        nonce: String,
+        baseVersion: Int,
+        auditHint: ConvosAPI.GoldilocksPeopleListSaveRequest.AuditHint? = nil
+    ) async throws -> Int {
+        let request = ConvosAPI.GoldilocksPeopleListSaveRequest(
+            ciphertext: ciphertext,
+            salt: salt,
+            nonce: nonce,
+            baseVersion: baseVersion,
+            auditHint: auditHint
+        )
+        let response = try await apiClient.saveAdminPeopleList(clientInboxId: clientInboxId, request)
+        return response.version
+    }
+
+    public func fetchGoldilocksAdminInboxIds() async throws -> [String] {
+        let response = try await apiClient.fetchGoldilocksAdmins()
+        return response.inboxes.map { $0.inboxId }
+    }
+
+    public func fetchGoldilocksAgentInboxIds() async throws -> [String] {
+        let response = try await apiClient.fetchGoldilocksAgents()
+        return response.agents.map { $0.inboxId }
+    }
+
+    public func fetchGoldilocksAdminsGroupId() async throws -> String? {
+        let response = try await apiClient.fetchGoldilocksAgents()
+        return response.adminsGroupId
+    }
+
+    public func fetchGoldilocksAlertsGroupId() async throws -> String? {
+        let response = try await apiClient.fetchGoldilocksAgents()
+        return response.alertsGroupId
+    }
+
+    public func fetchAdminChannels() async throws -> [ConvosAPI.GoldilocksAdminChannel] {
+        let response = try await apiClient.fetchGoldilocksAdminChannels()
+        return response.channels
+    }
+
+    /// Admin: flip the Emerald membership flag on a client. Returns
+    /// the new state; the backend posts an audit-log line if the
+    /// flag actually changed.
+    public func setEmeraldMembership(
+        clientInboxId: String,
+        enabled: Bool
+    ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
+        try await apiClient.setGoldilocksEmeraldMembership(
+            clientInboxId: clientInboxId,
+            enabled: enabled
+        )
+    }
+
+    public func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws {
+        _ = try await apiClient.registerGoldilocksChannel(role: role, xmtpGroupId: xmtpGroupId)
+    }
+
+    public func markGoldilocksChannelExploded(role: String) async throws {
+        try await apiClient.markGoldilocksChannelExploded(role: role)
+    }
+
+    public func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws {
+        _ = try await apiClient.recreateGoldilocksChannel(role: role, xmtpGroupId: xmtpGroupId)
+    }
+
+    public func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse {
+        try await apiClient.listGoldilocksChannels()
+    }
+
+    public func recoverGoldilocksChannels() async throws {
+        try await apiClient.recoverGoldilocksChannels()
+    }
+
+    public func goldilocksManagedConversationCount() async throws -> Int {
+        try await databaseReader.read { db in
+            let trustedIds = GoldilocksAgentTrust.snapshot()
+            guard !trustedIds.isEmpty else { return 0 }
+            return try DBConversation
+                .filter(trustedIds.contains(DBConversation.Columns.creatorId))
+                .fetchCount(db)
+        }
+    }
+
+    public func missingGoldilocksConversationIds(_ xmtpGroupIds: [String]) async throws -> [String] {
+        guard !xmtpGroupIds.isEmpty else { return [] }
+        return try await databaseReader.read { db in
+            let presentIds = try String.fetchAll(db, DBConversation
+                .filter(xmtpGroupIds.contains(DBConversation.Columns.id))
+                .select(DBConversation.Columns.id, as: String.self))
+            let presentSet = Set(presentIds)
+            return xmtpGroupIds.filter { !presentSet.contains($0) }
+        }
+    }
+
+    public func conversationRepository(for conversationId: String) -> any ConversationRepositoryProtocol {
+        ConversationRepository(
+            conversationId: conversationId,
+            dbReader: databaseReader,
+            sessionStateManager: messagingService().sessionStateManager
+        )
+    }
+
+    public func messagesRepository(for conversationId: String) -> any MessagesRepositoryProtocol {
+        MessagesRepository(
+            dbReader: databaseReader,
+            conversationId: conversationId,
+            currentInboxId: MessagesRepository.currentInboxId(from: databaseReader)
+        )
+    }
+
+    public func photoPreferencesRepository(for conversationId: String) -> any PhotoPreferencesRepositoryProtocol {
+        PhotoPreferencesRepository(databaseReader: databaseReader)
+    }
+
+    public func photoPreferencesWriter() -> any PhotoPreferencesWriterProtocol {
+        PhotoPreferencesWriter(databaseWriter: databaseWriter)
+    }
+
+    public func voiceMemoTranscriptRepository() -> any VoiceMemoTranscriptRepositoryProtocol {
+        VoiceMemoTranscriptRepository(databaseReader: databaseReader)
+    }
+
+    public func voiceMemoTranscriptWriter() -> any VoiceMemoTranscriptWriterProtocol {
+        VoiceMemoTranscriptWriter(databaseWriter: databaseWriter)
+    }
+
+    public func voiceMemoTranscriptionService() -> any VoiceMemoTranscriptionServicing {
+        voiceMemoTranscriptionServiceLock.lock()
+        defer { voiceMemoTranscriptionServiceLock.unlock() }
+        if let existing = _voiceMemoTranscriptionService {
+            return existing
+        }
+        let service = VoiceMemoTranscriptionService(
+            transcriptRepository: voiceMemoTranscriptRepository(),
+            transcriptWriter: voiceMemoTranscriptWriter()
+        )
+        _voiceMemoTranscriptionService = service
+        return service
+    }
+
+    public func attachmentLocalStateWriter() -> any AttachmentLocalStateWriterProtocol {
+        AttachmentLocalStateWriter(databaseWriter: databaseWriter)
+    }
+
+    public func assistantFilesLinksRepository(for conversationId: String) -> AssistantFilesLinksRepository {
+        AssistantFilesLinksRepository(dbReader: databaseReader, conversationId: conversationId)
+    }
+
+    public func conversationsRepository(for consent: [Consent]) -> any ConversationsRepositoryProtocol {
+        ConversationsRepository(dbReader: databaseReader, consent: consent)
+    }
+
+    public func conversationsCountRepo(for consent: [Consent], kinds: [ConversationKind]) -> any ConversationsCountRepositoryProtocol {
+        ConversationsCountRepository(databaseReader: databaseReader, consent: consent, kinds: kinds)
+    }
+
+    public func pinnedConversationsCountRepo() -> any PinnedConversationsCountRepositoryProtocol {
+        PinnedConversationsCountRepository(databaseReader: databaseReader)
+    }
+
+    // MARK: Notifications
+
+    public func shouldDisplayNotification(for conversationId: String) async -> Bool {
+        let state = screenStateLock.withLock { $0 }
+        if state.isOnConversationsList { return false }
+        if state.activeConversationId == conversationId { return false }
+        return true
+    }
+
+    public func setIsOnConversationsList(_ isOn: Bool) {
+        screenStateLock.withLock { state in
+            state.isOnConversationsList = isOn
+        }
+    }
+
+    public func notifyChangesInDatabase() {
+        notificationChangeReporter.notifyChangesInDatabase()
+    }
+
+    public func wakeInboxForNotification(conversationId: String) {
+        _ = loadOrCreateService()
+    }
+
+    // MARK: Debug
+
+    public func pendingInviteDetails() throws -> [PendingInviteDetail] {
+        let repository = PendingInviteRepository(databaseReader: databaseReader)
+        return try repository.allPendingInviteDetails()
+    }
+
+    public func deleteExpiredPendingInvites() async throws -> Int {
+        let cutoff = Date().addingTimeInterval(-Self.stalePendingInviteInterval)
+
+        let expiredInvites: [DBConversation] = try await databaseReader.read { db in
+            let sql = """
+                SELECT c.*
+                FROM conversation c
+                WHERE c.id LIKE 'draft-%'
+                    AND c.inviteTag IS NOT NULL
+                    AND length(c.inviteTag) > 0
+                    AND c.createdAt < ?
+                    AND (SELECT COUNT(*) FROM conversation_members cm WHERE cm.conversationId = c.id) <= 1
+                """
+            return try DBConversation.fetchAll(db, sql: sql, arguments: [cutoff])
+        }
+
+        guard !expiredInvites.isEmpty else { return 0 }
+
+        let expiredConversationIds = expiredInvites.map { $0.id }
+        let deletedCount = try await databaseWriter.write { db in
+            try DBConversation
+                .filter(expiredConversationIds.contains(DBConversation.Columns.id))
+                .deleteAll(db)
+        }
+
+        Log.info("Deleted \(deletedCount) expired pending invite draft(s)")
+        return deletedCount
+    }
+
+    /// Returns `true` when an inbox is authorized locally but has no joined
+    /// conversations and no tagged drafts — a sign of an aborted
+    /// registration that can be reset via `deleteAllInboxes`.
+    public func isAccountOrphaned() throws -> Bool {
+        try databaseReader.read { db in
+            guard (try DBInbox.fetchAll(db).first) != nil else { return false }
+            let nonDraftCount = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM conversation WHERE id NOT LIKE 'draft-%'"
+            ) ?? 0
+            if nonDraftCount > 0 { return false }
+            let taggedDraftCount = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM conversation WHERE id LIKE 'draft-%' AND inviteTag IS NOT NULL AND length(inviteTag) > 0"
+            ) ?? 0
+            return taggedDraftCount == 0
+        }
+    }
+
+    // MARK: Helpers
+
+    public func inboxId(for conversationId: String) async -> String? {
+        do {
+            return try await databaseReader.read { db in
+                guard (try DBConversation.fetchOne(db, key: conversationId)) != nil else {
+                    return nil
+                }
+                return try DBInbox.fetchAll(db).first?.inboxId
+            }
+        } catch {
+            Log.error("Failed to look up inboxId for conversationId \(conversationId): \(error)")
+            return nil
+        }
+    }
+
+    // MARK: - Asset Renewal
+
+    public func makeAssetRenewalManager() async -> AssetRenewalManager {
+        let recoveryHandler = ExpiredAssetRecoveryHandler(databaseWriter: databaseWriter)
+        return AssetRenewalManager(
+            databaseWriter: databaseWriter,
+            apiClient: apiClient,
+            recoveryHandler: recoveryHandler
+        )
+    }
+
+    // MARK: - Connections
+
+    public func connectionManager(
+        callbackURLScheme: String
+    ) -> any ConnectionManagerProtocol {
+        ConnectionManager(
+            apiClient: apiClient,
+            oauthProvider: platformProviders.oauthSessionProvider,
+            databaseWriter: databaseWriter,
+            callbackURLScheme: callbackURLScheme,
+            grantWriterProvider: { [weak self] in
+                self?.messagingService().connectionGrantWriter()
+            }
+        )
+    }
+
+    public func connectionRepository() -> any ConnectionRepositoryProtocol {
+        ConnectionRepository(databaseReader: databaseReader)
+    }
+}

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- F8.2 — The notification extension runs while the device is locked
+	     (that's the whole point), so it can't use NSFileProtectionComplete
+	     for the files it creates. CompleteUnlessOpen is the right tier:
+	     unreadable when locked unless they were already open, but writable
+	     during the wake-from-locked path the system gives us.
+	     Design: docs/encryption-and-backup-plan.md F8.2. -->
+	<key>com.apple.developer.default-data-protection</key>
+	<string>NSFileProtectionCompleteUnlessOpen</string>
+	<key>aps-environment</key>
+	<string>$(APNS_ENVIRONMENT)</string>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>$(APP_GROUP_IDENTIFIER)</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)$(APP_GROUP_IDENTIFIER)</string>
+	</array>
+    <key>com.apple.developer.usernotifications.filtering</key>
+    <true/>
+</dict>
+</plist>

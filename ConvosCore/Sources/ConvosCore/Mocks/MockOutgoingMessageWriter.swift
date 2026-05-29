@@ -1,0 +1,80 @@
+import Combine
+import Foundation
+
+/// Mock implementation of OutgoingMessageWriterProtocol for testing
+public final class MockOutgoingMessageWriter: OutgoingMessageWriterProtocol, @unchecked Sendable {
+    private let sentMessageSubject: PassthroughSubject = PassthroughSubject<String, Never>()
+    public var sentMessages: [String] = []
+    public var sentImageCount: Int = 0
+
+    public init() {}
+
+    public var sentMessage: AnyPublisher<String, Never> {
+        sentMessageSubject.eraseToAnyPublisher()
+    }
+
+    public func send(text: String) async throws {
+        let messageId = UUID().uuidString
+        sentMessages.append(text)
+        sentMessageSubject.send(messageId)
+    }
+
+    public func send(text: String, afterPhoto trackingKey: String?) async throws {
+        try await send(text: text)
+    }
+
+    public func send(image: ImageType) async throws {
+        sentImageCount += 1
+        let mockURL = "https://example.com/photos/mock_photo_\(sentImageCount).jpg"
+        sentMessageSubject.send(mockURL)
+    }
+
+    public func startEagerUpload(image: ImageType) async throws -> String {
+        UUID().uuidString
+    }
+
+    public func sendEagerPhoto(trackingKey: String) async throws {
+        sentImageCount += 1
+        let mockURL = "https://example.com/photos/mock_photo_\(sentImageCount).jpg"
+        sentMessageSubject.send(mockURL)
+    }
+
+    public func cancelEagerUpload(trackingKey: String) async {}
+
+    public func sendVideo(at fileURL: URL, replyToMessageId: String?) async throws -> String {
+        sentImageCount += 1
+        return UUID().uuidString
+    }
+
+    public func sendVoiceMemo(at fileURL: URL, duration: TimeInterval, waveformLevels: [Float]?, replyToMessageId: String?) async throws -> String {
+        return UUID().uuidString
+    }
+
+    public func sendFile(at fileURL: URL, filename: String, mimeType: String, replyToMessageId: String?) async throws -> String {
+        return UUID().uuidString
+    }
+
+    public func sendReply(text: String, toMessageWithClientId parentClientMessageId: String) async throws {
+        try await send(text: text)
+    }
+
+    public func sendEagerPhotoReply(trackingKey: String, toMessageWithClientId parentClientMessageId: String) async throws {
+        try await sendEagerPhoto(trackingKey: trackingKey)
+    }
+
+    public func sendReply(text: String, afterPhoto trackingKey: String?, toMessageWithClientId parentClientMessageId: String) async throws {
+        try await send(text: text, afterPhoto: trackingKey)
+    }
+
+    public func retryFailedMessage(id: String) async throws {}
+    public func deleteFailedMessage(id: String) async throws {}
+
+    public func insertPendingInvite(text: String) async throws -> String {
+        sentMessages.append(text)
+        return UUID().uuidString
+    }
+
+    public func finalizeInvite(clientMessageId: String, finalText: String) async throws {
+        sentMessages.append(finalText)
+    }
+}

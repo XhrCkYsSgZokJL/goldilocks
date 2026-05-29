@@ -1,0 +1,747 @@
+import ConvosCore
+import ConvosLogging
+import SwiftUI
+
+struct MessagesGroupView: View {
+    let group: MessagesGroup
+    let conversationId: String
+    let shouldBlurPhotos: Bool
+    let onTapAvatar: (AnyMessage) -> Void
+    let onTapInvite: (MessageInvite) -> Void
+    let onTapReactions: (AnyMessage) -> Void
+    let onReaction: (String, String) -> Void
+    let onToggleReaction: (String, String) -> Void
+    let onReply: (AnyMessage) -> Void
+    let onPhotoRevealed: (String) -> Void
+    let onPhotoHidden: (String) -> Void
+    let onPhotoDimensionsLoaded: (String, Int, Int) -> Void
+    var onOpenFile: ((HydratedAttachment) -> Void)?
+    var onRetryMessage: ((AnyMessage) -> Void)?
+    var onDeleteMessage: ((AnyMessage) -> Void)?
+    var onRetryTranscript: ((VoiceMemoTranscriptListItem) -> Void)?
+    var allVoiceMemoTranscripts: [String: VoiceMemoTranscriptListItem] = [:]
+
+    @Environment(\.displayScale) private var displayScale: CGFloat
+    @State private var isAppearing: Bool = true
+    @State private var hasAnimated: Bool = false
+
+    private var animates: Bool {
+        group.messages.first?.origin == .inserted
+    }
+
+    private var avatarWidth: CGFloat {
+        group.sender.isCurrentUser ? 0 : DesignConstants.ImageSizes.smallAvatar + DesignConstants.Spacing.step2x
+    }
+
+    private var avatarSize: CGFloat {
+        DesignConstants.ImageSizes.smallAvatar
+    }
+
+    private var avatarSpacing: CGFloat {
+        DesignConstants.Spacing.step2x
+    }
+
+    private var senderLabel: some View {
+        senderLabelContent
+            .scaleEffect(isAppearing ? 0.9 : 1.0)
+            .opacity(isAppearing ? 0.0 : 1.0)
+            .offset(x: 0.0, y: isAppearing ? 100 : 0)
+            .blur(radius: isAppearing ? 10.0 : 0.0)
+            .font(.footnote)
+            .foregroundColor(group.sender.isAgent ? group.sender.agentVerification.nameColor : .secondary)
+            .padding(.leading, avatarWidth + DesignConstants.Spacing.step4x + DesignConstants.Spacing.step3x)
+            .padding(.bottom, DesignConstants.Spacing.stepHalf)
+    }
+
+    private var senderLabelContent: some View {
+        let tapAction = { if let msg = group.allMessages.first { onTapAvatar(msg) } }
+        return Button(action: tapAction) {
+            HStack(spacing: DesignConstants.Spacing.stepX) {
+                Text(group.sender.profile.displayName)
+                if group.sender.isAgent && group.sender.profile.isOutOfCredits {
+                    Image(systemName: "battery.0percent")
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func avatarOverlay(onTap: (() -> Void)? = nil) -> some View {
+        MessageAvatarView(profile: group.sender.profile, size: avatarSize, agentVerification: group.sender.agentVerification)
+            .offset(x: -(avatarSize + avatarSpacing))
+            .onTapGesture { onTap?() }
+            .scaleEffect(isAppearing ? 0.9 : 1.0)
+            .opacity(isAppearing ? 0.0 : 1.0)
+            .offset(
+                x: isAppearing ? -80 : 0,
+                y: 0.0
+            )
+            .id("profile-\(group.id)")
+            .accessibilityLabel("View \(group.sender.profile.displayName)'s profile")
+            .accessibilityAddTraits(.isButton)
+    }
+
+    private var singleTyperIndicator: some View {
+        let isTypingOnly = group.allMessages.isEmpty
+
+        return Group {
+            if isTypingOnly && !group.sender.isCurrentUser {
+                senderLabel
+            }
+
+            HStack(alignment: .bottom, spacing: avatarSpacing) {
+                if !group.sender.isCurrentUser {
+                    Color.clear
+                        .frame(width: avatarSize, height: avatarSize)
+                }
+
+                TypingIndicatorBubbleView(senderName: group.sender.profile.displayName)
+                    .overlay(alignment: .bottomLeading) {
+                        if !group.sender.isCurrentUser {
+                            avatarOverlay()
+                        }
+                    }
+            }
+            .padding(.leading, !group.sender.isCurrentUser ? DesignConstants.Spacing.step4x : 0)
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .bottomLeading)))
+        .id("typing-indicator-\(group.id)")
+    }
+
+    private var multiTyperIndicator: some View {
+        let typers = group.allTypingMembers
+        let names = typers.compactMap(\.profile.displayName)
+        let accessibilityText: String = {
+            switch names.count {
+            case 0: return "People are typing"
+            case 1: return "\(names[0]) is typing"
+            case 2: return "\(names[0]) and \(names[1]) are typing"
+            default: return "\(names.count) people are typing"
+            }
+        }()
+
+        let visibleCount = min(typers.count, 3)
+        let overlapOffset: CGFloat = 8
+        let stackWidth = avatarSize + CGFloat(visibleCount - 1) * (avatarSize - overlapOffset)
+
+        return HStack(alignment: .bottom, spacing: avatarSpacing) {
+            HStack(spacing: -overlapOffset) {
+                ForEach(Array(typers.prefix(3).enumerated()), id: \.element.id) { index, member in
+                    MessageAvatarView(profile: member.profile, size: avatarSize)
+                        .overlay(
+                            Circle()
+                                .stroke(Color(.systemBackground), lineWidth: 2)
+                        )
+                        .zIndex(Double(index))
+                }
+            }
+            .frame(width: stackWidth, alignment: .leading)
+
+            TypingIndicatorBubbleView(senderName: nil)
+        }
+        .padding(.leading, DesignConstants.Spacing.step4x)
+        .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .bottomLeading)))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+        .id("typing-indicator-multi")
+    }
+
+    @ViewBuilder
+    private func messageGroup(index: Int, message: AnyMessage) -> some View {
+        let isReply: Bool = if case .reply = message { true } else { false }
+        let isFullWidthAttachment: Bool = message.content.isFullBleedAttachment
+
+        if index == 0 && !group.sender.isCurrentUser && !isFullWidthAttachment && !isReply {
+            senderLabel
+        }
+
+        let isLastInGroup: Bool = message == group.messages.last
+        let isLast: Bool = isLastInGroup && !group.showsTypingIndicator
+        // When the last message is a voice memo with a transcript row attached, the
+        // transcript becomes the visual bottom of the group, so the tail moves from
+        // the voice memo bubble down onto the transcript row.
+        let transcriptIsTailed: Bool = isLast && group.voiceMemoTranscripts[message.messageId] != nil
+        let bubbleType: MessageBubbleType = (isLast && !transcriptIsTailed) ? .tailed : .normal
+        let showsSentStatus: Bool = isLastInGroup && (group.isLastGroupSentByCurrentUser || group.isLastGroupBeforeOtherMembers) && message.status == .published
+        let isFailed: Bool = message.sender.isCurrentUser && message.status == .failed
+
+        messageRowContent(
+            message: message,
+            bubbleType: bubbleType,
+            isFailed: isFailed,
+            isLast: isLast,
+            isFullWidthAttachment: isFullWidthAttachment,
+            voiceMemoTranscriptIsTailed: transcriptIsTailed
+        )
+        reactionRow(message: message, isFullWidthAttachment: isFullWidthAttachment)
+        statusRow(message: message, isFailed: isFailed, showsSentStatus: showsSentStatus)
+    }
+
+    @ViewBuilder
+    private func messageRowContent(
+        message: AnyMessage,
+        bubbleType: MessageBubbleType,
+        isFailed: Bool,
+        isLast: Bool,
+        isFullWidthAttachment: Bool,
+        voiceMemoTranscriptIsTailed: Bool
+    ) -> some View {
+        HStack(alignment: .bottom, spacing: avatarSpacing) {
+            if !group.sender.isCurrentUser && !isFullWidthAttachment {
+                Color.clear
+                    .frame(width: avatarSize, height: avatarSize)
+            }
+
+            MessagesGroupItemView(
+                message: message,
+                conversationId: conversationId,
+                bubbleType: bubbleType,
+                shouldBlurPhotos: shouldBlurPhotos,
+                onTapAvatar: onTapAvatar,
+                onTapInvite: onTapInvite,
+                onReply: onReply,
+                onPhotoRevealed: onPhotoRevealed,
+                onPhotoHidden: onPhotoHidden,
+                onPhotoDimensionsLoaded: onPhotoDimensionsLoaded,
+                onOpenFile: onOpenFile,
+                onTapReactions: onTapReactions,
+                onReaction: onReaction,
+                onToggleReaction: onToggleReaction,
+                voiceMemoTranscript: group.voiceMemoTranscripts[message.messageId],
+                voiceMemoTranscriptIsTailed: voiceMemoTranscriptIsTailed,
+                onRetryTranscript: onRetryTranscript,
+                parentAudioTranscriptText: parentAudioTranscriptText(for: message),
+                omitTrailingPadding: isFailed
+            )
+            .zIndex(100)
+            .id("messages-group-item-\(message.differenceIdentifier)")
+            .transition(
+                .asymmetric(
+                    insertion: .identity,
+                    removal: .opacity
+                )
+            )
+            .overlay(alignment: .bottomLeading) {
+                if isLast && !group.sender.isCurrentUser {
+                    avatarOverlay { onTapAvatar(message) }
+                }
+            }
+
+            if isFailed {
+                FailedMessageButton(
+                    message: message,
+                    onRetry: onRetryMessage,
+                    onDelete: onDeleteMessage
+                )
+                .padding(.leading, DesignConstants.Spacing.step3x - avatarSpacing)
+                .padding(.trailing, DesignConstants.Spacing.step4x)
+            }
+        }
+        .padding(.leading, !group.sender.isCurrentUser && !isFullWidthAttachment ? DesignConstants.Spacing.step4x : 0)
+    }
+
+    private func parentAudioTranscriptText(for message: AnyMessage) -> String? {
+        guard case .reply(let reply, _) = message,
+              reply.parentMessage.content.primaryVoiceMemoAttachment != nil
+        else { return nil }
+        return allVoiceMemoTranscripts[reply.parentMessage.id]?.text
+    }
+
+    @ViewBuilder
+    private func reactionRow(message: AnyMessage, isFullWidthAttachment: Bool) -> some View {
+        if !message.reactions.isEmpty, !isFullWidthAttachment {
+            ReactionIndicatorView(
+                reactions: message.reactions,
+                isOutgoing: message.sender.isCurrentUser,
+                onTap: { onTapReactions(message) }
+            )
+            .padding(.leading, message.sender.isCurrentUser ? 0 : (isFullWidthAttachment ? DesignConstants.Spacing.step4x : avatarWidth + avatarSpacing + DesignConstants.Spacing.step2x))
+            .padding(.trailing, message.sender.isCurrentUser ? DesignConstants.Spacing.step4x : 0)
+            .padding(.bottom, DesignConstants.Spacing.stepX)
+            .transition(.identity)
+            .zIndex(50)
+            .id("reactions-\(message.differenceIdentifier)")
+        }
+    }
+
+    @ViewBuilder
+    private func statusRow(message: AnyMessage, isFailed: Bool, showsSentStatus: Bool) -> some View {
+        if isFailed {
+            HStack(spacing: DesignConstants.Spacing.stepHalf) {
+                Spacer()
+                Text("Not Delivered")
+            }
+            .transition(.blurReplace)
+            .padding(.vertical, DesignConstants.Spacing.stepX)
+            .padding(.leading, DesignConstants.Spacing.step2x)
+            .padding(.trailing, DesignConstants.Spacing.step4x)
+            .font(.caption)
+            .foregroundStyle(.colorCaution)
+            .zIndex(-1)
+            .id("failed-status-\(message.differenceIdentifier)")
+            .accessibilityLabel("Message not delivered")
+        } else if showsSentStatus {
+            HStack(spacing: DesignConstants.Spacing.stepX) {
+                Spacer()
+                if group.onlyVisibleToSender {
+                    Text("Only visible to you")
+                        .font(.caption)
+                    ProfileAvatarView(
+                        profile: group.sender.profile,
+                        profileImage: nil,
+                        useSystemPlaceholder: false
+                    )
+                    .frame(width: 16, height: 16)
+                } else if !group.readByMembers.isEmpty {
+                    Text("Read")
+                        .font(.caption)
+                    ReadReceiptAvatarsView(members: group.readByMembers)
+                } else {
+                    Text("Sent")
+                        .font(.caption)
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.colorFillTertiary)
+                        .frame(width: 16, height: 16)
+                }
+            }
+            .transition(.blurReplace)
+            .padding(.vertical, DesignConstants.Spacing.stepX)
+            .padding(.leading, DesignConstants.Spacing.step2x)
+            .padding(.trailing, DesignConstants.Spacing.step4x)
+            .foregroundStyle(.colorTextSecondary)
+            .zIndex(-1)
+            .id("sent-status-\(message.differenceIdentifier)")
+            .accessibilityLabel(
+                group.onlyVisibleToSender
+                    ? "Only visible to you"
+                    : (group.readByMembers.isEmpty
+                        ? "Message sent"
+                        : "Message read by \(group.readByMembers.count) \(group.readByMembers.count == 1 ? "member" : "members")")
+            )
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepX) {
+            ForEach(Array(group.allMessages.enumerated()), id: \.element.messageId) { index, message in
+                messageGroup(index: index, message: message)
+            }
+
+            if group.showsTypingIndicator {
+                if group.isMultiTyper {
+                    multiTyperIndicator
+                } else {
+                    singleTyperIndicator
+                }
+            }
+        }
+        .id("message-group-container-\(group.id)")
+        .transition(
+            .asymmetric(
+                insertion: .identity,
+                removal: .opacity
+            )
+        )
+        .padding(.top, group.adjacentToFullBleedAbove ? (1.0 / displayScale) : DesignConstants.Spacing.step2x)
+        .padding(.bottom, group.adjacentToFullBleedBelow ? (1.0 / displayScale) : DesignConstants.Spacing.step2x)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: group)
+        .onAppear {
+            guard isAppearing, !hasAnimated else { return }
+            hasAnimated = true
+
+            if animates {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    isAppearing = false
+                }
+            } else {
+                withAnimation(.none) {
+                    isAppearing = false
+                }
+            }
+        }
+        .id("messages-group-\(group.id)")
+    }
+}
+
+#Preview("All Message Permutations") {
+    let alice = ConversationMember.mock(isCurrentUser: false, name: "Alice")
+    let me = ConversationMember.mock(isCurrentUser: true)
+    let reactions: [MessageReaction] = [
+        .mock(emoji: "❤️", sender: .mock(isCurrentUser: true)),
+        .mock(emoji: "😂", sender: .mock(isCurrentUser: false, name: "Bob")),
+    ]
+    let photoURL = "https://picsum.photos/400/300"
+    let photoAttachment = HydratedAttachment(key: photoURL, width: 400, height: 300)
+    let hiddenPhoto = HydratedAttachment(key: photoURL, isHiddenByOwner: true, width: 400, height: 300)
+
+    let groups: [MessagesGroup] = [
+        // -- Text messages --
+        MessagesGroup(
+            id: "text-incoming",
+            sender: alice,
+            messages: [
+                .message(Message.mock(text: "Standard text message", sender: alice), .existing),
+                .message(Message.mock(text: "With reactions", sender: alice, reactions: reactions), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+        MessagesGroup(
+            id: "text-outgoing",
+            sender: me,
+            messages: [
+                .message(Message.mock(text: "Standard text message", sender: me), .existing),
+                .message(Message.mock(text: "With reactions", sender: me, reactions: reactions), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Emoji messages --
+        MessagesGroup(
+            id: "emoji-incoming",
+            sender: alice,
+            messages: [
+                .message(Message.mock(text: "🔥", sender: alice), .existing),
+                .message(Message.mock(text: "🎉", sender: alice, reactions: reactions), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+        MessagesGroup(
+            id: "emoji-outgoing",
+            sender: me,
+            messages: [
+                .message(Message.mock(text: "❤️", sender: me), .existing),
+                .message(Message.mock(text: "🙌", sender: me, reactions: reactions), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Photo messages --
+        MessagesGroup(
+            id: "photo-incoming",
+            sender: alice,
+            messages: [
+                .message(Message.mock(content: .attachment(photoAttachment), sender: alice), .existing),
+                .message(Message.mock(content: .attachment(photoAttachment), sender: alice, reactions: reactions), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+        MessagesGroup(
+            id: "photo-outgoing",
+            sender: me,
+            messages: [
+                .message(Message.mock(content: .attachment(photoAttachment), sender: me), .existing),
+                .message(Message.mock(content: .attachment(photoAttachment), sender: me, reactions: reactions), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Hidden/blurred photos --
+        MessagesGroup(
+            id: "photo-hidden",
+            sender: alice,
+            messages: [
+                .message(Message.mock(content: .attachment(hiddenPhoto), sender: alice), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Link messages --
+        MessagesGroup(
+            id: "link-incoming",
+            sender: alice,
+            messages: [
+                .message(Message.mock(text: "Check out https://convos.org", sender: alice), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+        MessagesGroup(
+            id: "link-outgoing",
+            sender: me,
+            messages: [
+                .message(Message.mock(text: "Look at this https://github.com/xmtplabs/convos-ios", sender: me), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Invite messages --
+        MessagesGroup(
+            id: "invite-incoming",
+            sender: alice,
+            messages: [
+                .message(Message.mock(content: .invite(.mock), sender: alice), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+        MessagesGroup(
+            id: "invite-outgoing",
+            sender: me,
+            messages: [
+                .message(Message.mock(content: .invite(.mock), sender: me), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Text reply to text --
+        MessagesGroup(
+            id: "reply-text-to-text",
+            sender: alice,
+            messages: [
+                .reply(MessageReply.mock(
+                    text: "Totally agree!",
+                    sender: alice,
+                    parentText: "What do you think about the new design?",
+                    parentSender: me
+                ), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+        MessagesGroup(
+            id: "reply-text-to-text-out",
+            sender: me,
+            messages: [
+                .reply(MessageReply.mock(
+                    text: "Sounds good to me",
+                    sender: me,
+                    parentText: "Let's meet at 3pm tomorrow",
+                    parentSender: alice
+                ), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Text reply to photo --
+        MessagesGroup(
+            id: "reply-text-to-photo",
+            sender: alice,
+            messages: [
+                .reply(MessageReply.mock(
+                    text: "Great photo!",
+                    sender: alice,
+                    parentContent: .attachment(photoAttachment),
+                    parentSender: me
+                ), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+        MessagesGroup(
+            id: "reply-text-to-photo-out",
+            sender: me,
+            messages: [
+                .reply(MessageReply.mock(
+                    text: "Love this shot",
+                    sender: me,
+                    parentContent: .attachment(photoAttachment),
+                    parentSender: alice
+                ), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Text reply to emoji --
+        MessagesGroup(
+            id: "reply-text-to-emoji",
+            sender: alice,
+            messages: [
+                .reply(MessageReply.mock(
+                    text: "Haha same!",
+                    sender: alice,
+                    parentContent: .emoji("🔥"),
+                    parentSender: me
+                ), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+        MessagesGroup(
+            id: "reply-text-to-emoji-out",
+            sender: me,
+            messages: [
+                .reply(MessageReply.mock(
+                    text: "Right back at you",
+                    sender: me,
+                    parentContent: .emoji("❤️"),
+                    parentSender: alice
+                ), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Text reply to invite --
+        MessagesGroup(
+            id: "reply-text-to-invite",
+            sender: alice,
+            messages: [
+                .reply(MessageReply.mock(
+                    text: "I'll join!",
+                    sender: alice,
+                    parentContent: .invite(.mock),
+                    parentSender: me
+                ), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Photo reply to text --
+        MessagesGroup(
+            id: "reply-photo-to-text",
+            sender: alice,
+            messages: [
+                .reply(MessageReply.mock(
+                    sender: alice,
+                    replyContent: .attachment(photoAttachment),
+                    parentText: "Show me what you mean",
+                    parentSender: me
+                ), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+        MessagesGroup(
+            id: "reply-photo-to-text-out",
+            sender: me,
+            messages: [
+                .reply(MessageReply.mock(
+                    sender: me,
+                    replyContent: .attachment(photoAttachment),
+                    parentText: "Can you send a pic?",
+                    parentSender: alice
+                ), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Photo reply to photo --
+        MessagesGroup(
+            id: "reply-photo-to-photo",
+            sender: alice,
+            messages: [
+                .reply(MessageReply.mock(
+                    sender: alice,
+                    replyContent: .attachment(photoAttachment),
+                    parentContent: .attachment(photoAttachment),
+                    parentSender: me
+                ), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Photo reply to emoji --
+        MessagesGroup(
+            id: "reply-photo-to-emoji",
+            sender: me,
+            messages: [
+                .reply(MessageReply.mock(
+                    sender: me,
+                    replyContent: .attachment(photoAttachment),
+                    parentContent: .emoji("🙌"),
+                    parentSender: alice
+                ), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Photo reply to invite --
+        MessagesGroup(
+            id: "reply-photo-to-invite",
+            sender: me,
+            messages: [
+                .reply(MessageReply.mock(
+                    sender: me,
+                    replyContent: .attachment(photoAttachment),
+                    parentContent: .invite(.mock),
+                    parentSender: alice
+                ), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Reactions on replies --
+        MessagesGroup(
+            id: "reply-with-reactions",
+            sender: alice,
+            messages: [
+                .reply(MessageReply.mock(
+                    text: "Love it!",
+                    sender: alice,
+                    parentText: "Check out this idea",
+                    parentSender: me,
+                    reactions: reactions
+                ), .existing),
+                .reply(MessageReply.mock(
+                    sender: alice,
+                    replyContent: .attachment(photoAttachment),
+                    parentText: "Send me a photo",
+                    parentSender: me,
+                    reactions: reactions
+                ), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+
+        // -- Sent status --
+        MessagesGroup(
+            id: "sent-status",
+            sender: me,
+            messages: [
+                .message(Message.mock(text: "Last message with sent status", sender: me), .existing),
+            ],
+            isLastGroup: true,
+            isLastGroupSentByCurrentUser: true
+        ),
+
+        // -- Failed message --
+        MessagesGroup(
+            id: "failed-message",
+            sender: me,
+            messages: [
+                .message(Message.mock(text: "This message failed to send", sender: me, status: .failed), .existing),
+            ],
+            isLastGroup: false,
+            isLastGroupSentByCurrentUser: false
+        ),
+    ]
+
+    ScrollView {
+        VStack(spacing: 0) {
+            ForEach(groups) { group in
+                MessagesGroupView(
+                    group: group,
+                    conversationId: "preview-conversation",
+                    shouldBlurPhotos: true,
+                    onTapAvatar: { _ in },
+                    onTapInvite: { _ in },
+                    onTapReactions: { _ in },
+                    onReaction: { _, _ in },
+                    onToggleReaction: { _, _ in },
+                    onReply: { _ in },
+                    onPhotoRevealed: { _ in },
+                    onPhotoHidden: { _ in },
+                    onPhotoDimensionsLoaded: { _, _, _ in }
+                )
+            }
+        }
+    }
+    .background(.colorBackgroundSurfaceless)
+}

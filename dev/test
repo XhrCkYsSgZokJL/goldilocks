@@ -1,0 +1,107 @@
+#!/bin/bash
+set -eou pipefail
+
+# Usage: dev/test [--unit]
+#   --unit   Run only unit tests (no Docker required)
+#   (none)   Run all tests with local XMTP node (requires Docker)
+
+UNIT_TESTS=false
+
+for arg in "$@"; do
+    case $arg in
+        --unit)
+            UNIT_TESTS=true
+            ;;
+        --help|-h)
+            echo "Usage: dev/test [--unit]"
+            echo "  --unit   Run only unit tests (no Docker required)"
+            echo "  (none)   Run all tests with local XMTP node (requires Docker)"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $arg"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+# Filter out noisy XMTP Rust library logs (timestamps like 2024-01-01T...)
+filter_xmtp_logs() {
+    grep -v -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}T" || true
+}
+
+# Check for --unit flag to run only unit tests without Docker
+if [ "$UNIT_TESTS" = true ]; then
+    echo "🧪 Running ConvosCore unit tests (no Docker required)..."
+    echo ""
+
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    cd "$SCRIPT_DIR/../ConvosCore"
+
+    # Run only unit tests that don't require network
+    swift test --filter "Base64URL|DataHex|Compression|Custom Metadata" 2>&1 | filter_xmtp_logs
+    exit 0
+fi
+
+echo "🧪 Running ConvosCore integration tests with local XMTP node..."
+echo ""
+
+# Check if Docker is running
+if ! docker info > /dev/null 2>&1; then
+    echo "❌ Docker is not running. Please start Docker and try again."
+    exit 1
+fi
+
+# Start the XMTP node
+echo "🐳 Starting local XMTP node..."
+"$(dirname "$0")/up"
+
+# Wait for the node to be ready
+echo "⏳ Waiting for XMTP node to be ready..."
+max_attempts=30
+attempt=0
+
+while [ $attempt -lt $max_attempts ]; do
+    if nc -z localhost 5556 2>/dev/null; then
+        echo "✅ XMTP node is ready!"
+        sleep 3  # Give it a few more seconds to fully initialize
+        break
+    fi
+
+    attempt=$((attempt + 1))
+    echo "Attempt $attempt/$max_attempts - waiting for XMTP node..."
+    sleep 2
+done
+
+if [ $attempt -ge $max_attempts ]; then
+    echo "❌ XMTP node failed to start within the timeout"
+    "$(dirname "$0")/compose" logs
+    exit 1
+fi
+
+# Run the tests
+echo ""
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/../ConvosCore"
+
+# Build first to avoid "multiple producers" error when running tests in parallel
+echo "📦 Building tests..."
+if ! swift build --build-tests -q 2>&1 | filter_xmtp_logs; then
+    echo "❌ Build failed!"
+    cd "$SCRIPT_DIR"
+    ./compose down
+    exit 1
+fi
+
+echo "🏃 Running tests..."
+swift test --skip-build || true
+test_exit_code=$?
+
+# Stop the XMTP node
+echo ""
+echo "🛑 Stopping Docker containers..."
+cd "$SCRIPT_DIR"
+./compose down
+
+exit $test_exit_code

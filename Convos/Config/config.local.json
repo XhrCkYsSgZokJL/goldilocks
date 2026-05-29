@@ -1,0 +1,13 @@
+{
+  "environment": "local",
+  "backendUrl": "http://localhost:4000/api",
+  "xmtpNetwork": "local",
+  "bundleId": "org.convos.ios-local",
+  "appGroupIdentifier": "group.org.convos.ios-local",
+  "relyingPartyIdentifier": "local.goldilocksdigital.xyz",
+  "associatedDomains": [
+    "local.goldilocksdigital.xyz",
+    "app-local.goldilocksdigital.xyz"
+  ],
+  "appUrlScheme": "goldilocks-local"
+}

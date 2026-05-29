@@ -1,0 +1,217 @@
+id: "05"
+name: "Reactions"
+description: >
+  Verify that reactions can be added from both the app and CLI,
+  display correctly, support multiple emoji types, show sender
+  attribution, and can be removed.
+tags: [messaging, reactions, core]
+depends_on: ["02"]
+estimated_duration_s: 240
+
+prerequisites:
+  app_running: true
+  cli_initialized: true
+  shared_conversation: true
+  screen: conversation_detail
+
+state:
+  conversation_id: null
+  cli_text_msg_id: null
+  cli_emoji_msg_id: null
+  cli_attachment_msg_id: null
+  app_text_msg_id: null
+
+setup:
+  - action: ensure_shared_conversation
+    save:
+      conversation_id: run_state.shared_conversation_id
+  - action: navigate_to_conversation
+    args: { id: "$conversation_id" }
+  - action: cli_send_text
+    args: { conversation: "$conversation_id", text: "React to this text" }
+    save: cli_text_msg_id
+  - action: cli_send_text
+    args: { conversation: "$conversation_id", text: "🚀" }
+    save: cli_emoji_msg_id
+  - action: download_test_photo
+    args: { url: "https://picsum.photos/850/650", path: "/tmp/test-photo.jpg" }
+  - action: cli_send_attachment
+    args: { conversation: "$conversation_id", path: "/tmp/test-photo.jpg" }
+    save: cli_attachment_msg_id
+    note: "Save the message ID from CLI output for reacting to the attachment later"
+  - action: app_send_text
+    args: { text: "React to this too" }
+    save: app_text_msg_id
+  - action: wait_for_element
+    args: { label_contains: "React to this too", timeout: 15 }
+
+steps:
+  - id: react_cli_text
+    name: "CLI reaction on text message appears in app"
+    actions:
+      - cli_send_reaction:
+          conversation: "$conversation_id"
+          message: "$cli_text_msg_id"
+          action: "add"
+          emoji: "👍"
+      - wait_for_element: { label_contains: "👍", timeout: 15 }
+    verify:
+      - element_exists: { label_contains: "👍" }
+    criteria: cli_reaction_text_visible
+
+  - id: react_cli_emoji
+    name: "CLI reaction on emoji message appears in app"
+    actions:
+      - cli_send_reaction:
+          conversation: "$conversation_id"
+          message: "$cli_emoji_msg_id"
+          action: "add"
+          emoji: "❤️"
+      - wait_for_element: { label_contains: "❤️", timeout: 15 }
+    verify:
+      - element_exists: { label_contains: "❤️" }
+    criteria: cli_reaction_emoji_visible
+
+  - id: react_cli_attachment
+    name: "CLI reaction on attachment appears in app"
+    actions:
+      - cli_send_reaction:
+          conversation: "$conversation_id"
+          message: "$cli_attachment_msg_id"
+          action: "add"
+          emoji: "🔥"
+      - wait_for_element: { label_contains: "🔥", timeout: 15 }
+    verify:
+      - element_exists: { label_contains: "🔥" }
+    criteria: cli_reaction_attachment_visible
+    note: "Attachment renders as blurred image with 'Tap pic to reveal' label"
+
+  - id: react_app_own
+    name: "Long-press own message to add reaction"
+    actions:
+      - long_press: { label_contains: "React to this too", duration: 1.5 }
+      - wait_for_element: { label_contains: "❤️", timeout: 5 }
+      - tap_reaction_picker: { emoji: "❤️" }
+      - wait_for_element: { label_contains: "reaction", timeout: 10 }
+    verify:
+      - element_near: { label: "❤️", near_label: "React to this too" }
+    criteria: app_react_own_message
+    note: >
+      Reacting from the app requires long-press to open the reaction picker,
+      then tapping the desired emoji. The reaction picker shows ❤️ 👍 👎 😂 😮 +.
+      Wait for the "Reply" button to confirm the context menu appeared, then
+      use sim_tap_id("❤️") to find and tap the picker button by label. Do not
+      guess coordinates — the picker position varies based on message location.
+
+  - id: react_app_cli_msg
+    name: "Long-press CLI message to add reaction"
+    actions:
+      - long_press: { label_contains: "React to this text", duration: 1.5 }
+      - wait_for_element: { label_contains: "❤️", timeout: 5 }
+      - tap_reaction_picker: { emoji: "❤️" }
+      - wait_for_element: { label_contains: "reaction", timeout: 10 }
+    verify:
+      - element_near: { label: "❤️", near_label: "React to this text" }
+    criteria: app_react_cli_message
+    note: "Same long-press → picker flow as reacting to own messages"
+
+  - id: multiple_reactions
+    name: "Multiple reactions display on one message"
+    actions:
+      - cli_send_reaction:
+          conversation: "$conversation_id"
+          message: "$cli_text_msg_id"
+          action: "add"
+          emoji: "😂"
+      - cli_send_reaction:
+          conversation: "$conversation_id"
+          message: "$cli_text_msg_id"
+          action: "add"
+          emoji: "🔥"
+      - wait_for_element: { label_contains: "reactions", timeout: 15 }
+    verify:
+      - element_exists: { label_contains: "reactions" }
+    criteria: multiple_reactions_visible
+    note: >
+      The reaction count label uses the format "N reactions: emoji1, emoji2, emoji3".
+      Verify by checking for the plural "reactions" in the label.
+
+  - id: reactions_drawer
+    name: "Reactions drawer opens and shows attribution"
+    actions:
+      - tap: { label_contains: "reactions", near_label: "React to this text" }
+      - wait_for_element: { label: "Reactions", timeout: 5 }
+    verify:
+      - element_exists: { label: "Reactions" }
+    criteria: reactions_drawer_opens
+    note: "Tap the grouped reaction indicators below the message"
+
+  - id: reactions_attribution
+    name: "Reactions drawer shows sender names"
+    actions:
+      - find_elements: { pattern: "CLI Joiner" }
+    verify:
+      - element_exists: { label_contains: "CLI Joiner" }
+    criteria: reactions_show_attribution
+    note: >
+      The drawer shows "CLI Joiner reacted with 🔥" etc. The label
+      preserves the exact --profile-name casing from the CLI join.
+
+  - id: dismiss_drawer
+    name: "Dismiss reactions drawer"
+    actions:
+      - tap_outside_drawer: { y: 300 }
+      - wait_for_element: { id: "message-text-field", timeout: 5 }
+    note: "Tap outside the drawer to dismiss; avoid Escape key (navigates back)"
+
+  - id: remove_reaction
+    name: "Removing a reaction updates UI"
+    actions:
+      - cli_send_reaction:
+          conversation: "$conversation_id"
+          message: "$cli_text_msg_id"
+          action: "remove"
+          emoji: "👍"
+      - wait_for_element: { label_contains: "reactions", timeout: 15 }
+    verify:
+      - element_not_contains: { label_contains: "👍", near_label: "React to this text" }
+    criteria: remove_reaction_updates_ui
+    note: >
+      Verify via CLI remove (more reliable than toggle via app long-press).
+      The reaction count should decrease and the removed emoji should
+      no longer appear in the grouped label.
+
+  - id: remove_reaction_cli
+    name: "Removed reaction reflected in UI"
+    actions:
+      - find_elements: { label_contains: "reactions" }
+    verify:
+      - element_not_contains: { label: "👍", near_label: "React to this text" }
+    criteria: remove_reaction_in_cli
+
+teardown:
+  - action: explode_conversation
+    args: { id: "$conversation_id" }
+    optional: true
+
+criteria:
+  cli_reaction_text_visible:
+    description: "CLI reaction on a text message appears in the app"
+  cli_reaction_emoji_visible:
+    description: "CLI reaction on an emoji message appears in the app"
+  cli_reaction_attachment_visible:
+    description: "CLI reaction on an attachment message appears in the app"
+  app_react_own_message:
+    description: "Long-press on own message opens reaction picker and adds reaction"
+  app_react_cli_message:
+    description: "Long-press on CLI message opens reaction picker and adds reaction"
+  multiple_reactions_visible:
+    description: "Multiple reactions display correctly on a single message"
+  reactions_drawer_opens:
+    description: "Reactions drawer opens when tapping reaction count"
+  reactions_show_attribution:
+    description: "Reactions drawer shows sender names"
+  remove_reaction_updates_ui:
+    description: "Removing a reaction updates the app UI"
+  remove_reaction_in_cli:
+    description: "Removing a reaction is reflected in the reaction display"

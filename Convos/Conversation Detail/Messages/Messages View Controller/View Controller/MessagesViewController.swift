@@ -1,0 +1,1237 @@
+import Combine
+import ConvosCore
+import DifferenceKit
+import Foundation
+import Observation
+import QuickLook
+import SwiftUI
+import UIKit
+import WebKit
+
+/// A gesture recognizer that fires immediately on touch without interfering with other gestures
+private class ImmediateTouchGestureRecognizer: UIGestureRecognizer {
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesBegan(touches, with: event)
+        state = .recognized
+    }
+}
+
+/// Captures horizontal swipes on the collection view to prevent
+/// NavigationSplitView's back gesture from triggering mid-screen.
+private class HorizontalBlockerPanGestureRecognizer: UIPanGestureRecognizer {}
+
+final class MessagesViewController: UIViewController {
+    struct MessagesState {
+        let conversation: Conversation
+        let messages: [MessagesListItemType]
+        let invite: Invite
+        let hasLoadedAllMessages: Bool
+    }
+
+    private enum ReactionTypes {
+        case delayedUpdate
+    }
+
+    private enum InterfaceActions {
+        case changingKeyboardFrame
+        case changingContentInsets
+        case changingFrameSize
+        case sendingMessage
+        case scrollingToTop
+        case scrollingToBottom
+        case updatingCollectionInIsolation
+        case determiningBottomBarHeight
+    }
+
+    private enum ControllerActions {
+        case loadingInitialMessages
+        case loadingPreviousMessages
+        case updatingCollection
+    }
+
+    // MARK: - Properties
+
+    private var currentInterfaceActions: SetActor<Set<InterfaceActions>, ReactionTypes> = SetActor()
+    private var currentControllerActions: SetActor<Set<ControllerActions>, ReactionTypes> = SetActor()
+
+    internal let collectionView: UICollectionView
+    private var messagesLayout: MessagesCollectionLayout = MessagesCollectionLayout()
+
+    private let dataSource: MessagesCollectionDataSource
+
+    private var animator: ManualAnimator?
+
+    private var isUserInitiatedScrolling: Bool {
+        collectionView.isDragging || collectionView.isDecelerating
+    }
+
+    private var isFirstStateUpdate: Bool = true
+    private var hasPendingInterrupt: Bool = false
+    private var previousLastMessageId: String?
+    private var previousFocusState: MessagesViewInputFocus?
+    private var pendingScrollToBottomAfterKeyboard: Bool = false
+
+    /// Whether the user is near the bottom of the scroll view (within one screen height)
+    private var isNearBottom: Bool {
+        let contentHeight = collectionView.contentSize.height
+        let scrollViewHeight = collectionView.frame.height
+        let currentOffset = collectionView.contentOffset.y
+        let bottomInset = collectionView.adjustedContentInset.bottom
+        let distanceFromBottom = contentHeight - (currentOffset + scrollViewHeight - bottomInset)
+        return distanceFromBottom <= scrollViewHeight
+    }
+
+    // MARK: - Public
+
+    var state: MessagesState? {
+        didSet {
+            guard let state = state else {
+                processUpdates(
+                    for: .empty(),
+                    with: [],
+                    invite: .empty,
+                    hasLoadedAllMessages: false,
+                    animated: true,
+                    requiresIsolatedProcess: false) {}
+                return
+            }
+
+            let animated = oldValue?.conversation.id == state.conversation.id
+            dataSource.conversationId = state.conversation.id
+            processUpdates(
+                for: state.conversation,
+                with: state.messages,
+                invite: state.invite,
+                hasLoadedAllMessages: state.hasLoadedAllMessages,
+                animated: animated,
+                requiresIsolatedProcess: true) { [currentControllerActions] in
+                    let currentLastMessageId = state.messages.lastMessageId
+                    let isNewMessage = currentLastMessageId != self.previousLastMessageId
+                    self.previousLastMessageId = currentLastMessageId
+
+                    let isInitialLoad = currentControllerActions.options.contains(.loadingInitialMessages)
+                    let nearBottom = self.isNearBottom
+                    let userScrolling = self.isUserInitiatedScrolling
+                    if isInitialLoad {
+                        currentControllerActions.options.remove(.loadingInitialMessages)
+                        self.collectionView.layoutIfNeeded()
+                        self.scrollToBottom(animated: false)
+                        self.startObservingFocus()
+                    } else if isNewMessage {
+                        if let lastGroup = state.messages.last, lastGroup.isMessagesGroupSentByCurrentUser {
+                            self.scrollToBottom()
+                        } else if nearBottom && !userScrolling {
+                            self.scrollToBottom()
+                        }
+                    }
+                }
+            isFirstStateUpdate = false
+        }
+    }
+
+    var bottomBarHeight: CGFloat = 0.0 {
+        didSet {
+            if bottomBarHeight != oldValue {
+                updateBottomInsetForBottomBarHeight()
+            }
+
+            if bottomBarHeight > 0.0 {
+                currentInterfaceActions.options.remove(.determiningBottomBarHeight)
+            }
+        }
+    }
+
+    private var lastKeyboardFrameChange: KeyboardInfo?
+
+    var onUserInteraction: (() -> Void)?
+
+    var focusCoordinator: FocusCoordinator? {
+        didSet {
+            guard focusCoordinator != nil, oldValue == nil else { return }
+            if !isFirstStateUpdate {
+                startObservingFocus()
+            }
+        }
+    }
+
+    /// Call this when user taps send to immediately scroll to bottom before message appears
+    func scrollToBottomForSend() {
+        scrollToBottom()
+    }
+
+    // MARK: - Initialization
+
+    init() {
+        self.dataSource = MessagesCollectionViewDataSource()
+        self.collectionView = UICollectionView(
+            frame: .zero,
+            collectionViewLayout: messagesLayout
+        )
+        currentControllerActions.options.insert(.loadingInitialMessages)
+        currentInterfaceActions.options.insert(.determiningBottomBarHeight)
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    var onTapInvite: ((MessageInvite) -> Void)?
+    var onTapAvatar: ((ConversationMember) -> Void)?
+    var onLoadPreviousMessages: (() -> Void)?
+    var onReaction: ((String, String) -> Void)?
+    var onToggleReaction: ((String, String) -> Void)?
+    var onTapReactions: ((AnyMessage) -> Void)?
+    var onReply: ((AnyMessage) -> Void)?
+    var contextMenuState: MessageContextMenuState = .init() {
+        didSet { dataSource.contextMenuState = contextMenuState }
+    }
+    var onBottomOverscrollChanged: ((CGFloat) -> Void)?
+    var onBottomOverscrollReleased: ((CGFloat) -> Void)?
+    private var lastBottomOverscroll: CGFloat = 0.0
+
+    var onPhotoRevealed: ((String) -> Void)?
+    var onPhotoHidden: ((String) -> Void)?
+    var onPhotoDimensionsLoaded: ((String, Int, Int) -> Void)?
+    var onAgentOutOfCredits: (() -> Void)?
+    var onTapUpdateMember: ((ConversationMember) -> Void)?
+    var onRetryMessage: ((AnyMessage) -> Void)?
+    var onDeleteMessage: ((AnyMessage) -> Void)?
+    var onRetryAssistantJoin: (() -> Void)?
+    var onCopyInviteLink: (() -> Void)?
+    var onConvoCode: (() -> Void)?
+    var onInviteAssistant: (() -> Void)?
+    var onRetryTranscript: ((VoiceMemoTranscriptListItem) -> Void)?
+
+    var hasAssistant: Bool = false {
+        didSet { dataSource.hasAssistant = hasAssistant }
+    }
+    var isAssistantJoinPending: Bool = false {
+        didSet { dataSource.isAssistantJoinPending = isAssistantJoinPending }
+    }
+    var isAssistantEnabled: Bool = false {
+        didSet { dataSource.isAssistantEnabled = isAssistantEnabled }
+    }
+    var shouldBlurPhotos: Bool = true {
+        didSet {
+            guard oldValue != shouldBlurPhotos else { return }
+            dataSource.shouldBlurPhotos = shouldBlurPhotos
+            collectionView.reloadData()
+        }
+    }
+
+    private var currentReactionMessageId: String?
+    private var reactionCancellable: AnyCancellable?
+
+    deinit {
+        KeyboardListener.shared.remove(delegate: self)
+    }
+
+    @available(*, unavailable, message: "Use init(messageController:) instead")
+    override convenience init(nibName nibNameOrNil: String?, bundle nibBundleOrNil: Bundle?) {
+        fatalError()
+    }
+
+    @available(*, unavailable, message: "Use init(messageController:) instead")
+    required init?(coder: NSCoder) {
+        fatalError()
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        setupCollectionView()
+        setupUI()
+    }
+
+    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        handleViewTransition(to: size, with: coordinator)
+        super.viewWillTransition(to: size, with: coordinator)
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // Drop the flag so an interrupted keyboard transition doesn't surface a
+        // stale scroll-to-bottom on the next appearance.
+        pendingScrollToBottomAfterKeyboard = false
+    }
+
+    // MARK: - Private Setup Methods
+
+    private func setupUI() {
+        view.backgroundColor = .clear
+        KeyboardListener.shared.add(delegate: self)
+    }
+
+    private func startObservingFocus() {
+        guard let coordinator = focusCoordinator else { return }
+
+        withObservationTracking {
+            _ = coordinator.currentFocus
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.handleFocusChange()
+            }
+        }
+    }
+
+    private func handleFocusChange() {
+        guard let coordinator = focusCoordinator else { return }
+
+        let oldFocus = previousFocusState
+        let newFocus = coordinator.currentFocus
+        previousFocusState = newFocus
+
+        if oldFocus == nil && newFocus == .message {
+            scrollToBottom()
+        }
+
+        startObservingFocus()
+    }
+
+    /// Called from MessagesView via the representable when SwiftUI's @FocusState
+    /// transitions into the composer. The synchronous scrollToBottom typically no-ops
+    /// because the keyboard hasn't yet expanded the bottom inset; setting the pending
+    /// flag lets keyboardDidChangeFrame re-anchor once the keyboard frame settles.
+    func messageInputDidBecomeFocused() {
+        pendingScrollToBottomAfterKeyboard = true
+        scrollToBottom()
+    }
+
+    private func setupCollectionView() {
+        collectionView.frame = view.bounds
+        configureMessagesLayout()
+        setupCollectionViewInstance()
+        configureCollectionViewConstraints()
+        configureCollectionViewBehavior()
+    }
+
+    private func configureMessagesLayout() {
+        messagesLayout.settings.interItemSpacing = 0.0
+        messagesLayout.settings.interSectionSpacing = 0.0
+        messagesLayout.settings.additionalInsets = UIEdgeInsets(
+            top: 0.0,
+            left: 0.0,
+            bottom: 0.0,
+            right: 0.0
+        )
+        messagesLayout.keepContentOffsetAtBottomOnBatchUpdates = true
+        messagesLayout.processOnlyVisibleItemsOnAnimatedBatchUpdates = true
+    }
+
+    private func setupCollectionViewInstance() {
+        view.addSubview(collectionView)
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        collectionView.backgroundColor = .clear
+        collectionView.showsHorizontalScrollIndicator = false
+    }
+
+    private func configureCollectionViewConstraints() {
+        NSLayoutConstraint.activate([
+            collectionView.topAnchor.constraint(equalTo: view.topAnchor),
+            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        ])
+    }
+
+    private func configureCollectionViewBehavior() {
+        collectionView.alwaysBounceVertical = true
+        collectionView.dataSource = dataSource
+        collectionView.delegate = self
+        messagesLayout.delegate = dataSource
+        collectionView.keyboardDismissMode = .interactive
+
+        collectionView.contentInset = .init(top: 0.0, left: 0.0, bottom: 0.0, right: 0.0)
+        collectionView.scrollIndicatorInsets = collectionView.contentInset
+        collectionView.contentInsetAdjustmentBehavior = .always
+        collectionView.automaticallyAdjustsScrollIndicatorInsets = true
+        collectionView.selfSizingInvalidation = .enabled
+        messagesLayout.supportSelfSizingInvalidation = true
+
+        dataSource.prepare(with: collectionView)
+
+        dataSource.onTapAvatar = { [weak self] sender in
+            self?.onTapAvatar?(sender)
+        }
+        dataSource.onTapInvite = { [weak self] invite in
+            guard let self = self else { return }
+            self.onTapInvite?(invite)
+        }
+        dataSource.onTapReactions = { [weak self] message in
+            guard let self = self else { return }
+            self.onTapReactions?(message)
+        }
+        dataSource.onReaction = { [weak self] emoji, messageId in
+            guard let self = self else { return }
+            self.onReaction?(emoji, messageId)
+        }
+        dataSource.onToggleReaction = { [weak self] emoji, messageId in
+            guard let self = self else { return }
+            self.onToggleReaction?(emoji, messageId)
+        }
+        dataSource.onReply = { [weak self] message in
+            guard let self = self else { return }
+            self.onReply?(message)
+        }
+        dataSource.onPhotoRevealed = { [weak self] attachmentKey in
+            self?.onPhotoRevealed?(attachmentKey)
+        }
+        dataSource.onPhotoHidden = { [weak self] attachmentKey in
+            self?.onPhotoHidden?(attachmentKey)
+        }
+        dataSource.onPhotoDimensionsLoaded = { [weak self] attachmentKey, width, height in
+            self?.onPhotoDimensionsLoaded?(attachmentKey, width, height)
+        }
+        dataSource.onAgentOutOfCredits = { [weak self] in
+            self?.onAgentOutOfCredits?()
+        }
+        dataSource.onTapUpdateMember = { [weak self] member in
+            self?.onTapUpdateMember?(member)
+        }
+        dataSource.onOpenFile = { [weak self] attachment in
+            self?.openFileAttachment(attachment)
+        }
+        dataSource.onRetryMessage = { [weak self] message in
+            self?.onRetryMessage?(message)
+        }
+        dataSource.onDeleteMessage = { [weak self] message in
+            self?.onDeleteMessage?(message)
+        }
+        dataSource.onRetryAssistantJoin = { [weak self] in
+            self?.onRetryAssistantJoin?()
+        }
+        dataSource.onCopyInviteLink = { [weak self] in
+            self?.onCopyInviteLink?()
+        }
+        dataSource.onConvoCode = { [weak self] in
+            self?.onConvoCode?()
+        }
+        dataSource.onInviteAssistant = { [weak self] in
+            self?.onInviteAssistant?()
+        }
+        dataSource.onRetryTranscript = { [weak self] item in
+            self?.onRetryTranscript?(item)
+        }
+
+        setupImmediateTouchGesture()
+        setupHorizontalBlockerGesture()
+    }
+
+    private func setupImmediateTouchGesture() {
+        let gesture = ImmediateTouchGestureRecognizer(target: self, action: #selector(handleImmediateTouch))
+        gesture.cancelsTouchesInView = false
+        gesture.delaysTouchesBegan = false
+        gesture.delaysTouchesEnded = false
+        gesture.delegate = self
+        collectionView.addGestureRecognizer(gesture)
+    }
+
+    private func setupHorizontalBlockerGesture() {
+        let blocker = HorizontalBlockerPanGestureRecognizer(target: self, action: nil)
+        blocker.delegate = self
+        collectionView.addGestureRecognizer(blocker)
+    }
+
+    @objc private func handleImmediateTouch(_ gesture: UIGestureRecognizer) {
+        onUserInteraction?()
+    }
+
+    private func handleViewTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        guard isViewLoaded else { return }
+
+        currentInterfaceActions.options.insert(.changingFrameSize)
+        let positionSnapshot = messagesLayout.getContentOffsetSnapshot(from: .bottom)
+        collectionView.collectionViewLayout.invalidateLayout()
+        collectionView.setNeedsLayout()
+
+        coordinator.animate(alongsideTransition: { _ in
+            self.collectionView.performBatchUpdates(nil)
+        }, completion: { _ in
+            if let positionSnapshot,
+               !self.isUserInitiatedScrolling {
+                self.messagesLayout.restoreContentOffset(with: positionSnapshot)
+            }
+            self.collectionView.collectionViewLayout.invalidateLayout()
+            self.currentInterfaceActions.options.remove(.changingFrameSize)
+        })
+    }
+
+    // MARK: - Scrolling Methods
+
+    private func loadPreviousMessages() {
+        guard let onLoadPreviousMessages = onLoadPreviousMessages else { return }
+        // Don't set the loading flag if there are no more messages to load —
+        // the repository will no-op and we'd never clear the flag.
+        guard state?.hasLoadedAllMessages == false else { return }
+        currentControllerActions.options.insert(.loadingPreviousMessages)
+        onLoadPreviousMessages()
+    }
+
+    func scrollToBottom(animated: Bool = true, completion: (() -> Void)? = nil) {
+        collectionView.setContentOffset(collectionView.contentOffset, animated: false)
+
+        let contentOffsetAtBottom = CGPoint(
+            x: collectionView.contentOffset.x,
+            y: (messagesLayout.collectionViewContentSize.height -
+                collectionView.frame.height +
+                collectionView.adjustedContentInset.bottom)
+        )
+
+        guard contentOffsetAtBottom.y > 0,
+              abs(contentOffsetAtBottom.y - collectionView.contentOffset.y) > 0.5 else {
+            completion?()
+            return
+        }
+
+        if !animated {
+            collectionView.contentOffset = contentOffsetAtBottom
+            completion?()
+            return
+        }
+
+        performScrollToBottom(from: contentOffsetAtBottom,
+                              initialOffset: collectionView.contentOffset.y,
+                              completion: completion)
+    }
+
+    private func performScrollToBottom(from contentOffsetAtBottom: CGPoint,
+                                       initialOffset: CGFloat,
+                                       completion: (() -> Void)?) {
+        let delta: CGFloat = contentOffsetAtBottom.y - initialOffset
+
+        if abs(delta) > messagesLayout.visibleBounds.height {
+            performLongScrollToBottom(initialOffset: initialOffset, delta: delta, completion: completion)
+        } else {
+            performShortScrollToBottom(to: contentOffsetAtBottom, completion: completion)
+        }
+    }
+
+    private func performLongScrollToBottom(initialOffset: CGFloat, delta: CGFloat, completion: (() -> Void)?) {
+        animator = ManualAnimator()
+        animator?.animate(duration: TimeInterval(0.25), curve: .easeInOut) { [weak self] percentage in
+            guard let self else { return }
+
+            collectionView.contentOffset = CGPoint(x: collectionView.contentOffset.x,
+                                                   y: initialOffset + (delta * percentage))
+
+            if percentage == 1.0 {
+                animator = nil
+                currentInterfaceActions.options.remove(.scrollingToBottom)
+                completion?()
+            }
+        }
+    }
+
+    private func performShortScrollToBottom(to contentOffsetAtBottom: CGPoint, completion: (() -> Void)?) {
+        currentInterfaceActions.options.insert(.scrollingToBottom)
+        UIView.animate(withDuration: 0.25, animations: { [weak self] in
+            self?.collectionView.setContentOffset(contentOffsetAtBottom, animated: true)
+        }, completion: { [weak self] _ in
+            self?.currentInterfaceActions.options.remove(.scrollingToBottom)
+            completion?()
+        })
+    }
+}
+
+// MARK: - MessagesControllerDelegate
+
+extension MessagesViewController {
+    private func processUpdates(for conversation: Conversation,
+                                with messages: [MessagesListItemType],
+                                invite: Invite,
+                                hasLoadedAllMessages: Bool,
+                                animated: Bool = true,
+                                requiresIsolatedProcess: Bool,
+                                completion: (() -> Void)? = nil) {
+        // Clear the pagination loading flag whenever we receive a batch of messages.
+        // Previously this only cleared on messages with .paginated origin, but if the
+        // repository decides there are no more messages to load (totalCount <= limit),
+        // it returns without triggering a new publisher emission, leaving the flag
+        // stuck forever. Clearing on any update is safe because fetchPrevious has its
+        // own concurrency guard, and hasMoreMessages gates further pagination requests.
+        if currentControllerActions.options.contains(.loadingPreviousMessages) {
+            currentControllerActions.options.remove(.loadingPreviousMessages)
+        }
+
+        var cells: [MessagesListItemType] = messages
+
+        // Add invite or conversation info at the beginning if all messages are loaded
+        if hasLoadedAllMessages, !conversation.isDraft {
+            if conversation.creator.isCurrentUser && !conversation.isLocked && !conversation.isFull {
+                cells.insert(.invite(invite), at: 0)
+            } else {
+                cells.insert(.conversationInfo(conversation), at: 0)
+                if let agent = conversation.members.first(where: \.isAgent) {
+                    let inviterName: String? = agent.invitedBy.map { inviter in
+                        let inviterIsMe = conversation.members.contains {
+                            $0.isCurrentUser && $0.profile.inboxId == inviter.inboxId
+                        }
+                        return inviterIsMe ? "You" : inviter.displayName
+                    }
+                    cells.insert(.assistantPresentInfo(agent: agent, inviterName: inviterName), at: 1)
+                }
+            }
+        }
+
+        if let agentMember = conversation.members.first(where: { $0.isAgent && $0.profile.isOutOfCredits }) {
+            let agentInboxId = agentMember.profile.inboxId
+            if let lastAgentIndex = cells.lastIndex(where: {
+                if case .messages(let group) = $0 { return group.sender.profile.inboxId == agentInboxId }
+                return false
+            }) {
+                cells.insert(.agentOutOfCredits(agentMember.profile), at: lastAgentIndex + 1)
+            } else {
+                cells.append(.agentOutOfCredits(agentMember.profile))
+            }
+        }
+
+        let sections: [MessagesCollectionSection] = [
+            .init(id: 0, title: "", cells: cells)
+        ]
+
+        guard isViewLoaded else {
+            dataSource.sections = sections
+            completion?()
+            return
+        }
+
+        guard currentInterfaceActions.options.isEmpty else {
+            scheduleDelayedUpdate(for: conversation,
+                                  with: messages,
+                                  invite: invite,
+                                  hasLoadedAllMessages: hasLoadedAllMessages,
+                                  animated: animated,
+                                  requiresIsolatedProcess: requiresIsolatedProcess,
+                                  completion: completion)
+            return
+        }
+
+        performUpdate(with: sections,
+                      animated: animated,
+                      requiresIsolatedProcess: requiresIsolatedProcess,
+                      completion: completion)
+    }
+
+    // swiftlint:disable:next function_parameter_count
+    private func scheduleDelayedUpdate(for conversation: Conversation,
+                                       with messages: [MessagesListItemType],
+                                       invite: Invite,
+                                       hasLoadedAllMessages: Bool,
+                                       animated: Bool,
+                                       requiresIsolatedProcess: Bool,
+                                       completion: (() -> Void)?) {
+        currentInterfaceActions.removeAllReactions(.delayedUpdate)
+        let reaction = SetActor<Set<InterfaceActions>, ReactionTypes>.Reaction(
+            type: .delayedUpdate,
+            action: .onEmpty,
+            executionType: .once,
+            actionBlock: { [weak self] in
+                guard let self else { return }
+                processUpdates(for: conversation,
+                               with: messages,
+                               invite: invite,
+                               hasLoadedAllMessages: hasLoadedAllMessages,
+                               animated: animated,
+                               requiresIsolatedProcess: requiresIsolatedProcess,
+                               completion: completion)
+            })
+        currentInterfaceActions.add(reaction: reaction)
+    }
+
+    private func performUpdate(with sections: [MessagesCollectionSection],
+                               animated: Bool,
+                               requiresIsolatedProcess: Bool,
+                               completion: (() -> Void)?) {
+        let process = {
+            let changeSet = StagedChangeset(source: self.dataSource.sections, target: sections).flattenIfPossible()
+
+            guard !changeSet.isEmpty else {
+                completion?()
+                return
+            }
+
+            if requiresIsolatedProcess {
+                self.messagesLayout.processOnlyVisibleItemsOnAnimatedBatchUpdates = true
+                self.currentInterfaceActions.options.insert(.updatingCollectionInIsolation)
+            }
+
+            self.currentControllerActions.options.insert(.updatingCollection)
+            self.collectionView.reload(
+                using: changeSet,
+                interrupt: { changeSet in
+                    !changeSet.sectionInserted.isEmpty
+                },
+                onInterruptedReload: {
+                    let positionSnapshot = MessagesLayoutPositionSnapshot(
+                        indexPath: IndexPath(item: 0, section: sections.count - 1),
+                        kind: .footer,
+                        edge: .bottom
+                    )
+                    self.collectionView.reloadData()
+                    self.messagesLayout.restoreContentOffset(with: positionSnapshot)
+                },
+                completion: { _ in
+                    DispatchQueue.main.async {
+                        self.messagesLayout.processOnlyVisibleItemsOnAnimatedBatchUpdates = false
+                        if requiresIsolatedProcess {
+                            self.currentInterfaceActions.options.remove(.updatingCollectionInIsolation)
+                        }
+                        completion?()
+                        self.currentControllerActions.options.remove(.updatingCollection)
+                    }
+                },
+                setData: { data in
+                    self.dataSource.sections = data
+                }
+            )
+        }
+
+        if animated {
+            process()
+        } else {
+            UIView.performWithoutAnimation {
+                process()
+            }
+        }
+    }
+}
+
+// MARK: - UIScrollViewDelegate & UICollectionViewDelegate
+
+extension MessagesViewController: UIScrollViewDelegate, UICollectionViewDelegate {
+    func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+        guard scrollView.contentSize.height > 0,
+              !currentInterfaceActions.options.contains(.scrollingToTop),
+              !currentInterfaceActions.options.contains(.scrollingToBottom) else {
+            return false
+        }
+
+        currentInterfaceActions.options.insert(.scrollingToTop)
+        return true
+    }
+
+    func scrollViewDidScrollToTop(_ scrollView: UIScrollView) {
+        guard !currentControllerActions.options.contains(.loadingInitialMessages),
+              !currentControllerActions.options.contains(.loadingPreviousMessages) else {
+            return
+        }
+        currentInterfaceActions.options.remove(.scrollingToTop)
+        loadPreviousMessages()
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        handleScrollViewDidScroll(scrollView)
+    }
+
+    private func handleScrollViewDidScroll(_ scrollView: UIScrollView) {
+        if currentControllerActions.options.contains(.updatingCollection), collectionView.isDragging {
+            interruptCurrentUpdateAnimation()
+        }
+
+        reportBottomOverscroll(scrollView)
+
+        guard !currentControllerActions.options.contains(.loadingInitialMessages),
+              !currentControllerActions.options.contains(.loadingPreviousMessages),
+              !currentInterfaceActions.options.contains(.scrollingToTop),
+              !currentInterfaceActions.options.contains(.scrollingToBottom) else {
+            return
+        }
+
+        if scrollView.contentOffset.y <= -scrollView.adjustedContentInset.top {
+            loadPreviousMessages()
+        }
+    }
+
+    private func reportBottomOverscroll(_ scrollView: UIScrollView) {
+        let bottomInset = scrollView.adjustedContentInset.bottom
+        let topInset = scrollView.adjustedContentInset.top
+        let contentHeight = scrollView.contentSize.height
+        let frameHeight = scrollView.frame.height
+        let minOffset = -topInset
+        let maxOffset = max(minOffset, contentHeight - frameHeight + bottomInset)
+        let bottomOverscroll = max(0, scrollView.contentOffset.y - maxOffset)
+        if bottomOverscroll > 0, scrollView.isDragging {
+            lastBottomOverscroll = bottomOverscroll
+            onBottomOverscrollChanged?(bottomOverscroll)
+        } else {
+            lastBottomOverscroll = 0.0
+            onBottomOverscrollChanged?(0.0)
+        }
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate _: Bool) {
+        if lastBottomOverscroll > 0 {
+            onBottomOverscrollReleased?(lastBottomOverscroll)
+            lastBottomOverscroll = 0.0
+        }
+    }
+
+    private func interruptCurrentUpdateAnimation() {
+        guard !hasPendingInterrupt else { return }
+        hasPendingInterrupt = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.hasPendingInterrupt = false
+            UIView.performWithoutAnimation {
+                self.collectionView.performBatchUpdates({}, completion: { _ in
+                    let context = MessagesLayoutInvalidationContext()
+                    context.invalidateLayoutMetrics = false
+                    self.collectionView.collectionViewLayout.invalidateLayout(with: context)
+                })
+            }
+        }
+    }
+
+    func applyDeferredBottomInset() {
+        let targetInset: CGFloat
+        if let lastKeyboardFrameChange {
+            targetInset = calculateNewBottomInset(for: lastKeyboardFrameChange)
+        } else {
+            targetInset = bottomBarHeight
+        }
+        guard collectionView.contentInset.bottom != targetInset else { return }
+        let offset = collectionView.contentOffset
+        UIView.performWithoutAnimation {
+            collectionView.contentInset.bottom = targetInset
+            collectionView.verticalScrollIndicatorInsets.bottom = targetInset
+            collectionView.contentOffset = offset
+        }
+    }
+
+    private func updateBottomInsetForBottomBarHeight() {
+        guard isViewLoaded else { return }
+
+        self.view.keyboardLayoutGuide.keyboardDismissPadding = bottomBarHeight
+
+        if let lastKeyboardFrameChange {
+            let newBottomInset = calculateNewBottomInset(for: lastKeyboardFrameChange)
+            updateBottomInset(inset: newBottomInset, info: lastKeyboardFrameChange)
+        } else {
+            updateBottomInset(inset: bottomBarHeight, info: nil)
+        }
+    }
+}
+
+// MARK: - KeyboardListenerDelegate
+
+extension MessagesViewController: KeyboardListenerDelegate {
+    func keyboardWillChangeFrame(info: KeyboardInfo) {
+        self.lastKeyboardFrameChange = info
+
+        guard shouldHandleKeyboardFrameChange(info: info) else { return }
+
+        currentInterfaceActions.options.insert(.changingKeyboardFrame)
+        let newBottomInset = calculateNewBottomInset(for: info)
+        // If the keyboard is growing the bottom inset (appearing or expanding),
+        // queue a scroll-to-bottom for after the inset animation. SwiftUI's
+        // @FocusState may not transition (e.g. when iOS restores first-responder
+        // and just re-shows the keyboard), so we trigger off the keyboard frame
+        // change directly rather than relying on focus events. Only flip the
+        // flag once per keyboard show; rapid frame changes (emoji ↔ standard
+        // keyboard, accessory bar resize) shouldn't queue duplicate scrolls.
+        let insetGrowth = newBottomInset - collectionView.contentInset.bottom
+        if !pendingScrollToBottomAfterKeyboard,
+           insetGrowth > Constant.minKeyboardInsetGrowthForScrollAnchor {
+            pendingScrollToBottomAfterKeyboard = true
+        }
+        updateBottomInset(inset: newBottomInset, info: info)
+    }
+
+    private func updateBottomInset(inset: CGFloat, info: KeyboardInfo?) {
+        guard !contextMenuState.isPresented else { return }
+        guard collectionView.contentInset.bottom != inset else { return }
+        updateCollectionViewInsets(to: inset, with: info)
+    }
+
+    func keyboardWillHide(info: KeyboardInfo) {
+    }
+
+    func keyboardDidChangeFrame(info: KeyboardInfo) {
+        if currentInterfaceActions.options.contains(.changingKeyboardFrame) {
+            currentInterfaceActions.options.remove(.changingKeyboardFrame)
+        }
+
+        if pendingScrollToBottomAfterKeyboard {
+            pendingScrollToBottomAfterKeyboard = false
+            scrollToBottom()
+        }
+    }
+
+    private func shouldHandleKeyboardFrameChange(info: KeyboardInfo) -> Bool {
+        guard !currentInterfaceActions.options.contains(.changingFrameSize),
+              collectionView.contentInsetAdjustmentBehavior != .never else {
+            return false
+        }
+        return true
+    }
+
+    private func calculateNewBottomInset(for info: KeyboardInfo) -> CGFloat {
+        guard let keyboardFrame = collectionView.window?.convert(info.frameEnd, to: view),
+              !keyboardFrame.isEmpty else {
+            return bottomBarHeight
+        }
+        let keyboardInset = (bottomBarHeight + collectionView.frame.minY +
+                     collectionView.frame.size.height -
+                     keyboardFrame.minY - collectionView.safeAreaInsets.bottom)
+        let inset = max(keyboardInset, bottomBarHeight)
+        return inset
+    }
+
+    private func updateCollectionViewInsets(to topInset: CGFloat) {
+        let positionSnapshot = messagesLayout.getContentOffsetSnapshot(from: .top)
+
+        if currentControllerActions.options.contains(.updatingCollection) {
+            UIView.performWithoutAnimation {
+                self.collectionView.performBatchUpdates {}
+            }
+        }
+
+        currentInterfaceActions.options.insert(.changingContentInsets)
+        UIView.animate(withDuration: 0.2, animations: {
+            self.collectionView.performBatchUpdates({
+                self.collectionView.contentInset.top = topInset
+                self.collectionView.verticalScrollIndicatorInsets.top = topInset
+            }, completion: nil)
+
+            if let positionSnapshot, !self.isUserInitiatedScrolling {
+                self.messagesLayout.restoreContentOffset(with: positionSnapshot)
+            }
+        }, completion: { _ in
+            self.currentInterfaceActions.options.remove(.changingContentInsets)
+        })
+    }
+
+    private func updateCollectionViewInsets(to newBottomInset: CGFloat, with info: KeyboardInfo?) {
+        let positionSnapshot = messagesLayout.getContentOffsetSnapshot(from: .bottom)
+
+        if currentControllerActions.options.contains(.updatingCollection) {
+            UIView.performWithoutAnimation {
+                self.collectionView.performBatchUpdates {}
+            }
+        }
+
+        currentInterfaceActions.options.insert(.changingContentInsets)
+        UIView.animate(withDuration: info?.animationDuration ?? 0.2, animations: {
+            self.collectionView.performBatchUpdates({
+                self.collectionView.contentInset.bottom = newBottomInset
+                self.collectionView.verticalScrollIndicatorInsets.bottom = newBottomInset
+            }, completion: nil)
+
+            if let positionSnapshot, !self.isUserInitiatedScrolling {
+                self.messagesLayout.restoreContentOffset(with: positionSnapshot)
+            }
+        }, completion: { _ in
+            self.currentInterfaceActions.options.remove(.changingContentInsets)
+        })
+    }
+
+    private enum Constant {
+        // Floating-point slop for distinguishing "keyboard appearing" from
+        // micro adjustments (e.g. autocorrect bar resizes, sub-point
+        // accessory-view recalculations).
+        static let minKeyboardInsetGrowthForScrollAnchor: CGFloat = 1.0
+    }
+}
+
+// MARK: - File Attachment QuickLook
+
+extension MessagesViewController {
+    private func openFileAttachment(_ attachment: HydratedAttachment) {
+        Task {
+            do {
+                let fileURL = try await loadFileForPreview(attachment)
+                await MainActor.run {
+                    if attachment.isMarkdownFile {
+                        presentMarkdownPreview(fileURL: fileURL, filename: attachment.filename ?? "Markdown")
+                    } else {
+                        FileAttachmentQuickLookCoordinator.shared.present(fileURL: fileURL, from: self)
+                    }
+                }
+            } catch {
+                Log.error("Failed to open file attachment: \(error)")
+                let alert = UIAlertController(
+                    title: "File Unavailable",
+                    message: "This file is no longer available on this device.",
+                    preferredStyle: .alert
+                )
+                let okAction = UIAlertAction(title: "OK", style: .default)
+                alert.addAction(okAction)
+                present(alert, animated: true)
+            }
+        }
+    }
+
+    private func presentMarkdownPreview(fileURL: URL, filename: String) {
+        let preview = MarkdownAttachmentPreviewSheet(
+            fileURL: fileURL,
+            filename: filename
+        )
+        let controller = UIHostingController(rootView: preview)
+        controller.modalPresentationStyle = .pageSheet
+        if let sheet = controller.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = false
+        }
+        present(controller, animated: true)
+    }
+
+    private func loadFileForPreview(_ attachment: HydratedAttachment) async throws -> URL {
+        let filename = attachment.filename ?? "attachment"
+        let cache = FileAttachmentCache.shared
+
+        if let cached = await cache.cachedFileURL(for: attachment.key, filename: filename) {
+            return cached
+        }
+
+        if attachment.key.hasPrefix("file://") {
+            let path = String(attachment.key.dropFirst("file://".count))
+            let sourceURL = URL(fileURLWithPath: path)
+
+            if FileManager.default.fileExists(atPath: path) {
+                return try await cache.cacheFile(from: sourceURL, for: attachment.key, filename: filename)
+            }
+
+            let messageId = extractMessageId(from: sourceURL)
+            if let messageId {
+                let data = try await InlineAttachmentRecovery.shared.recoverData(messageId: messageId)
+                return try await cache.cacheFile(data: data, for: attachment.key, filename: filename)
+            }
+
+            throw CocoaError(.fileReadNoSuchFile, userInfo: [NSFilePathErrorKey: path])
+        }
+
+        let loader = RemoteAttachmentLoader()
+        let loaded = try await loader.loadAttachmentData(from: attachment.key)
+        return try await cache.cacheFile(data: loaded.data, for: attachment.key, filename: filename)
+    }
+
+    private func extractMessageId(from fileURL: URL) -> String? {
+        let filename = fileURL.lastPathComponent
+        guard let underscoreIndex = filename.firstIndex(of: "_") else { return nil }
+        let messageId = String(filename[filename.startIndex..<underscoreIndex])
+        guard !messageId.isEmpty else { return nil }
+        return messageId
+    }
+}
+
+private struct MarkdownAttachmentPreviewSheet: View {
+    let fileURL: URL
+    let filename: String
+    @Environment(\.dismiss) private var dismiss: DismissAction
+
+    @State private var htmlString: String?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let htmlString {
+                    MarkdownWebView(html: htmlString)
+                        .ignoresSafeArea(edges: .bottom)
+                } else if let errorMessage {
+                    ContentUnavailableView("Preview Unavailable", systemImage: "doc.text", description: Text(errorMessage))
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .navigationTitle(filename)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    ShareLink(item: fileURL) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    let action = { dismiss() }
+                    Button("Done", action: action)
+                }
+            }
+        }
+        .task {
+            await loadMarkdown()
+        }
+    }
+
+    private func loadMarkdown() async {
+        guard let markedJS = Self.loadMarkedJS() else {
+            errorMessage = "Markdown renderer is unavailable."
+            return
+        }
+        do {
+            let url = fileURL
+            let markdown = try await Task.detached {
+                try String(contentsOf: url, encoding: .utf8)
+            }.value
+            let encodedMarkdown = Data(markdown.utf8).base64EncodedString()
+            htmlString = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;" />
+            <style>
+                :root { color-scheme: light dark; }
+                body {
+                    font: -apple-system-body;
+                    font-family: -apple-system, system-ui, sans-serif;
+                    padding: 16px;
+                    line-height: 1.6;
+                    word-wrap: break-word;
+                    overflow-wrap: break-word;
+                }
+                h1 { font-size: 1.6em; margin-top: 0; }
+                h2 { font-size: 1.4em; }
+                h3 { font-size: 1.2em; }
+                code {
+                    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                    font-size: 0.9em;
+                    background: rgba(128, 128, 128, 0.15);
+                    padding: 2px 5px;
+                    border-radius: 4px;
+                }
+                pre {
+                    background: rgba(128, 128, 128, 0.1);
+                    padding: 12px;
+                    border-radius: 8px;
+                    overflow-x: auto;
+                }
+                pre code {
+                    background: none;
+                    padding: 0;
+                }
+                blockquote {
+                    border-left: 3px solid rgba(128, 128, 128, 0.4);
+                    margin-left: 0;
+                    padding-left: 16px;
+                    color: rgba(128, 128, 128, 0.8);
+                }
+                img { max-width: 100%; height: auto; }
+                table {
+                    border-collapse: collapse;
+                    width: 100%;
+                }
+                th, td {
+                    border: 1px solid rgba(128, 128, 128, 0.3);
+                    padding: 8px;
+                    text-align: left;
+                }
+                a { color: #007AFF; }
+                @media (prefers-color-scheme: dark) {
+                    a { color: #0A84FF; }
+                }
+            </style>
+            <script>\(markedJS)</script>
+            </head>
+            <body data-markdown="\(encodedMarkdown)">
+            <div id="content"></div>
+            <script>
+                var encoded = document.body.getAttribute('data-markdown');
+                var decoded = atob(encoded);
+                var text = new TextDecoder().decode(Uint8Array.from(decoded, function(c) { return c.charCodeAt(0); }));
+                var renderer = { html: function(token) { return ''; } };
+                marked.use({ renderer: renderer });
+                var html = marked.parse(text);
+                var div = document.createElement('div');
+                div.innerHTML = html;
+                div.querySelectorAll('script, iframe, object, embed, form, input, textarea, button, select').forEach(function(el) { el.remove(); });
+                div.querySelectorAll('*').forEach(function(el) {
+                    el.getAttributeNames().filter(function(n) { return n.startsWith('on'); }).forEach(function(n) { el.removeAttribute(n); });
+                });
+                div.querySelectorAll('a').forEach(function(el) {
+                    var href = el.getAttribute('href');
+                    if (!href) {
+                        return;
+                    }
+                    try {
+                        var parsed = new URL(href, 'https://example.invalid');
+                        var scheme = parsed.protocol.toLowerCase();
+                        if (scheme !== 'http:' && scheme !== 'https:' && scheme !== 'mailto:') {
+                            el.removeAttribute('href');
+                        }
+                    } catch (e) {
+                        el.removeAttribute('href');
+                    }
+                });
+                document.getElementById('content').innerHTML = div.innerHTML;
+            </script>
+            </body>
+            </html>
+            """
+        } catch {
+            errorMessage = "This markdown file could not be loaded."
+        }
+    }
+
+    private static func loadMarkedJS() -> String? {
+        guard let url = Bundle.main.url(forResource: "marked.min", withExtension: "js"),
+              let js = try? String(contentsOf: url, encoding: .utf8) else {
+            return nil
+        }
+        return js
+    }
+}
+
+private struct MarkdownWebView: UIViewRepresentable {
+    let html: String
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        webView.navigationDelegate = context.coordinator
+        return webView
+    }
+
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        guard context.coordinator.loadedHTML != html else { return }
+        context.coordinator.loadedHTML = html
+        webView.loadHTMLString(html, baseURL: nil)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var loadedHTML: String?
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction
+        ) async -> WKNavigationActionPolicy {
+            guard navigationAction.navigationType == .linkActivated,
+                  let url = navigationAction.request.url else {
+                return .allow
+            }
+
+            guard let scheme = url.scheme?.lowercased(),
+                  ["http", "https", "mailto"].contains(scheme) else {
+                return .cancel
+            }
+
+            await UIApplication.shared.open(url)
+            return .cancel
+        }
+    }
+}
+
+// MARK: - UIGestureRecognizerDelegate
+
+extension MessagesViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = gestureRecognizer as? HorizontalBlockerPanGestureRecognizer else { return true }
+        let velocity = pan.velocity(in: view)
+        let location = pan.location(in: view)
+        let isHorizontal = abs(velocity.x) > abs(velocity.y)
+        let isAwayFromEdge = location.x > 30
+        return isHorizontal && isAwayFromEdge
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        gestureRecognizer is ImmediateTouchGestureRecognizer
+    }
+}

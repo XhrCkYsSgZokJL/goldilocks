@@ -1,0 +1,5 @@
+#!/bin/bash
+set -eou pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+docker-compose -f "$SCRIPT_DIR/docker-compose.yml" -p "convos-ios" "$@"

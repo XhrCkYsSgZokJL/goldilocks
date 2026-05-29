@@ -1,0 +1,338 @@
+import Foundation
+import GRDB
+
+// MARK: - Mock Extensions for Testing and Previews
+
+public extension Conversation {
+    static func mock(
+        id: String = "mock-conversation-id",
+        name: String? = "Mock Conversation",
+        members: [ConversationMember]? = nil,
+        isUnread: Bool = false,
+        isPinned: Bool = false,
+        isMuted: Bool = false,
+        invite: Invite? = nil,
+        lastMessageText: String = "This is a preview of the last message"
+    ) -> Conversation {
+        let mockMembers = members ?? [
+            .mock(isCurrentUser: true),
+            .mock(isCurrentUser: false)
+        ]
+        let creator = mockMembers.first(where: { $0.isCurrentUser }) ?? mockMembers.first ?? .mock(isCurrentUser: true)
+
+        return Conversation(
+            id: id,
+            clientConversationId: "client-\(id)",
+            creator: creator,
+            createdAt: Date(),
+            consent: .allowed,
+            kind: mockMembers.count == 2 ? .dm : .group,
+            name: name,
+            description: "This is a mock conversation for testing",
+            members: mockMembers,
+            otherMember: mockMembers.first(where: { !$0.isCurrentUser }),
+            messages: [],
+            isPinned: isPinned,
+            isUnread: isUnread,
+            isMuted: isMuted,
+            pinnedOrder: isPinned ? 0 : nil,
+            lastMessage: isUnread ? MessagePreview(
+                text: lastMessageText,
+                createdAt: Date()
+            ) : nil,
+            imageURL: nil,
+            imageSalt: nil,
+            imageNonce: nil,
+            imageEncryptionKey: nil,
+            conversationEmoji: nil,
+            includeInfoInPublicPreview: false,
+            isDraft: id.hasPrefix("draft-"),
+            invite: invite,
+            expiresAt: nil,
+            debugInfo: ConversationDebugInfo.empty,
+            isLocked: false,
+            assistantJoinStatus: nil,
+            hasHadVerifiedAssistant: mockMembers.contains(where: \.agentVerification.isConvosAssistant)
+        )
+    }
+
+    static func mockPendingInvite(
+        id: String = "draft-pending-invite",
+        name: String? = "Pending Convo"
+    ) -> Conversation {
+        mock(
+            id: id,
+            name: name,
+            members: [.mock(isCurrentUser: false)]
+        )
+    }
+
+    static func empty(id: String = "") -> Conversation {
+        Conversation(
+            id: id,
+            clientConversationId: id,
+            creator: .empty(isCurrentUser: true),
+            createdAt: .distantFuture,
+            consent: .allowed,
+            kind: .group,
+            name: "",
+            description: "",
+            members: [],
+            otherMember: nil,
+            messages: [],
+            isPinned: false,
+            isUnread: false,
+            isMuted: false,
+            pinnedOrder: nil,
+            lastMessage: nil,
+            imageURL: nil,
+            imageSalt: nil,
+            imageNonce: nil,
+            imageEncryptionKey: nil,
+            conversationEmoji: nil,
+            includeInfoInPublicPreview: false,
+            isDraft: true,
+            invite: nil,
+            expiresAt: .distantFuture,
+            debugInfo: .empty,
+            isLocked: false,
+            assistantJoinStatus: nil,
+            hasHadVerifiedAssistant: false
+        )
+    }
+}
+
+public extension ConversationMember {
+    static func mock(
+        isCurrentUser: Bool = false,
+        name: String? = nil,
+        role: MemberRole = .member,
+        isAgent: Bool = false,
+        agentVerification: AgentVerification = .unverified
+    ) -> ConversationMember {
+        let profile = Profile.mock(
+            inboxId: isCurrentUser ? "current-user" : "other-user-\(UUID().uuidString)",
+            name: name ?? (isCurrentUser ? "You" : "John Doe")
+        )
+
+        return ConversationMember(
+            profile: profile,
+            role: isCurrentUser ? .admin : role,
+            isCurrentUser: isCurrentUser,
+            isAgent: isAgent,
+            agentVerification: agentVerification
+        )
+    }
+
+    static func empty(role: MemberRole = .member, isCurrentUser: Bool = false) -> ConversationMember {
+        ConversationMember(profile: .empty(), role: role, isCurrentUser: isCurrentUser)
+    }
+}
+
+public extension Message {
+    static func mock(
+        text: String = "Mock message",
+        sender: ConversationMember? = nil,
+        status: MessageStatus = .published,
+        date: Date = Date(),
+        reactions: [MessageReaction] = []
+    ) -> Message {
+        let mockSender = sender ?? .mock(isCurrentUser: false)
+        let id = "mock-message-\(UUID().uuidString)"
+
+        return Message(
+            id: id,
+            sender: mockSender,
+            source: mockSender.isCurrentUser ? .outgoing : .incoming,
+            status: status,
+            content: .text(text),
+            date: date,
+            reactions: reactions
+        )
+    }
+
+    static func mock(
+        content: MessageContent,
+        sender: ConversationMember? = nil,
+        status: MessageStatus = .published,
+        date: Date = Date(),
+        reactions: [MessageReaction] = []
+    ) -> Message {
+        let mockSender = sender ?? .mock(isCurrentUser: false)
+        let id = "mock-message-\(UUID().uuidString)"
+
+        return Message(
+            id: id,
+            sender: mockSender,
+            source: mockSender.isCurrentUser ? .outgoing : .incoming,
+            status: status,
+            content: content,
+            date: date,
+            reactions: reactions
+        )
+    }
+
+    static func mockWithAttachment(
+        url: URL,
+        sender: ConversationMember? = nil,
+        status: MessageStatus = .published,
+        date: Date = Date()
+    ) -> Message {
+        let mockSender = sender ?? .mock(isCurrentUser: false)
+        let id = "mock-message-\(UUID().uuidString)"
+
+        return Message(
+            id: id,
+            sender: mockSender,
+            source: mockSender.isCurrentUser ? .outgoing : .incoming,
+            status: status,
+            content: .attachment(HydratedAttachment(key: url.absoluteString)),
+            date: date,
+            reactions: []
+        )
+    }
+
+    static func mockWithAttachments(
+        urls: [URL],
+        sender: ConversationMember? = nil,
+        status: MessageStatus = .published,
+        date: Date = Date()
+    ) -> Message {
+        let mockSender = sender ?? .mock(isCurrentUser: false)
+        let id = "mock-message-\(UUID().uuidString)"
+
+        return Message(
+            id: id,
+            sender: mockSender,
+            source: mockSender.isCurrentUser ? .outgoing : .incoming,
+            status: status,
+            content: .attachments(urls.map { HydratedAttachment(key: $0.absoluteString) }),
+            date: date,
+            reactions: []
+        )
+    }
+}
+
+public extension ConversationUpdate {
+    static func mock(
+        creator: ConversationMember? = nil,
+        addedMembers: [ConversationMember] = [],
+        removedMembers: [ConversationMember] = []
+    ) -> ConversationUpdate {
+        ConversationUpdate(
+            creator: creator ?? .mock(isCurrentUser: false, name: "Alice"),
+            addedMembers: addedMembers.isEmpty ? [.mock(isCurrentUser: false, name: "Bob")] : addedMembers,
+            removedMembers: removedMembers,
+            metadataChanges: []
+        )
+    }
+}
+
+// Extension moved from MessagesListItemType.swift to keep summary here
+public extension ConversationUpdate {
+    var summary: String {
+        let creatorDisplayName = creator.isCurrentUser ? "You" : creator.profile.displayName
+        if !addedMembers.isEmpty && !removedMembers.isEmpty {
+            return "\(creatorDisplayName) added and removed members"
+        } else if !addedMembers.isEmpty {
+            if addedMembers.count == 1, let member = addedMembers.first,
+               member.isCurrentUser {
+                let asString = "as \(member.profile.displayName)"
+                return "You joined \(asString)"
+            }
+            if addedMembers.count == 1, let member = addedMembers.first {
+                return "\(member.profile.displayName) joined · Invited by \(creatorDisplayName)"
+            }
+            return "\(addedMembers.formattedNamesString) joined · Invited by \(creatorDisplayName)"
+        } else if let metadataChange = metadataChanges.first,
+                  metadataChange.field == .name,
+                  let updatedName = metadataChange.newValue {
+            if updatedName.isEmpty {
+                return "\(creatorDisplayName) removed the name"
+            }
+            return "\(creatorDisplayName) changed the name to \"\(updatedName)\""
+        } else if let metadataChange = metadataChanges.first,
+                  metadataChange.field == .image,
+                  metadataChange.newValue != nil {
+            return "\(creatorDisplayName) changed the photo"
+        } else if let metadataChange = metadataChanges.first,
+                  metadataChange.field == .description,
+                  let newValue = metadataChange.newValue {
+            if newValue.isEmpty {
+                return "\(creatorDisplayName) removed the description"
+            }
+            return "\(creatorDisplayName) changed the description to \"\(newValue)\""
+        } else if let metadataChange = metadataChanges.first,
+                  metadataChange.field == .expiresAt,
+                  metadataChange.newValue != nil {
+            if let duration = metadataChange.oldValue {
+                return "\(creatorDisplayName) set this channel to explode in \(duration)"
+            }
+            return "\(creatorDisplayName) set this channel to explode"
+        } else if !removedMembers.isEmpty {
+            if removedMembers.count == 1, let member = removedMembers.first {
+                if member.isCurrentUser {
+                    return "You left the channel"
+                }
+                if member.isAgent {
+                    return "\(member.profile.displayName) left · Removed by \(creatorDisplayName)"
+                }
+                return "\(member.profile.displayName) left"
+            }
+            return "\(removedMembers.formattedNamesString) left"
+        } else {
+            return ""
+        }
+    }
+}
+
+public extension Invite {
+    static func mock(
+        conversationId: String = "mock-conversation-id"
+    ) -> Invite {
+        Invite(
+            conversationId: conversationId,
+            urlSlug: "mock-invite-slug",
+            expiresAt: nil,
+            expiresAfterUse: false
+        )
+    }
+}
+
+public extension MessageReply {
+    static func mock(
+        text: String = "This is a reply",
+        sender: ConversationMember? = nil,
+        replyContent: MessageContent? = nil,
+        parentText: String = "Original message that was replied to",
+        parentContent: MessageContent? = nil,
+        parentSender: ConversationMember? = nil,
+        status: MessageStatus = .published,
+        date: Date = Date(),
+        reactions: [MessageReaction] = []
+    ) -> MessageReply {
+        let mockSender = sender ?? .mock(isCurrentUser: true)
+        let mockParentSender = parentSender ?? .mock(isCurrentUser: false, name: "Jane")
+
+        let parentMessage = Message(
+            id: "parent-\(UUID().uuidString)",
+            sender: mockParentSender,
+            source: mockParentSender.isCurrentUser ? .outgoing : .incoming,
+            status: .published,
+            content: parentContent ?? .text(parentText),
+            date: date.addingTimeInterval(-60),
+            reactions: []
+        )
+
+        return MessageReply(
+            id: "reply-\(UUID().uuidString)",
+            sender: mockSender,
+            source: mockSender.isCurrentUser ? .outgoing : .incoming,
+            status: status,
+            content: replyContent ?? .text(text),
+            date: date,
+            parentMessage: parentMessage,
+            reactions: reactions
+        )
+    }
+}

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- F8.2 — Default Data Protection class for files this app creates.
+	     NSFileProtectionComplete makes files unreadable whenever the
+	     device is locked. The NotificationService extension keeps its
+	     own entitlement (one notch weaker) since it has to decrypt
+	     push payloads while the screen is locked.
+	     Design: docs/encryption-and-backup-plan.md F8.2. -->
+	<key>com.apple.developer.default-data-protection</key>
+	<string>NSFileProtectionComplete</string>
+	<key>aps-environment</key>
+	<string>$(APNS_ENVIRONMENT)</string>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:$(ASSOCIATED_DOMAIN)</string>
+		<string>applinks:$(SECONDARY_ASSOCIATED_DOMAIN)</string>
+		<string>webcredentials:$(WEB_CREDENTIALS_DOMAIN)</string>
+	</array>
+	<key>com.apple.developer.devicecheck.appattest-environment</key>
+	<string>production</string>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>$(APP_GROUP_IDENTIFIER)</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)$(APP_GROUP_IDENTIFIER)</string>
+		<string>$(AppIdentifierPrefix)$(KEYCHAIN_GROUP_IDENTIFIER)</string>
+	</array>
+</dict>
+</plist>

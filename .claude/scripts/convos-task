@@ -1,0 +1,883 @@
+#!/bin/bash
+# Convos iOS task management with git worktrees + Graphite
+
+set -e
+
+# Detect repo location dynamically
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MAIN_REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_NAME="$(basename "$MAIN_REPO")"
+BASE_DIR="$(dirname "$MAIN_REPO")"
+
+# Base simulator to clone from (can be overridden with CONVOS_BASE_SIMULATOR env var)
+# If not set, will auto-detect an available iPhone simulator
+BASE_SIMULATOR="${CONVOS_BASE_SIMULATOR:-}"
+
+# Path to convos-task-console binary
+CONSOLE_BIN="${CONVOS_CONSOLE_BIN:-$HOME/Code/convos-task-console/convos-task-console}"
+
+find_available_simulator() {
+    # Preferred simulators in order (newest first)
+    local preferred=(
+        "iPhone 17 Pro Max"
+        "iPhone 17 Pro"
+        "iPhone 17"
+        "iPhone 16 Pro Max"
+        "iPhone 16 Pro"
+        "iPhone 16"
+        "iPhone 15 Pro Max"
+        "iPhone 15 Pro"
+        "iPhone 15"
+    )
+
+    # Get list of available simulators
+    local available
+    available=$(xcrun simctl list devices available -j 2>/dev/null | grep -o '"name" : "[^"]*"' | sed 's/"name" : "//;s/"//')
+
+    # Try preferred simulators first
+    for sim in "${preferred[@]}"; do
+        if echo "$available" | grep -qx "$sim"; then
+            echo "$sim"
+            return 0
+        fi
+    done
+
+    # Fallback: find any iPhone simulator
+    local fallback
+    fallback=$(echo "$available" | grep -E "^iPhone" | head -1)
+    if [ -n "$fallback" ]; then
+        echo "$fallback"
+        return 0
+    fi
+
+    return 1
+}
+
+get_base_simulator() {
+    # If user specified a base simulator, use it
+    if [ -n "$BASE_SIMULATOR" ]; then
+        echo "$BASE_SIMULATOR"
+        return 0
+    fi
+
+    # Otherwise, find an available one
+    find_available_simulator
+}
+
+# Colors (only use if output is a terminal)
+if [ -t 1 ]; then
+    GREEN=$'\033[0;32m'
+    BLUE=$'\033[0;34m'
+    YELLOW=$'\033[1;33m'
+    RED=$'\033[0;31m'
+    NC=$'\033[0m'
+else
+    GREEN=''
+    BLUE=''
+    YELLOW=''
+    RED=''
+    NC=''
+fi
+
+get_simulator_name() {
+    local task_name="$1"
+    echo "convos-$task_name"
+}
+
+create_task_simulator() {
+    local task_name="$1"
+    local sim_name
+    sim_name=$(get_simulator_name "$task_name")
+
+    if xcrun simctl list devices | grep -q "$sim_name"; then
+        echo -e "${YELLOW}Simulator '$sim_name' already exists${NC}"
+        return 0
+    fi
+
+    local base_sim
+    base_sim=$(get_base_simulator)
+
+    if [ -z "$base_sim" ]; then
+        echo -e "${YELLOW}⚠️  No iPhone simulators found on this system${NC}"
+        echo -e "${YELLOW}   Install Xcode simulators or set CONVOS_BASE_SIMULATOR${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}Creating simulator: $sim_name (cloning from $base_sim)${NC}"
+
+    if ! xcrun simctl clone "$base_sim" "$sim_name" 2>/dev/null; then
+        echo -e "${YELLOW}⚠️  Could not clone simulator '$base_sim'${NC}"
+        echo -e "${YELLOW}   You can create one manually or set CONVOS_BASE_SIMULATOR${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}✅ Created simulator: $sim_name${NC}"
+    return 0
+}
+
+delete_task_simulator() {
+    local task_name="$1"
+    local sim_name
+    sim_name=$(get_simulator_name "$task_name")
+
+    if ! xcrun simctl list devices | grep -q "$sim_name"; then
+        return 0
+    fi
+
+    echo -e "${BLUE}Deleting simulator: $sim_name${NC}"
+    xcrun simctl delete "$sim_name" 2>/dev/null || true
+    echo -e "${GREEN}✅ Deleted simulator: $sim_name${NC}"
+}
+
+write_task_config() {
+    local worktree_dir="$1"
+    local task_name="$2"
+    local sim_name
+    sim_name=$(get_simulator_name "$task_name")
+
+    cat > "$worktree_dir/.convos-task" << EOF
+TASK_NAME=$task_name
+SIMULATOR_NAME=$sim_name
+EOF
+}
+
+create_task_session() {
+    local task_name="$1"
+    local dir="$2"
+    local session_name="convos_$task_name"
+
+    # Create tmux session on convos-tasks socket if it doesn't exist
+    if ! tmux -L convos-tasks has-session -t "$session_name" 2>/dev/null; then
+        tmux -L convos-tasks new-session -d -s "$session_name" -c "$dir" "claude"
+    fi
+}
+
+launch_claude_in_terminal() {
+    local dir="$1"
+    local task_name="$2"
+    local session_name="convos_$task_name"
+
+    # Create the tmux session on convos-tasks socket (for monitoring)
+    create_task_session "$task_name" "$dir"
+
+    # Attach to the session via Terminal/iTerm
+    local attach_cmd="tmux -L convos-tasks attach -t $session_name"
+
+    # Check if iTerm is available (installed)
+    if [ -d "/Applications/iTerm.app" ]; then
+        osascript <<EOF
+tell application "iTerm"
+    activate
+    if (count of windows) > 0 then
+        tell current window
+            create tab with default profile
+            tell current session
+                set name to "$task_name"
+                write text "$attach_cmd"
+            end tell
+        end tell
+    else
+        create window with default profile
+        tell current window
+            tell current session
+                set name to "$task_name"
+                write text "$attach_cmd"
+            end tell
+        end tell
+    end if
+end tell
+EOF
+    else
+        # For Terminal.app
+        osascript <<EOF
+tell application "Terminal"
+    activate
+    if (count of windows) > 0 then
+        tell application "System Events" to keystroke "t" using command down
+        delay 0.3
+        do script "$attach_cmd" in front window
+    else
+        do script "$attach_cmd"
+    end if
+    set custom title of selected tab of front window to "$task_name"
+end tell
+EOF
+    fi
+}
+
+cmd_console() {
+    # Launch convos-task-console TUI
+    if [ ! -f "$CONSOLE_BIN" ]; then
+        echo -e "${YELLOW}convos-task-console not found at $CONSOLE_BIN${NC}"
+        echo -e "${YELLOW}Building from source...${NC}"
+
+        local console_dir="$HOME/Code/convos-task-console"
+        if [ ! -d "$console_dir" ]; then
+            echo -e "${RED}Error: convos-task-console source not found at $console_dir${NC}"
+            echo ""
+            echo "Install with:"
+            echo "  git clone https://github.com/xmtplabs/convos-task-console.git ~/Code/convos-task-console"
+            echo "  cd ~/Code/convos-task-console && go install ."
+            echo ""
+            echo "Or set CONVOS_CONSOLE_BIN to an existing binary path"
+            exit 1
+        fi
+
+        cd "$console_dir"
+        go build -o convos-task-console
+        CONSOLE_BIN="$console_dir/convos-task-console"
+    fi
+
+    exec "$CONSOLE_BIN" --repo "$MAIN_REPO"
+}
+
+cmd_new() {
+    local TASK_NAME="$1"
+    local PARENT_BRANCH="$2"
+
+    if [ -z "$TASK_NAME" ]; then
+        echo -e "${RED}Usage: convos-task new <task-name> [parent-branch]${NC}"
+        echo "Example: convos-task new push-notifications"
+        echo "Example: convos-task new push-notifications dev"
+        exit 1
+    fi
+
+    # Validate task name format
+    if [[ ! "$TASK_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo -e "${RED}Error: Task name must contain only letters, numbers, hyphens, and underscores${NC}"
+        echo "Invalid: '$TASK_NAME'"
+        exit 1
+    fi
+
+    WORKTREE_DIR="$BASE_DIR/$REPO_NAME-$TASK_NAME"
+
+    # Check if worktree already exists
+    if [ -d "$WORKTREE_DIR" ]; then
+        echo -e "${RED}Error: Worktree already exists at $WORKTREE_DIR${NC}"
+        exit 1
+    fi
+
+    cd "$MAIN_REPO"
+
+    # Store original branch to return to it later
+    ORIGINAL_BRANCH=$(git branch --show-current)
+
+    # Sync with Graphite to get latest changes before creating new branch
+    echo -e "${BLUE}Syncing with Graphite to get latest changes...${NC}"
+    gt sync --no-interactive || {
+        echo -e "${YELLOW}⚠️  gt sync failed, continuing anyway${NC}"
+    }
+
+    # If parent branch specified, checkout first
+    if [ -n "$PARENT_BRANCH" ]; then
+        echo -e "${BLUE}Checking out parent branch: $PARENT_BRANCH${NC}"
+        git checkout "$PARENT_BRANCH"
+        ORIGINAL_BRANCH="$PARENT_BRANCH"
+    fi
+
+    echo -e "${BLUE}Creating Graphite branch: $TASK_NAME${NC}"
+
+    # Create branch with Graphite (this stacks it on current branch)
+    gt branch create "$TASK_NAME" --no-interactive || {
+        echo -e "${RED}Failed to create Graphite branch${NC}"
+        exit 1
+    }
+
+    # Get the current branch name (Graphite may have modified it)
+    BRANCH_NAME=$(git branch --show-current)
+
+    echo -e "${BLUE}Creating worktree at $WORKTREE_DIR${NC}"
+
+    # Go back to original branch before creating worktree
+    git checkout "$ORIGINAL_BRANCH"
+
+    # Create worktree pointing to the new branch
+    git worktree add "$WORKTREE_DIR" "$BRANCH_NAME"
+
+    echo -e "${GREEN}✅ Created worktree and Graphite branch${NC}"
+    echo -e "${BLUE}📁 Location: $WORKTREE_DIR${NC}"
+    echo -e "${BLUE}🌿 Branch: $BRANCH_NAME${NC}"
+
+    # Link the parent's .env into the worktree so Firebase App Check debug token
+    # (and any other shared secrets) are picked up without per-worktree duplication.
+    if [ -f "$BASE_DIR/.env" ] && [ ! -e "$WORKTREE_DIR/.env" ]; then
+        ln -s ../.env "$WORKTREE_DIR/.env"
+        echo -e "${BLUE}🔗 Linked .env → ../.env${NC}"
+    elif [ ! -f "$BASE_DIR/.env" ]; then
+        echo -e "${YELLOW}⚠️  No .env at $BASE_DIR/.env — create one and worktrees will link to it on next 'new'${NC}"
+    fi
+
+    # Write task config file (includes simulator name for later use)
+    write_task_config "$WORKTREE_DIR" "$TASK_NAME"
+
+    SIM_NAME=$(get_simulator_name "$TASK_NAME")
+    echo -e "${BLUE}📱 Simulator: $SIM_NAME (creating in background)${NC}"
+
+    # Show stack info (--no-interactive disables gt's pager)
+    cd "$WORKTREE_DIR"
+    echo -e "\n${BLUE}Graphite stack:${NC}"
+    gt log short --no-interactive 2>/dev/null || gt stack --no-interactive 2>/dev/null || echo "Run 'gt stack' to see stack"
+
+    # Create simulator in background with logging
+    # The /setup command will verify/create simulator if this fails
+    local base_sim
+    base_sim=$(get_base_simulator)
+    local sim_log="$WORKTREE_DIR/.simulator-setup.log"
+    if [ -n "$base_sim" ]; then
+        (
+            if ! xcrun simctl list devices | grep -q "$SIM_NAME"; then
+                if xcrun simctl clone "$base_sim" "$SIM_NAME" >"$sim_log" 2>&1; then
+                    echo "✅ Simulator '$SIM_NAME' created successfully" >> "$sim_log"
+                else
+                    echo "❌ Failed to create simulator '$SIM_NAME' - run /setup in Claude to retry" >> "$sim_log"
+                fi
+            else
+                echo "✅ Simulator '$SIM_NAME' already exists" >> "$sim_log"
+            fi
+        ) &
+    fi
+
+    # Launch Claude in a new terminal tab
+    echo -e "\n${BLUE}Launching Claude Code...${NC}"
+    launch_claude_in_terminal "$WORKTREE_DIR" "$TASK_NAME"
+    echo -e "${GREEN}✅ Claude Code launched${NC}"
+}
+
+cmd_list() {
+    echo -e "${BLUE}Active worktrees:${NC}\n"
+
+    cd "$MAIN_REPO"
+
+    local WORKTREE_PATH=""
+    local BRANCH=""
+
+    git worktree list --porcelain | while IFS= read -r line; do
+        case "$line" in
+            worktree\ *)
+                WORKTREE_PATH="${line#worktree }"
+                ;;
+            branch\ *)
+                BRANCH="${line#branch refs/heads/}"
+                ;;
+            "")
+                # Empty line indicates end of worktree entry
+                if [ -n "$BRANCH" ]; then
+                    # Extract task name from worktree path
+                    local TASK_NAME="${WORKTREE_PATH##*$REPO_NAME-}"
+                    if [ "$WORKTREE_PATH" = "$MAIN_REPO" ]; then
+                        TASK_NAME=""
+                    fi
+
+                    echo -e "${GREEN}📁 $WORKTREE_PATH${NC}"
+                    echo -e "   🌿 Branch: $BRANCH"
+
+                    # Try to get Graphite info and simulator info
+                    if [ -d "$WORKTREE_PATH" ]; then
+                        (cd "$WORKTREE_PATH" && {
+                            PARENT=$(gt log short 2>/dev/null | grep "↓" | head -1 | awk '{print $NF}' || echo "")
+                            if [ -n "$PARENT" ]; then
+                                echo -e "   📚 Parent: $PARENT"
+                            fi
+                        })
+                        # Check for task config with simulator info
+                        if [ -f "$WORKTREE_PATH/.convos-task" ]; then
+                            SIM_NAME=$(grep "^SIMULATOR_NAME=" "$WORKTREE_PATH/.convos-task" | cut -d= -f2)
+                            if [ -n "$SIM_NAME" ]; then
+                                echo -e "   📱 Simulator: $SIM_NAME"
+                            fi
+                        fi
+                    fi
+                    echo ""
+                fi
+                # Reset for next entry
+                WORKTREE_PATH=""
+                BRANCH=""
+                ;;
+        esac
+    done
+
+    echo -e "${YELLOW}Tip: Run 'convos-task console' to launch the interactive TUI${NC}"
+}
+
+cmd_switch() {
+    local TASK_NAME="$1"
+
+    if [ -z "$TASK_NAME" ]; then
+        echo -e "${RED}Usage: convos-task switch <task-name>${NC}"
+        echo "Tip: Run 'convos-task list' to see available tasks"
+        exit 1
+    fi
+
+    WORKTREE_DIR="$BASE_DIR/$REPO_NAME-$TASK_NAME"
+
+    if [ ! -d "$WORKTREE_DIR" ]; then
+        echo -e "${RED}Error: Worktree not found at $WORKTREE_DIR${NC}"
+        exit 1
+    fi
+
+    echo -e "${BLUE}Switching to task: $TASK_NAME${NC}"
+    launch_claude_in_terminal "$WORKTREE_DIR" "$TASK_NAME"
+    echo -e "${GREEN}✅ Claude Code launched${NC}"
+}
+
+cmd_submit() {
+    local TASK_NAME="$1"
+
+    if [ -z "$TASK_NAME" ]; then
+        # If no task name, assume we're in a worktree
+        if [[ "$(pwd)" == *"$REPO_NAME-"* ]]; then
+            echo -e "${BLUE}Submitting current branch...${NC}"
+            gt submit
+        else
+            echo -e "${RED}Usage: convos-task submit <task-name>${NC}"
+            echo "Or run from within a worktree directory"
+            exit 1
+        fi
+    else
+        WORKTREE_DIR="$BASE_DIR/$REPO_NAME-$TASK_NAME"
+
+        if [ ! -d "$WORKTREE_DIR" ]; then
+            echo -e "${RED}Error: Worktree not found at $WORKTREE_DIR${NC}"
+            exit 1
+        fi
+
+        cd "$WORKTREE_DIR"
+        echo -e "${BLUE}Submitting task: $TASK_NAME${NC}"
+        gt submit
+    fi
+}
+
+cmd_sync() {
+    local TASK_NAME="$1"
+
+    if [ -z "$TASK_NAME" ]; then
+        if [[ "$(pwd)" == *"$REPO_NAME-"* ]]; then
+            echo -e "${BLUE}Syncing current worktree...${NC}"
+            gt sync
+        else
+            echo -e "${RED}Usage: convos-task sync <task-name>${NC}"
+            echo "Or run from within a worktree directory"
+            exit 1
+        fi
+    else
+        WORKTREE_DIR="$BASE_DIR/$REPO_NAME-$TASK_NAME"
+
+        if [ ! -d "$WORKTREE_DIR" ]; then
+            echo -e "${RED}Error: Worktree not found at $WORKTREE_DIR${NC}"
+            exit 1
+        fi
+
+        cd "$WORKTREE_DIR"
+        echo -e "${BLUE}Syncing task: $TASK_NAME${NC}"
+        gt sync
+    fi
+}
+
+is_branch_merged() {
+    local branch="$1"
+
+    # Method 1: Check if branch is merged via git (catches regular merges)
+    if git branch --merged main 2>/dev/null | sed 's/^[* ]*//' | grep -qx "$branch"; then
+        return 0
+    fi
+
+    # Method 2: Check GitHub PR status (catches squash merges)
+    if command -v gh &>/dev/null; then
+        local pr_state
+        pr_state=$(gh pr list --state merged --head "$branch" --json state --jq '.[0].state' 2>/dev/null)
+        if [ "$pr_state" = "MERGED" ]; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+cmd_prune() {
+    cd "$MAIN_REPO"
+
+    echo -e "${BLUE}Checking for worktrees with merged branches...${NC}\n"
+
+    # Fetch latest from remote to ensure we have current state
+    git fetch origin --quiet 2>/dev/null || true
+
+    # Find worktrees that correspond to merged branches
+    local worktrees_to_prune=()
+    local branches_to_prune=()
+    local tasks_to_prune=()
+
+    while IFS= read -r line; do
+        case "$line" in
+            worktree\ *)
+                current_worktree="${line#worktree }"
+                ;;
+            branch\ *)
+                current_branch="${line#branch refs/heads/}"
+                # Check if this branch is merged and it's not the main repo
+                if [ "$current_worktree" != "$MAIN_REPO" ] && [ "$current_branch" != "main" ] && is_branch_merged "$current_branch"; then
+                    worktrees_to_prune+=("$current_worktree")
+                    branches_to_prune+=("$current_branch")
+                    # Extract task name from worktree path
+                    local task_name="${current_worktree##*$REPO_NAME-}"
+                    tasks_to_prune+=("$task_name")
+                fi
+                ;;
+        esac
+    done < <(git worktree list --porcelain)
+
+    if [ ${#worktrees_to_prune[@]} -eq 0 ]; then
+        echo -e "${GREEN}No worktrees with merged branches found.${NC}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}Found ${#worktrees_to_prune[@]} worktree(s) with merged branches:${NC}\n"
+
+    for i in "${!worktrees_to_prune[@]}"; do
+        local wt="${worktrees_to_prune[$i]}"
+        local br="${branches_to_prune[$i]}"
+        local task="${tasks_to_prune[$i]}"
+        local sim_name
+        sim_name=$(get_simulator_name "$task")
+
+        echo -e "  ${GREEN}$((i+1)).${NC} ${BLUE}$task${NC}"
+        echo -e "     📁 $wt"
+        echo -e "     🌿 $br"
+        if xcrun simctl list devices 2>/dev/null | grep -q "$sim_name"; then
+            echo -e "     📱 $sim_name"
+        fi
+        echo ""
+    done
+
+    read -p "Remove all merged worktrees? (y/N): " -n 1 -r
+    echo
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        for i in "${!worktrees_to_prune[@]}"; do
+            local wt="${worktrees_to_prune[$i]}"
+            local br="${branches_to_prune[$i]}"
+            local task="${tasks_to_prune[$i]}"
+
+            echo -e "\n${BLUE}Cleaning up: $task${NC}"
+
+            # Kill any tmux sessions for this task
+            tmux -L convos-tasks kill-session -t "convos_$task" 2>/dev/null || true
+
+            # Remove worktree
+            echo -e "  Removing worktree..."
+            git worktree remove "$wt" --force 2>/dev/null || {
+                echo -e "  ${YELLOW}⚠️  Could not remove worktree, trying harder...${NC}"
+                rm -rf "$wt"
+                git worktree prune
+            }
+
+            # Delete branch
+            echo -e "  Deleting branch..."
+            if ! gt branch delete "$br" --force 2>/dev/null; then
+                git branch -D "$br" 2>/dev/null || true
+            fi
+
+            # Delete simulator
+            delete_task_simulator "$task"
+
+            echo -e "  ${GREEN}✅ Done${NC}"
+        done
+
+        echo -e "\n${GREEN}✅ Pruned ${#worktrees_to_prune[@]} merged worktree(s)${NC}"
+    else
+        echo -e "${BLUE}Cancelled.${NC}"
+    fi
+}
+
+cmd_cleanup() {
+    local TASK_NAME="$1"
+
+    if [ -z "$TASK_NAME" ]; then
+        echo -e "${RED}Usage: convos-task cleanup <task-name>${NC}"
+        exit 1
+    fi
+
+    WORKTREE_DIR="$BASE_DIR/$REPO_NAME-$TASK_NAME"
+
+    if [ ! -d "$WORKTREE_DIR" ]; then
+        echo -e "${RED}Error: Worktree not found at $WORKTREE_DIR${NC}"
+        exit 1
+    fi
+
+    cd "$WORKTREE_DIR"
+    BRANCH_NAME=$(git branch --show-current)
+
+    SIM_NAME=$(get_simulator_name "$TASK_NAME")
+
+    echo -e "${YELLOW}⚠️  About to remove worktree, Graphite branch, and simulator:${NC}"
+    echo -e "   📁 Worktree: $WORKTREE_DIR"
+    echo -e "   🌿 Branch: $BRANCH_NAME"
+    echo -e "   📱 Simulator: $SIM_NAME"
+    echo ""
+    read -p "Are you sure? (y/N): " -n 1 -r
+    echo
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        cd "$MAIN_REPO"
+
+        # Kill any tmux sessions for this task
+        tmux -L convos-tasks kill-session -t "convos_$TASK_NAME" 2>/dev/null || true
+
+        # Remove worktree
+        echo -e "${BLUE}Removing worktree...${NC}"
+        git worktree remove "$WORKTREE_DIR" --force
+
+        # Delete Graphite branch
+        echo -e "${BLUE}Deleting Graphite branch...${NC}"
+        if ! gt delete "$BRANCH_NAME" --force 2>&1; then
+            echo -e "${YELLOW}⚠️  Graphite delete failed, using git directly${NC}"
+            git branch -D "$BRANCH_NAME"
+        fi
+
+        # Delete task simulator
+        delete_task_simulator "$TASK_NAME"
+
+        echo -e "${GREEN}✅ Cleaned up task: $TASK_NAME${NC}"
+    else
+        echo -e "${BLUE}Cancelled.${NC}"
+    fi
+}
+
+cmd_sessions() {
+    local TASK_NAME="$1"
+    local SEARCH_QUERY="$2"
+
+    # Ensure aichat is available
+    if ! command -v aichat &>/dev/null; then
+        # Try with uv tool path
+        export PATH="$HOME/.local/bin:$PATH"
+        if ! command -v aichat &>/dev/null; then
+            echo -e "${RED}Error: aichat not found. Install with: uv tool install claude-code-tools${NC}"
+            exit 1
+        fi
+    fi
+
+    # Determine which worktree to search
+    local SEARCH_PATH=""
+    if [ -n "$TASK_NAME" ]; then
+        SEARCH_PATH="$BASE_DIR/$REPO_NAME-$TASK_NAME"
+        if [ ! -d "$SEARCH_PATH" ]; then
+            echo -e "${RED}Error: Worktree not found at $SEARCH_PATH${NC}"
+            exit 1
+        fi
+    elif [[ "$(pwd)" == *"$REPO_NAME"* ]]; then
+        SEARCH_PATH="$(pwd)"
+    else
+        echo -e "${RED}Usage: convos-task sessions [task-name] [search-query]${NC}"
+        echo "Or run from within a worktree directory"
+        exit 1
+    fi
+
+    echo -e "${BLUE}Sessions for: $SEARCH_PATH${NC}\n"
+
+    if [ -n "$SEARCH_QUERY" ]; then
+        # Search within task sessions
+        aichat search "$SEARCH_QUERY" 2>/dev/null | grep -i "$(basename "$SEARCH_PATH")" || {
+            echo "No sessions found matching '$SEARCH_QUERY' in this task"
+        }
+    else
+        # List all sessions for this task using index-stats filtering
+        aichat index-stats 2>/dev/null | grep -A1 "Top 5 cwds:" | grep "$(basename "$SEARCH_PATH")" || {
+            echo "No sessions found for this task"
+            echo ""
+            echo -e "${YELLOW}Tip: Build the search index first: aichat build-index${NC}"
+        }
+    fi
+}
+
+cmd_context() {
+    local TASK_NAME="$1"
+
+    # Ensure aichat is available
+    if ! command -v aichat &>/dev/null; then
+        export PATH="$HOME/.local/bin:$PATH"
+        if ! command -v aichat &>/dev/null; then
+            echo -e "${RED}Error: aichat not found. Install with: uv tool install claude-code-tools${NC}"
+            exit 1
+        fi
+    fi
+
+    # Determine which worktree
+    local WORKTREE_PATH=""
+    if [ -n "$TASK_NAME" ]; then
+        WORKTREE_PATH="$BASE_DIR/$REPO_NAME-$TASK_NAME"
+        if [ ! -d "$WORKTREE_PATH" ]; then
+            echo -e "${RED}Error: Worktree not found at $WORKTREE_PATH${NC}"
+            exit 1
+        fi
+    elif [[ "$(pwd)" == *"$REPO_NAME"* ]]; then
+        WORKTREE_PATH="$(pwd)"
+    else
+        echo -e "${RED}Usage: convos-task context [task-name]${NC}"
+        exit 1
+    fi
+
+    local WORKTREE_NAME
+    WORKTREE_NAME=$(basename "$WORKTREE_PATH")
+
+    echo -e "${BLUE}Finding latest session for: $WORKTREE_NAME${NC}\n"
+
+    # Get the project hash from Claude's config
+    local CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    local PROJECT_DIR=""
+
+    # Find the project directory that matches this worktree
+    for dir in "$CLAUDE_HOME/projects"/*; do
+        if [ -d "$dir" ]; then
+            # Check if any session has this cwd
+            if grep -l "\"cwd\":.*$WORKTREE_NAME" "$dir"/*.jsonl 2>/dev/null | head -1 >/dev/null; then
+                PROJECT_DIR="$dir"
+                break
+            fi
+        fi
+    done
+
+    if [ -z "$PROJECT_DIR" ]; then
+        echo -e "${YELLOW}No sessions found for this worktree${NC}"
+        echo -e "${YELLOW}Start a Claude Code session in the worktree first${NC}"
+        exit 1
+    fi
+
+    # Find the most recent session file for this worktree
+    local LATEST_SESSION=""
+    local LATEST_TIME=0
+
+    for session in "$PROJECT_DIR"/*.jsonl; do
+        if grep -q "\"cwd\":.*$WORKTREE_NAME" "$session" 2>/dev/null; then
+            local mtime
+            mtime=$(stat -f %m "$session" 2>/dev/null || stat -c %Y "$session" 2>/dev/null)
+            if [ "$mtime" -gt "$LATEST_TIME" ]; then
+                LATEST_TIME=$mtime
+                LATEST_SESSION="$session"
+            fi
+        fi
+    done
+
+    if [ -z "$LATEST_SESSION" ]; then
+        echo -e "${YELLOW}No sessions found for this worktree${NC}"
+        exit 1
+    fi
+
+    local SESSION_ID
+    SESSION_ID=$(basename "$LATEST_SESSION" .jsonl)
+
+    echo -e "${GREEN}Latest session: $SESSION_ID${NC}"
+    echo -e "${BLUE}Modified: $(date -r "$LATEST_TIME" '+%Y-%m-%d %H:%M:%S')${NC}\n"
+
+    # Show session info
+    echo -e "${BLUE}Session details:${NC}"
+    aichat info "$SESSION_ID" 2>/dev/null || echo "Could not get session info"
+
+    echo ""
+    echo -e "${GREEN}To resume this session:${NC}"
+    echo "  aichat resume $SESSION_ID"
+    echo ""
+    echo -e "${GREEN}To search within this session:${NC}"
+    echo "  aichat search 'your query' | grep $WORKTREE_NAME"
+}
+
+cmd_help() {
+    cat << EOF
+${BLUE}Convos iOS Task Management${NC}
+
+Manage parallel tasks using git worktrees + Graphite
+
+${GREEN}Commands:${NC}                   ${YELLOW}Shortcuts:${NC}
+  console                   Launch interactive TUI dashboard              ${YELLOW}con${NC}
+  new <task-name> [parent]  Create new worktree and Graphite branch       ${YELLOW}n${NC}
+  list                      List all active worktrees                     ${YELLOW}l, ls${NC}
+  switch <task-name>        Open Claude in terminal for task              ${YELLOW}sw, o${NC}
+  submit [task-name]        Submit PR via Graphite (gt submit)            ${YELLOW}sub, pr${NC}
+  sync [task-name]          Sync with Graphite stack (gt sync)            ${YELLOW}sy${NC}
+  cleanup <task-name>       Remove worktree, branch, and simulator        ${YELLOW}c, rm${NC}
+  prune                     Remove all worktrees with merged branches     ${YELLOW}p${NC}
+  sessions [task] [query]   List/search sessions for a task               ${YELLOW}ss${NC}
+  context [task-name]       Show latest session and recovery info         ${YELLOW}ctx${NC}
+  help                      Show this help                                ${YELLOW}h${NC}
+
+${GREEN}Examples:${NC}
+  convos-task console
+  convos-task new push-notifications
+  convos-task new bug-fix dev
+  convos-task list
+  convos-task submit push-notifications
+  convos-task cleanup push-notifications
+  convos-task prune
+  convos-task sessions push-notifications
+  convos-task sessions push-notifications "error handling"
+  convos-task context push-notifications
+
+${GREEN}Workflow:${NC}
+  1. ${BLUE}convos-task console${NC}              # Launch TUI to manage all tasks
+  OR
+  1. ${BLUE}convos-task new my-feature${NC}       # Creates worktree + launches Claude
+  2. Work on feature in Claude Code...
+  3. ${BLUE}convos-task submit my-feature${NC}    # Submit PR via Graphite
+  4. ${BLUE}convos-task cleanup my-feature${NC}   # Remove when done
+
+${GREEN}Console (TUI):${NC}
+  The convos-task-console provides an interactive dashboard for managing tasks:
+  - Visual overview of all worktrees with status indicators
+  - Split-pane layout with task list and Claude session
+  - Keyboard shortcuts for common operations
+  - Status monitoring (waiting, running, idle, error)
+
+${GREEN}Session History:${NC}
+  - ${BLUE}convos-task sessions${NC}            # Show sessions for current task
+  - ${BLUE}convos-task context${NC}             # Get recovery info for last session
+  - Sessions are searchable across all worktrees via 'aichat search'
+
+${YELLOW}Notes:${NC}
+  - Each worktree is a separate Claude Code session
+  - Graphite branches are automatically stacked
+  - Each task gets a dedicated iOS simulator (convos-<task-name>)
+  - Base simulator is auto-detected (set CONVOS_BASE_SIMULATOR to override)
+  - Use 'gt stack' in worktree to see stack structure
+EOF
+}
+
+# Main command dispatcher
+case "$1" in
+    console|con)
+        cmd_console
+        ;;
+    new|n)
+        cmd_new "$2" "$3"
+        ;;
+    list|ls|l)
+        cmd_list
+        ;;
+    switch|open|sw|o)
+        cmd_switch "$2"
+        ;;
+    submit|pr|sub)
+        cmd_submit "$2"
+        ;;
+    sync|sy)
+        cmd_sync "$2"
+        ;;
+    cleanup|done|rm|c)
+        cmd_cleanup "$2"
+        ;;
+    prune|p)
+        cmd_prune
+        ;;
+    sessions|ss)
+        cmd_sessions "$2" "$3"
+        ;;
+    context|ctx)
+        cmd_context "$2"
+        ;;
+    help|--help|-h|"")
+        cmd_help
+        ;;
+    *)
+        echo -e "${RED}Unknown command: $1${NC}"
+        echo "Run 'convos-task help' for usage"
+        exit 1
+        ;;
+esac

@@ -1,0 +1,66 @@
+version: 2
+updates:
+  # Each local Swift Package has its own Package.swift / Package.resolved,
+  # so dependabot needs an entry per package directory.
+  - package-ecosystem: swift
+    directory: /ConvosCore
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - patch
+          - minor
+    ignore:
+      - dependency-name: '*'
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: swift
+    directory: /ConvosInvites
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - patch
+          - minor
+
+  - package-ecosystem: swift
+    directory: /ConvosAppData
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - patch
+          - minor
+
+  - package-ecosystem: swift
+    directory: /ConvosLogging
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - patch
+          - minor
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5

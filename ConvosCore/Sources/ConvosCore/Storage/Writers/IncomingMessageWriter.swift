@@ -1,0 +1,466 @@
+import Foundation
+import GRDB
+@preconcurrency import XMTPiOS
+
+struct IncomingMessageWriterResult: Sendable {
+    let contentType: MessageContentType
+    let wasRemovedFromConversation: Bool
+    let messageAlreadyExists: Bool
+}
+
+enum ExplodeSettingsResult: Sendable {
+    case fromSelf
+    case alreadyExpired
+    case unauthorized
+    case applied(expiresAt: Date)
+    case scheduled(expiresAt: Date)
+}
+
+protocol IncomingMessageWriterProtocol: Sendable {
+    func store(message: XMTPiOS.DecodedMessage,
+               for conversation: DBConversation) async throws -> IncomingMessageWriterResult
+
+    func decodeExplodeSettings(from message: XMTPiOS.DecodedMessage) -> ExplodeSettings?
+
+    func processExplodeSettings(
+        _ settings: ExplodeSettings,
+        conversationId: String,
+        senderInboxId: String,
+        currentInboxId: String
+    ) async -> ExplodeSettingsResult
+}
+
+/// @unchecked Sendable: GRDB's DatabaseWriter provides thread-safe access via write{}
+/// closures with an internal serial queue. The only property is an immutable reference.
+class IncomingMessageWriter: IncomingMessageWriterProtocol, @unchecked Sendable {
+    private let databaseWriter: any DatabaseWriter
+
+    init(databaseWriter: any DatabaseWriter) {
+        self.databaseWriter = databaseWriter
+    }
+
+    // swiftlint:disable:next function_body_length cyclomatic_complexity
+    func store(message: DecodedMessage,
+               for conversation: DBConversation) async throws -> IncomingMessageWriterResult {
+        let encodedContentType = try message.encodedContent.type
+
+        if encodedContentType == ContentTypeReaction || encodedContentType == ContentTypeReactionV2 {
+            let content = try message.content() as Any
+            if let reaction = content as? Reaction {
+                switch reaction.action {
+                case .removed:
+                    return try await handleReactionRemoval(
+                        message: message,
+                        reaction: reaction,
+                        conversation: conversation
+                    )
+                case .added:
+                    return try await handleReactionAddition(
+                        message: message,
+                        reaction: reaction,
+                        conversation: conversation
+                    )
+                case .unknown:
+                    Log.warning("Received unknown reaction action, ignoring")
+                    return IncomingMessageWriterResult(
+                        contentType: .emoji,
+                        wasRemovedFromConversation: false,
+                        messageAlreadyExists: false
+                    )
+                }
+            }
+        }
+
+        let result = try await databaseWriter.write { db -> IncomingMessageWriterResult? in
+            let senderVerified = try Self.bootstrapSenderProfile(
+                db: db,
+                conversationId: conversation.id,
+                senderInboxId: message.senderInboxId
+            )
+
+            // Defense against unverified or spoofed ConnectionGrantRequest senders:
+            // only persist grant requests whose sender is a verified Convos assistant
+            // in this conversation. Anything else gets dropped silently with a warning
+            // so the UI never has a chance to render the deep-link card.
+            if encodedContentType == ContentTypeConnectionGrantRequest, !senderVerified {
+                Log.warning("Dropping ConnectionGrantRequest from unverified sender \(message.senderInboxId) in \(conversation.id)")
+                return nil
+            }
+
+            let message = try message.dbRepresentation()
+
+            let messageExistsInDB = try DBMessage.exists(db, key: message.id)
+            // @jarodl temporary, this should happen somewhere else more explicitly.
+            let localInboxId = try DBInbox.fetchAll(db).first?.inboxId
+            let wasRemovedFromConversation: Bool = {
+                guard let localInboxId, let removed = message.update?.removedInboxIds else { return false }
+                return removed.contains(localInboxId)
+            }()
+
+            Log.debug("Storing incoming message \(message.id) localId \(message.clientMessageId) echoDateNs=\(message.dateNs)")
+            if !message.attachmentUrls.isEmpty {
+                Log.debug("[IncomingMessageWriter] Incoming attachmentUrls: \(message.attachmentUrls.map { $0.prefix(80) })")
+            }
+            // see if this message has a local version
+            if let localMessage = try DBMessage
+                .filter(DBMessage.Columns.id == message.id)
+                .filter(DBMessage.Columns.clientMessageId != message.id)
+                .fetchOne(db) {
+                // Keep using the same local clientMessageId, sortId, and attachmentUrls
+                // Preserving attachmentUrls is critical for maintaining AttachmentLocalState lookup
+                Log.debug("BRANCH 1: Found local message \(localMessage.clientMessageId) for incoming message \(message.id)")
+                let updatedMessage = message
+                    .with(clientMessageId: localMessage.clientMessageId)
+                    .with(sortId: localMessage.sortId)
+                    .with(attachmentUrls: localMessage.attachmentUrls)
+                try updatedMessage.save(db)
+                Log.debug("BRANCH 1: Updated with clientMessageId=\(localMessage.clientMessageId), sortId=\(localMessage.sortId ?? -1)")
+            } else if let existingMessage = try DBMessage.fetchOne(db, key: message.id),
+                      existingMessage.hasLocalAttachments {
+                // Message exists with local attachment URLs (outgoing photo) - preserve them and sortId
+                Log.debug("BRANCH 2: Preserving local attachments for message \(message.id)")
+                let updatedMessage = message
+                    .with(attachmentUrls: existingMessage.attachmentUrls)
+                    .with(sortId: existingMessage.sortId)
+                try updatedMessage.save(db)
+                Log.debug("BRANCH 2: Saved with local attachments, sortId=\(existingMessage.sortId ?? -1)")
+            } else if let existingMessage = try DBMessage.fetchOne(db, key: message.id) {
+                // Message exists but BRANCH 1 and BRANCH 2 didn't match
+                // Keep clientMessageId, sortId, and attachmentUrls for stable UI identity
+                // Preserving attachmentUrls is critical: we've migrated AttachmentLocalState
+                // to match our local key, so using the incoming key would break the lookup
+                Log.debug("BRANCH 3: Found existing message \(message.id)")
+                if !existingMessage.attachmentUrls.isEmpty || !message.attachmentUrls.isEmpty {
+                    Log.debug("[BRANCH 3] Existing attachmentUrls: \(existingMessage.attachmentUrls.map { $0.prefix(80) })")
+                    Log.debug("[BRANCH 3] Incoming attachmentUrls: \(message.attachmentUrls.map { $0.prefix(80) })")
+                    let keysMatch = existingMessage.attachmentUrls == message.attachmentUrls
+                    Log.debug("[BRANCH 3] Keys match: \(keysMatch), preserving existing")
+                }
+                let updatedMessage = message
+                    .with(clientMessageId: existingMessage.clientMessageId)
+                    .with(sortId: existingMessage.sortId)
+                    .with(attachmentUrls: existingMessage.attachmentUrls)
+                try updatedMessage.save(db)
+                Log.debug("BRANCH 3: Saved with clientMessageId=\(existingMessage.clientMessageId), sortId=\(existingMessage.sortId ?? -1)")
+            } else {
+                // Truly new incoming message - assign sortId based on chronological position.
+                // Find the correct insertion point by dateNs so messages from the NSE
+                // and main app always end up in chronological order regardless of
+                // which process writes first.
+                let newSortId = try Self.chronologicalSortId(
+                    for: message.dateNs,
+                    messageId: message.id,
+                    conversationId: conversation.id,
+                    in: db
+                )
+                let messageWithSortId = message.with(sortId: newSortId)
+
+                do {
+                    try messageWithSortId.save(db)
+                    Log.debug("BRANCH 4 (new): Saved incoming message: \(message.id) with sortId=\(newSortId)")
+                } catch {
+                    Log.error("Failed saving incoming message \(message.id): \(error)")
+                    throw error
+                }
+            }
+
+            if let update = message.update, !update.addedInboxIds.isEmpty {
+                for addedInboxId in update.addedInboxIds {
+                    try DBConversationMember
+                        .filter(DBConversationMember.Columns.conversationId == conversation.id)
+                        .filter(DBConversationMember.Columns.inboxId == addedInboxId)
+                        .filter(DBConversationMember.Columns.invitedByInboxId == nil)
+                        .updateAll(db, DBConversationMember.Columns.invitedByInboxId.set(to: update.initiatedByInboxId))
+                }
+            }
+
+            return IncomingMessageWriterResult(
+                contentType: message.contentType,
+                wasRemovedFromConversation: wasRemovedFromConversation,
+                messageAlreadyExists: messageExistsInDB
+            )
+        }
+
+        // Dropped messages (e.g. unverified-sender ConnectionGrantRequests) return
+        // nil from the write block so the rest of the ingest pipeline treats them
+        // as a no-op rather than a new message.
+        guard let result else {
+            return IncomingMessageWriterResult(
+                contentType: .connectionGrantRequest,
+                wasRemovedFromConversation: false,
+                messageAlreadyExists: true
+            )
+        }
+
+        if !result.messageAlreadyExists {
+            QAEvent.emit(.message, "received", [
+                "id": message.id,
+                "conversation": conversation.id,
+                "sender": message.senderInboxId,
+                "type": result.contentType.rawValue
+            ])
+        }
+
+        // Post notification after transaction commits
+        if result.wasRemovedFromConversation && !result.messageAlreadyExists {
+            conversation.postLeftConversationNotification()
+        }
+
+        return result
+    }
+
+    private func handleReactionAddition(
+        message: DecodedMessage,
+        reaction: Reaction,
+        conversation: DBConversation
+    ) async throws -> IncomingMessageWriterResult {
+        let reactionAlreadyExists = try await databaseWriter.write { db -> Bool in
+            let sender = DBMember(inboxId: message.senderInboxId)
+            try sender.save(db)
+            let senderProfile = DBMemberProfile(
+                conversationId: conversation.id,
+                inboxId: message.senderInboxId,
+                name: nil,
+                avatar: nil
+            )
+            try? senderProfile.insert(db)
+
+            let existingReaction = try DBMessage
+                .filter(DBMessage.Columns.sourceMessageId == reaction.reference)
+                .filter(DBMessage.Columns.senderId == message.senderInboxId)
+                .filter(DBMessage.Columns.emoji == reaction.emoji)
+                .filter(DBMessage.Columns.messageType == DBMessageType.reaction.rawValue)
+                .fetchOne(db)
+
+            if let existingReaction {
+                let updatedReaction = existingReaction.with(status: .published)
+                try updatedReaction.save(db)
+                Log.debug("Updated existing reaction \(existingReaction.id) status to published")
+                return true
+            } else {
+                let dbMessage = try message.dbRepresentation()
+                try dbMessage.save(db)
+                Log.debug("Saved new incoming reaction \(message.id)")
+                return false
+            }
+        }
+        if !reactionAlreadyExists {
+            QAEvent.emit(.reaction, "received", [
+                "message": reaction.reference,
+                "emoji": reaction.emoji,
+                "sender": message.senderInboxId,
+                "conversation": conversation.id
+            ])
+        }
+        return IncomingMessageWriterResult(
+            contentType: .emoji,
+            wasRemovedFromConversation: false,
+            messageAlreadyExists: reactionAlreadyExists
+        )
+    }
+
+    private func handleReactionRemoval(
+        message: DecodedMessage,
+        reaction: Reaction,
+        conversation: DBConversation
+    ) async throws -> IncomingMessageWriterResult {
+        try await databaseWriter.write { db in
+            let deletedCount = try DBMessage
+                .filter(DBMessage.Columns.sourceMessageId == reaction.reference)
+                .filter(DBMessage.Columns.senderId == message.senderInboxId)
+                .filter(DBMessage.Columns.emoji == reaction.emoji)
+                .filter(DBMessage.Columns.messageType == DBMessageType.reaction.rawValue)
+                .deleteAll(db)
+            Log.debug("Deleted \(deletedCount) reaction(s) for message \(reaction.reference) from \(message.senderInboxId)")
+        }
+        return IncomingMessageWriterResult(
+            contentType: .emoji,
+            wasRemovedFromConversation: false,
+            messageAlreadyExists: false
+        )
+    }
+
+    func decodeExplodeSettings(from message: DecodedMessage) -> ExplodeSettings? {
+        guard let encodedContentType = try? message.encodedContent.type,
+              encodedContentType == ContentTypeExplodeSettings else {
+            return nil
+        }
+
+        guard let content = try? message.content() as Any,
+              let explodeSettings = content as? ExplodeSettings else {
+            Log.error("Failed to extract ExplodeSettings content")
+            return nil
+        }
+
+        return explodeSettings
+    }
+
+    /// Ensures the sender has a row in `DBMember` and a `DBMemberProfile` for the
+    /// conversation. Returns true when the existing profile is already marked as a
+    /// verified Convos assistant — used to gate persisting sensitive content types
+    /// whose rendering assumes the sender is trusted.
+    static func bootstrapSenderProfile(
+        db: Database,
+        conversationId: String,
+        senderInboxId: String
+    ) throws -> Bool {
+        let sender = DBMember(inboxId: senderInboxId)
+        try sender.save(db)
+        let existingProfile = try DBMemberProfile.fetchOne(
+            db,
+            conversationId: conversationId,
+            inboxId: senderInboxId
+        )
+        if existingProfile == nil {
+            let newProfile = DBMemberProfile(
+                conversationId: conversationId,
+                inboxId: senderInboxId,
+                name: nil,
+                avatar: nil
+            )
+            try? newProfile.insert(db)
+        }
+        return existingProfile?.agentVerification.isConvosAssistant ?? false
+    }
+
+    /// Computes a sortId that places the message in chronological order within the conversation.
+    ///
+    /// Instead of always appending (`MAX(sortId) + 1`), this finds the correct position
+    /// based on `dateNs` and shifts later messages to make room. This ensures messages
+    /// processed out of order (e.g., by the NSE vs main app) still display chronologically.
+    ///
+    /// Tiebreaker: when two messages share the same `dateNs`, the message with the
+    /// lexicographically smaller `id` (XMTP hex-encoded message IDs) is placed first
+    /// for deterministic ordering.
+    ///
+    /// Performance: the shift operation is O(n) where n is the number of messages after
+    /// the insertion point. This is acceptable because (a) most incoming messages append
+    /// to the end (no shift needed), and (b) the out-of-order case from NSE catch-up
+    /// typically involves only a few messages near the tail. The existing
+    /// `(conversationId, sortId)` index keeps the UPDATE efficient.
+    static func chronologicalSortId(
+        for dateNs: Int64,
+        messageId: String,
+        conversationId: String,
+        in db: Database
+    ) throws -> Int64 {
+        // Find the sortId of the message that should come immediately before this one.
+        // "Before" means: smaller dateNs, or same dateNs with smaller id (tiebreaker).
+        // Reactions have nil sortId and are excluded via the IS NOT NULL filter.
+        let predecessorSortId = try Int64.fetchOne(db, sql: """
+            SELECT sortId FROM message
+            WHERE conversationId = ?
+              AND sortId IS NOT NULL
+              AND (dateNs < ? OR (dateNs = ? AND id < ?))
+            ORDER BY dateNs DESC, id DESC
+            LIMIT 1
+        """, arguments: [conversationId, dateNs, dateNs, messageId])
+
+        // 0 means no predecessor found — this message is the oldest in the conversation
+        let insertAfter = predecessorSortId ?? 0
+
+        // Shift all messages with sortId > insertAfter up by 1 to make room
+        try db.execute(sql: """
+            UPDATE message SET sortId = sortId + 1
+            WHERE conversationId = ? AND sortId > ?
+        """, arguments: [conversationId, insertAfter])
+
+        return insertAfter + 1
+    }
+
+    func processExplodeSettings(
+        _ settings: ExplodeSettings,
+        conversationId: String,
+        senderInboxId: String,
+        currentInboxId: String
+    ) async -> ExplodeSettingsResult {
+        if senderInboxId == currentInboxId {
+            Log.debug("ExplodeSettings: from self, skipping")
+            return .fromSelf
+        }
+
+        enum WriteResult {
+            case updated
+            case alreadyExpired
+            case unauthorized
+            case notFound
+        }
+
+        do {
+            let writeResult = try await databaseWriter.write { db -> WriteResult in
+                guard let dbConversation = try DBConversation.fetchOne(db, key: conversationId) else {
+                    return .notFound
+                }
+
+                // Permission check: only creator or admin/superAdmin can explode
+                let isCreator = senderInboxId == dbConversation.creatorId
+                var hasAdminRole = false
+                if !isCreator {
+                    if let senderMember = try DBConversationMember.fetchOne(
+                        db,
+                        key: ["conversationId": conversationId, "inboxId": senderInboxId]
+                    ) {
+                        hasAdminRole = senderMember.role == .admin || senderMember.role == .superAdmin
+                    }
+                }
+
+                guard isCreator || hasAdminRole else {
+                    return .unauthorized
+                }
+
+                if let existingExpiresAt = dbConversation.expiresAt {
+                    if settings.expiresAt < existingExpiresAt {
+                        let updated = dbConversation.with(expiresAt: settings.expiresAt)
+                        try updated.save(db)
+                        return .updated
+                    }
+                    return .alreadyExpired
+                }
+                let updated = dbConversation.with(expiresAt: settings.expiresAt)
+                try updated.save(db)
+                return .updated
+            }
+
+            switch writeResult {
+            case .notFound, .alreadyExpired:
+                Log.debug("ExplodeSettings: conversation not found or already has expiresAt, skipping")
+                return .alreadyExpired
+            case .unauthorized:
+                Log.warning("ExplodeSettings: sender \(senderInboxId) is not authorized to explode conversation \(conversationId)")
+                return .unauthorized
+            case .updated:
+                break
+            }
+
+            // Check if scheduled AFTER DB write to avoid time drift during async operation
+            let isScheduled = settings.expiresAt.timeIntervalSinceNow > 0
+            if isScheduled {
+                Log.info("ExplodeSettings: scheduled for \(settings.expiresAt), posting conversationScheduledExplosion for \(conversationId)")
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: .conversationScheduledExplosion,
+                        object: nil,
+                        userInfo: [
+                            "conversationId": conversationId,
+                            "expiresAt": settings.expiresAt
+                        ]
+                    )
+                }
+                return .scheduled(expiresAt: settings.expiresAt)
+            } else {
+                Log.info("ExplodeSettings: immediate, posting conversationExpired for \(conversationId)")
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: .conversationExpired,
+                        object: nil,
+                        userInfo: ["conversationId": conversationId]
+                    )
+                }
+                return .applied(expiresAt: settings.expiresAt)
+            }
+        } catch {
+            Log.error("Failed to write expiresAt for conversation \(conversationId): \(error.localizedDescription)")
+            return .alreadyExpired
+        }
+    }
+}
