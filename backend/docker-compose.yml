@@ -188,7 +188,7 @@ services:
       PGDATABASE: goldilocks
       # F5 — pg_dump also goes over TLS against the SSL-only postgres.
       PGSSLMODE: verify-full
-      PGSSLROOTCERT: /secrets/secrets/tls/ca.crt
+      PGSSLROOTCERT: /backup/secrets/tls/ca.crt
       RESTIC_REPOSITORY: /repo
       RESTIC_PASSWORD_FILE: /run/secrets/restic_password
       BACKUP_SOURCE_REPOS: /source/goldilocks-backend,/source/goldilocks-ios
@@ -202,12 +202,17 @@ services:
       # src/config.ts). Backup.sh tolerates this being missing if dev
       # is configured with STORAGE_PROVIDER=mock.
       - ./.attachments:/attachments:ro
-      # Secrets bundle: dev/ holds dev-only certs / keys, secrets/
-      # holds the shared TLS material + age keys. .env.dev is mounted
-      # alongside so the snapshot captures it too.
-      - ./dev:/secrets/dev:ro
-      - ./secrets:/secrets/secrets:ro
-      - ./.env.dev:/secrets/.env.dev:ro
+      # Secrets bundle. Mount into a dedicated /backup/... namespace so
+      # nothing under it can collide with its own subdirectory names
+      # during staging — earlier we had ./secrets:/secrets/secrets which
+      # produced /snapshot/secrets/secrets/, and the resulting restore
+      # then recreated ./secrets/secrets/ on the host, growing one
+      # nesting level per backup/restore cycle.
+      - ./secrets:/backup/secrets:ro
+      - ./.env.dev:/backup/env-files/.env.dev:ro
+      # NOTE: ./dev/ is intentionally not mounted — its contents are
+      # all committed to git (Caddyfile, Dockerfile.backup, restore-drill)
+      # and would just add weight + recursion risk to the snapshot.
       - ./dev/restic-passphrase.dev:/run/secrets/restic_password:ro
       - .:/source/goldilocks-backend:ro
       - ${HOST_GOLDILOCKS_IOS_DIR:-../goldilocks-ios}:/source/goldilocks-ios:ro

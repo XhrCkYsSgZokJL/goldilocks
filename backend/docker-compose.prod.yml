@@ -175,7 +175,7 @@ services:
       PGDATABASE: ${POSTGRES_DB:-goldilocks}
       # F5 — pg_dump also goes over TLS to the SSL-only postgres above.
       PGSSLMODE: verify-full
-      PGSSLROOTCERT: /secrets/secrets/tls/ca.crt
+      PGSSLROOTCERT: /backup/secrets/tls/ca.crt
       RESTIC_REPOSITORY: /repo
       RESTIC_PASSWORD_FILE: /run/secrets/restic_password
       # Repos to bundle. The CLI resolves HOST_GOLDILOCKS_IOS_DIR via
@@ -191,10 +191,14 @@ services:
       # mutate live data from inside the backup container.
       - goldilocks-agent-data:/agent-data:ro
       - goldilocks-attachments:/attachments:ro
-      # Secrets bundle. The .env.prod file is mounted alongside the
-      # secrets dir under /secrets so the snapshot captures both.
-      - ./secrets:/secrets/secrets:ro
-      - ./.env.prod:/secrets/.env.prod:ro
+      # Secrets bundle. Mount into a dedicated /backup/... namespace so
+      # nothing under it can collide with its own subdirectory names
+      # during staging — earlier we had ./secrets:/secrets/secrets which
+      # produced /snapshot/secrets/secrets/, and the resulting restore
+      # then recreated ./secrets/secrets/ on the host, growing one
+      # nesting level per backup/restore cycle.
+      - ./secrets:/backup/secrets:ro
+      - ./.env.prod:/backup/env-files/.env.prod:ro
       # Restic passphrase. The operator chooses where this lives —
       # default is ./.restic-passphrase.prod (chmod 600, gitignored).
       - ./.restic-passphrase.prod:/run/secrets/restic_password:ro

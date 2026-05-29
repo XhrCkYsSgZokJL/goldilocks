@@ -323,8 +323,31 @@ log "restoring secrets bundle"
 mkdir -p ./secrets
 SECRETS_SRC="$(find_staged_dir secrets)"
 if [[ -n "${SECRETS_SRC}" && -d "${SECRETS_SRC}" ]]; then
-  cp -aR "${SECRETS_SRC}/." ./secrets/
-  if [[ -f "${SECRETS_SRC}/.env.${ENV_NAME}" ]]; then
+  # Two on-disk layouts exist:
+  #
+  #   NEW (post-recursion-fix): SECRETS_SRC is the host ./secrets/ tree
+  #     directly — its top level is .age/, tls/, *.env.enc.
+  #
+  #   LEGACY (pre-fix): the bind mount overlapped its own subdir name
+  #     so SECRETS_SRC has a `secrets/` containing the real material
+  #     and a `dev/` artifact alongside (a copy of the repo's dev/
+  #     tree from when ./dev:/secrets/dev:ro was mounted).
+  #
+  # Detect by looking for .age/ or tls/ at each candidate level.
+  REAL_SECRETS="${SECRETS_SRC}"
+  if [[ ! -d "${SECRETS_SRC}/.age" && ! -d "${SECRETS_SRC}/tls" ]]; then
+    if [[ -d "${SECRETS_SRC}/secrets/.age" || -d "${SECRETS_SRC}/secrets/tls" ]]; then
+      REAL_SECRETS="${SECRETS_SRC}/secrets"
+      log "detected legacy recursion layout — restoring from ${REAL_SECRETS}"
+    fi
+  fi
+  cp -aR "${REAL_SECRETS}/." ./secrets/
+
+  # New layout puts the env file at the top of STAGE; legacy layout
+  # had it inside the secrets bundle (next to dev/).
+  if [[ -f "${STAGE}/.env.${ENV_NAME}" ]]; then
+    cp -a "${STAGE}/.env.${ENV_NAME}" "./.env.${ENV_NAME}"
+  elif [[ -f "${SECRETS_SRC}/.env.${ENV_NAME}" ]]; then
     cp -a "${SECRETS_SRC}/.env.${ENV_NAME}" "./.env.${ENV_NAME}"
   fi
 else

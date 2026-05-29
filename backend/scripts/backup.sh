@@ -141,10 +141,16 @@ fi
 # Path layout under STAGE that restore.sh expects:
 #   ${STAGE}/agent-data
 #   ${STAGE}/attachments
-#   ${STAGE}/secrets
+#   ${STAGE}/secrets                    contents of host ./secrets/
+#   ${STAGE}/.env.<env>                  the active env file
 #   ${STAGE}/repo-snapshot.txt
 #   ${STAGE}/repos/*.bundle
 #   (db.dump is streamed directly into restic via stdin, no copy)
+#
+# Bind mounts on the backup container land the secret material under
+# /backup/... so it never overlaps with its own subdirectory names —
+# an earlier design used ./secrets:/secrets/secrets which produced
+# /snapshot/secrets/secrets/ and grew one nesting level per cycle.
 
 copy_with_retry() {
   local src="$1" dst="$2"
@@ -171,9 +177,23 @@ stage_dir() {
   fi
 }
 
-stage_dir /agent-data  agent-data
-stage_dir /attachments attachments
-stage_dir /secrets     secrets
+stage_dir /agent-data     agent-data
+stage_dir /attachments    attachments
+stage_dir /backup/secrets secrets
+
+# Env files are mounted individually under /backup/env-files so each one
+# can be captured even when its filename has a leading dot (which a single
+# bind mount of the parent dir would hide). Copy each one to the top of
+# STAGE so restore.sh can put them back next to docker-compose.yml.
+if [[ -d /backup/env-files ]]; then
+  log "staging env files"
+  shopt -s nullglob dotglob
+  for envfile in /backup/env-files/.env.* /backup/env-files/.env; do
+    [[ -f "${envfile}" ]] || continue
+    cp -a "${envfile}" "${STAGE}/$(basename "${envfile}")"
+  done
+  shopt -u nullglob dotglob
+fi
 
 # ----- 4. snapshot the staged tree ------------------------------------------
 
