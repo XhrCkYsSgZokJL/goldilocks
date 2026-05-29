@@ -25,7 +25,9 @@ private struct SafariTestSheet: View {
         .safariSheet(url: $safariURL)
     }
 }
+#if canImport(Sentry)
 import Sentry
+#endif
 import SwiftUI
 import UIKit
 
@@ -379,13 +381,23 @@ extension DebugViewSection {
         GlobalConvoDefaults.shared.reset()
     }
 
+    // The Sentry test buttons no-op while the Sentry dep is removed (see
+    // Convos/Config/SentryConfiguration.swift for the rationale). Calling
+    // them just emits a local log so the buttons stay visible — re-enable
+    // the real bodies (preserved in git history) when Sentry's XCFramework
+    // is rebuilt against Swift 5.10+ and added back to ConvosCore/Package.swift.
     func testSentryMessage() {
+        #if canImport(Sentry)
         let message = "Test message from local development - \(Date())"
         SentrySDK.capture(message: message)
         Log.info("Sent Sentry test message: \(message)")
+        #else
+        Log.info("Sentry disabled — testSentryMessage no-op")
+        #endif
     }
 
     func testSentryError() {
+        #if canImport(Sentry)
         let error = NSError(
             domain: "com.convos.debug",
             code: 999,
@@ -397,9 +409,13 @@ extension DebugViewSection {
         )
         SentrySDK.capture(error: error)
         Log.info("Sent Sentry test error")
+        #else
+        Log.info("Sentry disabled — testSentryError no-op")
+        #endif
     }
 
     func testSentryException() {
+        #if canImport(Sentry)
         let exception = NSException(
             name: .init("TestException"),
             reason: "Test exception from local debug view",
@@ -410,9 +426,13 @@ extension DebugViewSection {
         )
         SentrySDK.capture(exception: exception)
         Log.info("Sent Sentry test exception")
+        #else
+        Log.info("Sentry disabled — testSentryException no-op")
+        #endif
     }
 
     func testSentryWithBreadcrumbs() {
+        #if canImport(Sentry)
         let crumb1 = Breadcrumb(level: .info, category: "navigation")
         crumb1.message = "User navigated to Debug view"
         crumb1.data = ["screen": "DebugView"]
@@ -425,5 +445,8 @@ extension DebugViewSection {
 
         SentrySDK.capture(message: "Event with breadcrumbs - \(Date())")
         Log.info("Sent Sentry event with breadcrumbs")
+        #else
+        Log.info("Sentry disabled — testSentryWithBreadcrumbs no-op")
+        #endif
     }
 }

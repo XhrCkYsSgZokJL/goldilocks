@@ -1,58 +1,17 @@
 import ConvosCore
 import Foundation
-import Sentry
 
+/// Sentry has been temporarily removed from the package graph — Sentry-cocoa's
+/// binary XCFramework currently ships a swiftinterface stamped with Swift
+/// 5.9.2, which Xcode 26 (Swift 6.3.1 effective-5.10) refuses to consume.
+///
+/// `configure()` is intentionally a no-op while Sentry is out. Every security
+/// event call site in `ConvosCore` / `Convos` is wrapped in
+/// `#if canImport(Sentry)`, so local logging continues to work. When Sentry
+/// re-ships an XCFramework built with Swift 5.10 or newer, restore this file
+/// from git history and re-add the dependency in `ConvosCore/Package.swift`.
 enum SentryConfiguration {
     static func configure() {
-        guard shouldEnableSentry() else {
-            Log.info("Sentry disabled: not a Convos (Dev) distribution build")
-            return
-        }
-
-        let dsn = Secrets.SENTRY_DSN
-        guard !dsn.isEmpty else {
-            Log.error("Sentry DSN is empty, skipping initialization")
-            return
-        }
-
-        let envName = ConfigManager.shared.currentEnvironment.name
-        Log.info("Initializing Sentry for environment: \(envName)")
-
-        SentrySDK.start { options in
-            options.dsn = dsn
-            options.debug = true
-            // Screenshots can capture conversation content, profile data, and other
-            // sensitive UI. View hierarchy is retained because it carries structure
-            // without rendered text.
-            options.attachScreenshot = false
-            options.enableSigtermReporting = true
-            options.attachStacktrace = true
-            options.attachViewHierarchy = true
-
-            // Enable PII for internal team debugging in dev builds
-            // This captures IP addresses, user IDs, and request data
-            // Safe because .dev builds are only distributed to internal team via TestFlight
-            options.sendDefaultPii = true
-
-            options.environment = "\(envName)-debug"
-        }
-
-        Log.info("Sentry initialized successfully")
-    }
-
-    private static func shouldEnableSentry() -> Bool {
-        let environment = ConfigManager.shared.currentEnvironment
-
-        switch environment {
-        case .local:
-            // Local builds never use Sentry
-            return false
-        case .dev:
-            // Dev builds (TestFlight) use Sentry even with DEBUG flag
-            // This is intentional: Dev.xcconfig defines DEBUG for debugging Swift packages
-            return true
-        case .production, .tests:
-            return false
-        }
+        Log.info("Sentry disabled: dependency removed pending Swift 5.10+ XCFramework upstream")
     }
 }

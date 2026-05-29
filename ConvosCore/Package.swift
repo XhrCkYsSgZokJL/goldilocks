@@ -27,7 +27,13 @@ let package = Package(
         ),
         .package(url: "https://github.com/tesseract-one/CSecp256k1.swift.git", from: "0.2.0"),
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.31.1"),
-        .package(url: "https://github.com/getsentry/sentry-cocoa.git", from: "8.57.1"),
+        // Sentry temporarily removed — sentry-cocoa's binary XCFramework ships
+        // with a swiftinterface stamped with Swift 5.9.2, which Xcode 26
+        // (Swift 6.3.1 effective-5.10) refuses to consume. Every Sentry call
+        // site in the security-event code is already guarded by
+        // `#if canImport(Sentry)`, so removing the dep makes them no-op
+        // cleanly without breaking any functional path. Re-add when Sentry
+        // ships an XCFramework built with Swift 5.10 or newer.
         .package(path: "../ConvosLogging"),
         .package(path: "../ConvosInvites"),
         .package(path: "../ConvosAppData"),
@@ -40,7 +46,6 @@ let package = Package(
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
                 .product(name: "CSecp256k1", package: "CSecp256k1.swift"),
-                .product(name: "Sentry", package: "sentry-cocoa"),
                 .product(name: "ConvosLogging", package: "ConvosLogging"),
                 .product(name: "ConvosInvites", package: "ConvosInvites"),
                 .product(name: "ConvosAppData", package: "ConvosAppData"),
