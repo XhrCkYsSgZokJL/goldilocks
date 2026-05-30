@@ -1,81 +1,81 @@
-# Goldilocks Backend
+# Backend
 
-Minimal backend that replaces the Convos backend for the Goldilocks Digital iOS app.
+Fastify + Postgres backend for the Goldilocks Digital iOS app. Handles auth, device registration, push subscriptions, billing, XMTP agents, and attachments.
 
-## What it does
+## Running
 
-- **Auth** — issues our own JWTs (no Firebase App Check). `POST /v2/auth/token`
-- **Device registration** — stores device + APNs push tokens. `POST /v2/device/register`
-- **Push subscriptions** — tracks which device subscribes to which XMTP topics, for handoff to the XMTP notification server. `POST /v2/notifications/subscribe`, `unsubscribe`, `DELETE /v2/notifications/unregister/:clientId`
-- **Attachments** — issues short-lived upload tokens for IPFS via Lighthouse. `GET /v2/attachments/presigned`
-
-What it does *not* do (yet): subscriptions/billing, AI agents, OAuth integrations, invite-code redemption.
-
-## Quick start
+From the monorepo root:
 
 ```bash
-# from goldilocks-backend/
-cp .env.example .env
-# edit .env: at minimum set JWT_SECRET (openssl rand -hex 32)
-
-npm install
-npm run migrate          # creates tables in Postgres
-npm run server:dev       # HTTP API — http://localhost:4000
-npm run agents:dev       # XMTP agent process (run in a second terminal)
+./dev/setup     # first-time setup (generates .env.dev + secrets)
+./dev/start     # Docker, migrations, server + agents (background)
+./dev/status    # check what's running
+./dev/stop      # tear down
+./dev/reset     # wipe Docker volumes + agent data + start fresh
 ```
 
-## Postgres
-
-Easiest: reuse the Postgres already running in convos-ios's `dev/up` stack. Default `DATABASE_URL` points at it (`postgres://postgres:xmtp@localhost:25432/goldilocks`). You may need to create the `goldilocks` database first:
+Operations scripts (from the monorepo root):
 
 ```bash
-docker exec -it convos-ios-db-1 psql -U postgres -c "CREATE DATABASE goldilocks;"
+./dev/admins list             # List admin slots
+./dev/admins add <name>       # Add an admin (prints upgrade code)
+./dev/backup list             # List backup snapshots
+./dev/backup run              # Run a backup now
+./dev/keys status             # Show key material status
+./dev/security status         # Show security config
 ```
 
-## Storage providers
+## API surface
 
-Set `STORAGE_PROVIDER` in `.env`:
-
-- `mock` — returns fake URLs; useful for local dev when you don't want to spend gas
-- `lighthouse` — real IPFS uploads via Lighthouse.storage; requires `LIGHTHOUSE_API_KEY` or a funded wallet via `LIGHTHOUSE_WALLET_PRIVATE_KEY`
-
-To swap to Pinata, Storacha, or anything else later: implement the `StorageProvider` interface in `src/storage/`.
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/v2/auth/token` | POST | Issue JWT (HS256, 1h TTL) + refresh token (30d) |
+| `/v2/auth/refresh` | POST | Rotate refresh token (RFC 6819 family revocation) |
+| `/v2/auth/challenge` | POST | Generate SIWE challenge for inbox verification |
+| `/v2/me` | POST | Verify SIWE signature, bind device to inbox |
+| `/v2/device/register` | POST | Store device + APNs push token |
+| `/v2/notifications/*` | POST/DELETE | Subscribe/unsubscribe/unregister push topics |
+| `/v2/attachments/presigned` | GET | Short-lived upload token for storage provider |
+| `/v2/admin/upgrade` | POST | Redeem admin upgrade code |
+| `/v2/stripe/webhook` | POST | Stripe payment events |
+| `/healthz` | GET | Health check |
 
 ## Project layout
 
 ```
 src/
-  server.ts                Fastify entry point
-  config.ts                env loading + validation
+  server.ts              Fastify entry point
+  config.ts              env loading + validation
+  crypto/                column encryption (AES-256-GCM, HKDF, HMAC lookup)
   db/
-    schema.ts              Drizzle schema
-    client.ts              connection pool
-    migrate.ts             runs SQL migrations
+    schema.ts            Drizzle schema
+    client.ts            connection pool (SSL required)
+    migrate.ts           SQL migration runner
   middleware/
-    jwt.ts                 verifies Bearer JWT, attaches deviceId
-  routes/
-    auth.ts                POST /v2/auth/token
-    devices.ts             POST /v2/device/register
-    notifications.ts       /v2/notifications/{subscribe,unsubscribe,unregister}
-    attachments.ts         GET /v2/attachments/presigned
-    health.ts              GET /healthz
+    jwt.ts               verifies X-Convos-AuthToken, attaches deviceId
+  routes/                one file per resource
   storage/
-    provider.ts            interface
-    lighthouse.ts          Lighthouse.storage impl
-    mock.ts                no-op impl for dev
-migrations/
-  001_initial.sql
+    provider.ts          interface
+    lighthouse.ts        Lighthouse.storage (IPFS)
+    mock.ts              no-op for local dev
+migrations/              numbered SQL files
+scripts/
+  admins.ts              admin slot management (add/remove/list)
+  dev-env.sh             Docker + migration orchestration
+  backup.sh              encrypted backup (restic + age)
+  restore.sh             backup restore
 ```
 
-## Why this is one folder inside convos-ios for now
+## Security
 
-Cowork's sandbox only had access to `convos-ios/`, so this lives here temporarily. To split it into its own private GitHub repo:
+See [Security Architecture](../docs/architecture/security-architecture.md) for the full picture. Backend-specific details are in [Security Backend](../docs/architecture/security-backend.md).
 
-```bash
-mv goldilocks-backend ../
-cd ../goldilocks-backend
-git init
-gh repo create goldilocks-digital/goldilocks-backend --private --source=. --remote=origin
-git add . && git commit -m "Initial backend scaffold"
-git push -u origin main
-```
+Key primitives: column encryption (F4), sealed env secrets via SOPS + age (F3), internal TLS between containers (F5), encrypted backups via restic + age (F1/F2).
+
+## Documentation
+
+All project documentation lives in [`docs/`](../docs/):
+
+- [Walkthrough](../docs/operations/walkthrough.md) — first-time setup guide
+- [Production Setup](../docs/operations/production-setup.md) — deployment runbook
+- [Encryption & Backup](../docs/operations/encryption-and-backup.md) — backup system design

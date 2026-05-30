@@ -18,7 +18,7 @@
 #
 # Tunables (env):
 #   SIM_DEVICE          iPhone model to clone from (default: "iPhone 17 Pro")
-#   CONVOS_DIR          path to convos-ios checkout
+#   CONVOS_DIR          path to monorepo root
 #   APP_PATH            full path to Convos.app (skip auto-detect)
 #   ADMIN_WAIT_SECS     how long to wait for admin to register (default: 60)
 
@@ -27,7 +27,7 @@ set -uo pipefail
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 COMPOSE_FILE="$SCRIPT_DIR/../docker-compose.yml"
 
-CONVOS_DIR="${CONVOS_DIR:-$HOME/Desktop/git/convos-ios}"
+CONVOS_DIR="${CONVOS_DIR:-$(dirname "$(dirname "$SCRIPT_DIR")")}"
 SIM_DEVICE="${SIM_DEVICE:-iPhone 17 Pro}"
 ADMIN_WAIT_SECS="${ADMIN_WAIT_SECS:-60}"
 BUNDLE_ID="org.convos.ios-local"

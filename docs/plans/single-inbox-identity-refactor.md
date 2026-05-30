@@ -63,7 +63,7 @@ All teammates share the `single-inbox-refactor` branch and coordinate through th
 - Files bugs and accessibility improvements into CXDB; the implementation agent folds fixes in.
 
 ### Test Agent (unit + integration)
-- Runs the Swift test suite: `./dev/up && swift test --package-path ConvosCore && ./dev/down`.
+- Runs the Swift test suite: `./dev/start && swift test --package-path ConvosCore && ./dev/stop`.
 - Focuses on the Docker-backed integration tests that exercise real XMTP flows against a local node. These are currently the flakiest surface in the repo, largely because multi-inbox coordination, LRU eviction, and pre-creation timing races produce intermittent failures that are hard to reproduce.
 - **Secondary goal**: use the simplification to make the integration suite reliable. Each checkpoint that removes a source of flake (e.g., C4 deletes `InboxLifecycleManager`) is an opportunity to de-flake tests. Record before/after flake rates in a dedicated file (`docs/plans/integration-test-stabilization-log.md`) so we have evidence the architecture change delivers the reliability dividend.
 - Reports regressions immediately so the implementation agent can address them in the same checkpoint.
@@ -109,7 +109,7 @@ The implementation side is deliberately thin — a single sequential "core" trac
 | Name | Role | Start condition |
 |------|------|-----------------|
 | `single-inbox-qa` | Simulator E2E via `qa/tests/structured/*.yaml` + CXDB | Immediately (establishes behavior baseline) |
-| `single-inbox-tests` | `./dev/up && swift test && ./dev/down`; owns raw numbers in `docs/plans/integration-test-stabilization-log.md`; drives C13 flake fixes | Immediately (records baseline flake rate) |
+| `single-inbox-tests` | `./dev/start && swift test && ./dev/stop`; owns raw numbers in `docs/plans/integration-test-stabilization-log.md`; drives C13 flake fixes | Immediately (records baseline flake rate) |
 | `single-inbox-review` | Architectural and code-quality review of each merged checkpoint (`code-reviewer` + `swift-architect` subagents) | Immediately |
 | `single-inbox-security` | Privacy/crypto boundary review (keychain attributes, iCloud sync, XMTP device sync, push payload, explode leaks, invite privacy, App Clip handoff) | Immediately; spikes activity at C3, C6, C7, C9, C10, C12 |
 | `single-inbox-docs` | ADR amendments, plan drift, stabilization-log narrative, invite-system follow-up plan, ADR 011, release notes | Immediately |
@@ -413,7 +413,7 @@ Each checkpoint below lists the **code** changes, the **ADR** edits that land wi
 - **Code**: Move files to `ConvosCore/Sources/ConvosCore/Profiles/`. No behavior change.
 - **ADR**: Note the package fold in ADR 005 "Related Files" section.
 - **QA**: None.
-- **Tests**: Full `./dev/up && swift test` must pass. Establishes the baseline flake rate for this branch — record it in the stabilization log.
+- **Tests**: Full `./dev/start && swift test` must pass. Establishes the baseline flake rate for this branch — record it in the stabilization log.
 
 ### C2 — New migration-0 schema + legacy-wipe detection
 - **Code**: Add new tables `DBMyProfile` and `DBProfileBroadcastQueue`; make `DBInbox` a singleton (enforce via uniqueness constraint on a fixed key column); delete `InboxActivityRepository` and its backing table; add legacy-data detection and wipe on first launch. The `inboxId`/`clientId` columns on `DBConversation`, `DBMessage`, `DBConversationMember`, and similar row tables are **left in place** — callers still depend on them and they will be dropped alongside the caller rewrites in C4.
@@ -508,7 +508,7 @@ Net effect on C4's PR diff: C4a+C4b+C4d land under C4. The column drop arrives w
 - **Code**: None.
 - **ADR**: Final pass — confirm ADR 002 status = Superseded with full context, ADR 003 Superseded, ADRs 004/005 amendments read cleanly, new "ADR 011 – Single-Inbox Identity Model" drafted and added as the canonical replacement for ADR 002.
 - **QA**: Run the full suite end-to-end; fix any drift discovered, then re-run. Produce a final CXDB report attached to the PR description.
-- **Tests**: Final `./dev/up && swift test && ./dev/down` run ×3 clean. Publish the final stabilization-log table in the PR description alongside the QA report.
+- **Tests**: Final `./dev/start && swift test && ./dev/stop` run ×3 clean. Publish the final stabilization-log table in the PR description alongside the QA report.
 
 #### C14 release notes (for the PR description)
 
@@ -605,7 +605,7 @@ once on first launch of this version. See ADR 011 §7.
 ### Pre-flight
 
 - [ ] `dev` branch up to date locally
-- [ ] Docker working: `./dev/up` succeeds, `./dev/down` cleans up
+- [ ] Docker working: `./dev/start` succeeds, `./dev/stop` cleans up
 - [ ] `convos-task` in PATH (`which ct`)
 - [ ] Full plan read by whoever's orchestrating
 
@@ -660,7 +660,7 @@ Each prompt is self-contained. Paste it as the first message to the correspondin
 >
 > Before starting C10, collaborate with `single-inbox-docs` to land `docs/plans/invite-system-single-inbox.md` — the shim must align with the full redesign.
 >
-> Follow CLAUDE.md conventions: Graphite workflow, `/lint`, `/build`, `/test`. Never skip hooks. When a Swift test suite run is required for a checkpoint, run `./dev/up && swift test --package-path ConvosCore && ./dev/down`.
+> Follow CLAUDE.md conventions: Graphite workflow, `/lint`, `/build`, `/test`. Never skip hooks. When a Swift test suite run is required for a checkpoint, run `./dev/start && swift test --package-path ConvosCore && ./dev/stop`.
 
 **`single-inbox-ui`**
 > UI implementation teammate. Scope: C11 (ViewModel rewiring, Quickname view layer wiring to the new GRDB-backed storage) and the implementation side of C13 (re-enable tests disabled in C2). Do not start until C9 has merged into `single-inbox-refactor`; `gt sync` before starting. Read `docs/plans/single-inbox-identity-refactor.md` end-to-end.
@@ -673,7 +673,7 @@ Each prompt is self-contained. Paste it as the first message to the correspondin
 > QA teammate. Read `qa/RULES.md` and `qa/SKILL.md` before starting. Establish a CXDB baseline run against the current tip of `single-inbox-refactor` before any changes land. After each checkpoint merges, re-run the relevant subset of `qa/tests/structured/*.yaml` and log bugs, accessibility gaps, and regressions to CXDB. Each checkpoint's "QA" line in `docs/plans/single-inbox-identity-refactor.md` tells you which test files are expected to change.
 
 **`single-inbox-tests`**
-> Test teammate. First task: run `./dev/up && swift test --package-path ConvosCore && ./dev/down` 10× against the current tip of `single-inbox-refactor` and record the baseline flake rate (per-test pass/fail) in `docs/plans/integration-test-stabilization-log.md` (create the file if missing — leave narrative sections blank for `single-inbox-docs` to fill). After each checkpoint merges, re-run and update the log. C4 and C13 are the biggest de-flake opportunities — drive flake rate toward zero. Each checkpoint's "Tests" line in `docs/plans/single-inbox-identity-refactor.md` lists expectations.
+> Test teammate. First task: run `./dev/start && swift test --package-path ConvosCore && ./dev/stop` 10× against the current tip of `single-inbox-refactor` and record the baseline flake rate (per-test pass/fail) in `docs/plans/integration-test-stabilization-log.md` (create the file if missing — leave narrative sections blank for `single-inbox-docs` to fill). After each checkpoint merges, re-run and update the log. C4 and C13 are the biggest de-flake opportunities — drive flake rate toward zero. Each checkpoint's "Tests" line in `docs/plans/single-inbox-identity-refactor.md` lists expectations.
 
 **`single-inbox-review`**
 > Code review teammate. Review every diff merged into `single-inbox-refactor` as checkpoints land. Use `code-reviewer` for line-level review and `swift-architect` for structural reviews (especially C4, C5, C8). Look for architectural drift from `docs/plans/single-inbox-identity-refactor.md`, anti-patterns, bugs, missing tests, CLAUDE.md/SwiftLint violations, dead code, and gratuitous complexity. Do not push code — file annotated findings back to the implementation teammate via the orchestrator. If you spot plan drift, flag it; `single-inbox-docs` will land the plan edit.

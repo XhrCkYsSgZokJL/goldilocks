@@ -353,7 +353,7 @@ The XMTPiOS SDK's `useDefaultHistorySyncUrl: true` (its default) resolves
 - `.dev`        → `https://message-history.dev.ephemera.network`
 - `.local`      → `http://localhost:5558` (overridable via
   `XMTPEnvironment.customHistorySyncUrl` or the `XMTP_HISTORY_SERVER_ADDRESS`
-  environment variable — used by the local Docker node in `./dev/up`)
+  environment variable — used by the local Docker node in `./dev/start`)
 
 **What device sync does here.** With one XMTP inbox per user and identity keys
 now synced via iCloud Keychain (C3), enabling device sync closes the loop: when

@@ -1,8 +1,61 @@
-# Convos iOS - Codebase Best Practices
+# Goldilocks Monorepo
 
-This document contains project-specific conventions and best practices for the Convos iOS codebase.
+This is the Goldilocks monorepo containing the iOS app and backend. The iOS app lives at the repo root (to preserve upstream cherry-pick compatibility with convos-ios), and the backend lives in `backend/`.
 
 > **Designers**: If you're a designer using Claude Code, see [.claude/DESIGNER.md](.claude/DESIGNER.md) for simplified instructions and quality gates.
+
+## Monorepo Layout
+
+```
+goldilocks/
+├── Convos/                    ← iOS app (SwiftUI views + ViewModels)
+├── Convos.xcodeproj/
+├── ConvosCore/                ← Swift Package: business logic, models, services
+├── ConvosAppData/             ← Shared foundation (protobuf, serialization)
+├── ConvosInvites/             ← Invite system package (120 tests)
+├── ConvosLogging/
+├── ConvosCoreiOS/             ← iOS-specific bridge implementations
+├── dev/                       ← Docker Compose for local XMTP node
+├── shared/
+│   ├── api-types.ts           ← Canonical API type definitions
+│   ├── brand.json             ← Whitelabel configuration
+│   └── codegen/               ← TypeScript → Swift/Zod generators
+├── backend/                   ← Node.js backend (Fastify + Postgres + XMTP agents)
+│   ├── src/
+│   ├── migrations/
+│   ├── scripts/
+│   └── docker-compose.yml
+├── package.json               ← Root: npm run codegen
+└── CLAUDE.md
+```
+
+### Shared Type System
+
+API types are defined once in `shared/api-types.ts` and code-generated into both Swift Codable structs and Zod validation schemas:
+
+```bash
+npm run codegen          # Generate both Swift and Zod
+npm run codegen:swift    # Swift only → ConvosCore/.../API/Generated/
+npm run codegen:zod      # Zod only → backend/src/generated/
+npm run codegen:check    # Verify generated files are fresh (for CI)
+```
+
+When adding or changing an API type: edit `shared/api-types.ts`, run `npm run codegen`, then commit the generated files alongside the source.
+
+### Whitelabel Configuration
+
+All brand strings, group names, icons, pricing, tier colors, and legal copy are driven by `shared/brand.json`. The iOS app reads it via `BrandConfig.shared` (loaded from the app bundle). The backend imports it directly.
+
+To whitelabel: edit `shared/brand.json` and rebuild. No code changes needed for brand name, support email, pricing, tier thresholds, group names, or icons.
+
+### Upstream Sync
+
+The iOS code stays at the repo root so cherry-picks from the upstream convos-ios repo work without path conflicts:
+
+```bash
+git fetch upstream
+git cherry-pick <commit>   # Paths match — no --prefix needed
+```
 
 ## Architecture & Organization
 
@@ -14,6 +67,7 @@ This document contains project-specific conventions and best practices for the C
 - **Main App (Convos)**: Views and ViewModels only (SwiftUI with UIKit integration where needed)
 - **App Clips**: Separate target for lightweight experiences
 - **Notification Service**: Extension for push notification handling
+- **Backend** (`backend/`): Fastify server, Postgres, XMTP agents, Stripe billing
 
 ### Module Architecture
 - All business logic, models, and services go in `ConvosCore`
@@ -233,7 +287,6 @@ All dependencies managed through SPM. See `ConvosCore/Package.swift` for current
 ### Environment Configuration
 - Use `ConfigManager` for environment-specific settings
 - Environments: Production, Development, Local
-- Firebase configuration per environment
 
 ## Deep Linking
 
@@ -270,7 +323,6 @@ Logger.error("Error message")
 - Never commit secrets or API keys
 - Use environment variables for sensitive configuration
 - Validate all deep links before processing
-- Use Firebase App Check for API protection
 
 ## Performance Guidelines
 
@@ -342,23 +394,56 @@ Fix the expression. Do not bump the threshold and do not `// swiftlint:disable` 
 
 ### Build Commands
 ```bash
-# Check for linting issues
+# iOS: Check for linting issues
 swiftlint
 
-# Auto-fix linting issues
+# iOS: Auto-fix linting issues
 swiftlint --fix
 
-# Format code
+# iOS: Format code
 swiftformat .
 
-# Run tests (Local environment on iOS Simulator)
+# iOS: Run tests (Local environment on iOS Simulator)
 xcodebuild test -scheme "Convos (Local)" -destination "platform=iOS Simulator,name=iPhone 17"
 
-# Build for device (Local environment)
+# iOS: Build for device (Local environment)
 xcodebuild build -scheme "Convos (Local)" -configuration Local
 
-# Clean build folder
+# iOS: Clean build folder
 xcodebuild clean -scheme "Convos (Local)" -configuration Local
+
+# Dev environment: First-time setup (generates .env.dev + secrets)
+./dev/setup
+
+# Dev environment: Start everything (Docker + server + agents)
+./dev/start
+
+# Dev environment: Stop everything (preserves data)
+./dev/stop
+
+# Dev environment: Full reset (wipes all data)
+./dev/reset
+
+# Dev environment: Check status
+./dev/status
+
+# Backend only: Install dependencies
+cd backend && npm install
+
+# Backend only: Run migrations
+cd backend && npm run migrate
+
+# Codegen: Regenerate Swift + Zod from shared/api-types.ts
+npm run codegen
+
+# Codegen: Verify generated files are fresh (CI check)
+npm run codegen:check
+
+# Operations scripts (admin management, security, backups, keys)
+./dev/admins list
+./dev/backup list
+./dev/keys status
+./dev/security status
 ```
 
 ### Xcode Project Settings
@@ -383,7 +468,7 @@ When migrating from `ObservableObject`:
 - **Follow existing patterns** in neighboring code
 - **Check dependencies** before using any library
 - **Run `/lint` before committing** - SwiftLint runs via `/lint` command and pre-commit hooks, not during builds (for faster compilation)
-- **Run the full test suite before pushing** - Start Docker with `./dev/up` if needed, run `swift test --package-path ConvosCore`, and verify all tests pass. Never push without a passing test run against your final code.
+- **Run the full test suite before pushing** - Start Docker with `./dev/start` if needed, run `swift test --package-path ConvosCore`, and verify all tests pass. Never push without a passing test run against your final code.
 
 ---
 
@@ -401,7 +486,6 @@ This project is configured for Claude Code CLI with specialized subagents, slash
 | `/test` | Run tests (ConvosCore by default) |
 | `/lint` | Check code with SwiftLint (run before committing) |
 | `/format` | Format code with SwiftFormat |
-| `/firebase-token` | Get Firebase App Check debug token from simulator logs |
 
 **Pre-commit workflow:** SwiftLint runs via `/lint` and pre-commit hooks, not during Xcode builds (for faster compilation). The pre-commit hook auto-fixes issues; run `/lint` manually to check before staging.
 
@@ -476,17 +560,17 @@ Use the `./dev/test` script for running tests. **Most tests require Docker** for
 ./dev/test
 
 # Start Docker manually, run tests, then stop
-./dev/up
+./dev/start
 swift test --package-path ConvosCore
-./dev/down
+./dev/stop
 
 # Run a single test
-./dev/up  # Start Docker first
+./dev/start  # Start Docker first
 swift test --filter "TestClassName" --package-path ConvosCore
-./dev/down  # Stop when done
+./dev/stop  # Stop when done
 ```
 
-**Docker is required.** If Docker is not running, start it with `./dev/up` before running tests. If Docker fails to start (not installed, daemon not running, port conflicts), **do not skip the tests** — stop and notify the user that Docker cannot start and tests cannot run. Never push untested code.
+**Docker is required.** If Docker is not running, start it with `./dev/start` before running tests. If Docker fails to start (not installed, daemon not running, port conflicts), **do not skip the tests** — stop and notify the user that Docker cannot start and tests cannot run. Never push untested code.
 
 ### PRD-Driven Development with Graphite Stacking
 

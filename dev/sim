@@ -1,0 +1,284 @@
+#!/bin/bash
+set -euo pipefail
+
+# Build and launch the iOS app in an iPhone simulator — no Xcode needed.
+#
+# Usage:
+#   ./dev/sim              # build + launch (Local scheme, default sim)
+#   ./dev/sim --clean              # wipe all state, then build + launch
+#   ./dev/sim --device "iPhone 17 Pro"   # pick a specific device
+#   ./dev/sim --scheme "Convos (Dev)"    # use a different scheme
+#   ./dev/sim --skip-build               # just launch (reuse last build)
+#   ./dev/sim --stop                     # stop the running app
+#
+# On first run, picks an iPhone simulator and remembers it in
+# .dev-sim-id. Boots the simulator if needed, opens Simulator.app,
+# builds with xcodebuild, installs, and launches.
+#
+# State consistency: if the app isn't currently installed (fresh install
+# after a reset or first run), the script automatically wipes agent and
+# DB client state so the XMTP node, agent, and app all start in sync.
+# Use --clean to force this wipe even when the app is already installed.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_lib.sh"
+ROOT="$(dirname "$SCRIPT_DIR")"
+
+SCHEME="Convos (Local)"
+DEVICE=""
+SKIP_BUILD=false
+STOP_ONLY=false
+CLEAN=false
+SIM_ID_FILE="$ROOT/.dev-sim-id"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --scheme)  SCHEME="$2"; shift 2 ;;
+    --device)  DEVICE="$2"; shift 2 ;;
+    --skip-build) SKIP_BUILD=true; shift ;;
+    --stop)    STOP_ONLY=true; shift ;;
+    --clean)   CLEAN=true; shift ;;
+    -h|--help)
+      sed -n '3,17p' "$0" | sed 's/^#[[:space:]]\{0,1\}//'
+      exit 0
+      ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
+  esac
+done
+
+# Derive configuration name from scheme for the build products path.
+config_for_scheme() {
+  case "$1" in
+    *Local*) echo "Local" ;;
+    *Dev*)   echo "Dev" ;;
+    *Prod*)  echo "Prod" ;;
+    *)       echo "Dev" ;;
+  esac
+}
+
+bundle_id_for_scheme() {
+  case "$1" in
+    *Local*) echo "org.convos.ios-local" ;;
+    *Dev*)   echo "org.convos.ios-preview" ;;
+    *Prod*)  echo "org.convos.ios" ;;
+    *)       echo "org.convos.ios-preview" ;;
+  esac
+}
+
+CONFIG=$(config_for_scheme "$SCHEME")
+BUNDLE_ID=$(bundle_id_for_scheme "$SCHEME")
+DERIVED_DATA="$ROOT/.derivedData"
+
+# --- Resolve simulator ---
+
+resolve_simulator() {
+  # If we already have a saved sim ID and it still exists, use it.
+  if [[ -f "$SIM_ID_FILE" ]]; then
+    local saved
+    saved=$(cat "$SIM_ID_FILE")
+    if xcrun simctl list devices -j 2>/dev/null | grep -q "$saved"; then
+      echo "$saved"
+      return
+    fi
+  fi
+
+  # If a device name was requested, find it.
+  if [[ -n "$DEVICE" ]]; then
+    local found
+    found=$(xcrun simctl list devices available -j 2>/dev/null \
+      | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for runtime, devs in data.get('devices', {}).items():
+    if 'iOS' not in runtime: continue
+    for d in devs:
+        if d['name'] == '$DEVICE' and d['isAvailable']:
+            print(d['udid'])
+            sys.exit(0)
+sys.exit(1)
+" 2>/dev/null) || true
+    if [[ -n "$found" ]]; then
+      echo "$found" > "$SIM_ID_FILE"
+      echo "$found"
+      return
+    fi
+    echo "❌  Simulator '$DEVICE' not found." >&2
+    exit 1
+  fi
+
+  # Auto-pick: prefer the latest iOS, pick iPhone 17 Pro > Pro Max > Air > 17.
+  local picked
+  picked=$(xcrun simctl list devices available -j 2>/dev/null \
+    | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+preferred = ['iPhone 17 Pro', 'iPhone 17 Pro Max', 'iPhone Air', 'iPhone 17', 'iPhone 17e']
+best = None
+best_rank = len(preferred)
+best_version = (0, 0)
+for runtime, devs in data.get('devices', {}).items():
+    if 'iOS' not in runtime:
+        continue
+    parts = runtime.rsplit('.', 1)[-1].replace('-', '.').split('.')
+    try:
+        ver = tuple(int(x) for x in parts[:2])
+    except ValueError:
+        # Try extracting version differently
+        import re
+        m = re.search(r'(\d+)[.-](\d+)', runtime)
+        ver = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+    for d in devs:
+        if not d.get('isAvailable'):
+            continue
+        name = d['name']
+        rank = preferred.index(name) if name in preferred else len(preferred)
+        if ver > best_version or (ver == best_version and rank < best_rank):
+            best = d['udid']
+            best_rank = rank
+            best_version = ver
+if best:
+    print(best)
+else:
+    sys.exit(1)
+" 2>/dev/null) || true
+
+  if [[ -z "$picked" ]]; then
+    echo "❌  No available iPhone simulator found." >&2
+    exit 1
+  fi
+  echo "$picked" > "$SIM_ID_FILE"
+  echo "$picked"
+}
+
+SIM_ID=$(resolve_simulator)
+SIM_NAME=$(xcrun simctl list devices -j 2>/dev/null \
+  | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for runtime, devs in data.get('devices', {}).items():
+    for d in devs:
+        if d['udid'] == '$SIM_ID':
+            print(d['name'])
+            sys.exit(0)
+" 2>/dev/null || echo "Unknown")
+
+# --- Stop ---
+
+if $STOP_ONLY; then
+  echo "🛑  Stopping $BUNDLE_ID on $SIM_NAME"
+  xcrun simctl terminate "$SIM_ID" "$BUNDLE_ID" 2>/dev/null || true
+  exit 0
+fi
+
+echo "📱  Simulator: $SIM_NAME ($SIM_ID)"
+echo "🔧  Scheme:    $SCHEME ($CONFIG)"
+
+# --- Boot + open simulator ---
+
+sim_state=$(xcrun simctl list devices -j 2>/dev/null \
+  | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for runtime, devs in data.get('devices', {}).items():
+    for d in devs:
+        if d['udid'] == '$SIM_ID':
+            print(d['state'])
+            sys.exit(0)
+" 2>/dev/null || echo "Unknown")
+
+if [[ "$sim_state" != "Booted" ]]; then
+  echo "→ booting simulator"
+  xcrun simctl boot "$SIM_ID" 2>/dev/null || true
+fi
+open -a Simulator --args -CurrentDeviceUDID "$SIM_ID" 2>/dev/null || true
+
+# --- Install Caddy root cert if needed ---
+
+root_cert="$HOME/Library/Application Support/Caddy/pki/authorities/local/root.crt"
+if [[ -f "$root_cert" ]]; then
+  xcrun simctl keychain "$SIM_ID" add-root-cert "$root_cert" 2>/dev/null || true
+fi
+
+# --- Build ---
+
+if ! $SKIP_BUILD; then
+  echo "→ building $SCHEME"
+  xcodebuild build \
+    -project "$ROOT/Convos.xcodeproj" \
+    -scheme "$SCHEME" \
+    -destination "platform=iOS Simulator,id=$SIM_ID" \
+    -derivedDataPath "$DERIVED_DATA" \
+    2>&1 | tail -3
+
+  echo "  ✓ build succeeded"
+fi
+
+# --- Install + Launch ---
+
+APP_PATH="$DERIVED_DATA/Build/Products/${CONFIG}-iphonesimulator/Convos.app"
+
+if [[ ! -d "$APP_PATH" ]]; then
+  echo "❌  App bundle not found at $APP_PATH"
+  echo "   Run without --skip-build first."
+  exit 1
+fi
+
+# --- Coordinated state wipe (fresh install or --clean) ---
+#
+# The XMTP identity key lives in the iOS keychain, which survives app
+# uninstall. If the app is being freshly installed (after a reset, or
+# first time), the keychain may have a stale identity that creates a new
+# XMTP installation for the same inbox — leading to MLS decryption
+# failures ("Setting up your channels..." forever).
+#
+# Detect this and wipe agent + DB client state so everything starts in
+# sync. Also reset the simulator keychain to force a brand-new identity.
+
+app_installed=true
+if ! xcrun simctl get_app_container "$SIM_ID" "$BUNDLE_ID" app >/dev/null 2>&1; then
+  app_installed=false
+fi
+
+if $CLEAN || [[ "$app_installed" == "false" ]]; then
+  if $CLEAN; then
+    echo "→ --clean: wiping XMTP/agent/DB state for fresh start"
+  else
+    echo "→ fresh install detected: wiping XMTP/agent/DB state"
+  fi
+
+  # Reset the simulator keychain to clear any stale XMTP identity keys.
+  # Re-add the Caddy root cert afterward so HTTPS still works.
+  xcrun simctl keychain "$SIM_ID" reset 2>/dev/null || true
+  root_cert="$HOME/Library/Application Support/Caddy/pki/authorities/local/root.crt"
+  if [[ -f "$root_cert" ]]; then
+    xcrun simctl keychain "$SIM_ID" add-root-cert "$root_cert" 2>/dev/null || true
+  fi
+
+  # Wipe agent XMTP keys so agent creates fresh identities.
+  rm -rf "$DEV_BACKEND/.agent-data"
+
+  # Clear client records from the DB so the agent doesn't try to
+  # reconcile groups for inboxes that no longer exist.
+  goldilocks_compose exec -T goldilocks-db \
+    psql -U goldilocks -d goldilocks -c \
+    "TRUNCATE clients, client_channels CASCADE;" >/dev/null 2>&1 || true
+
+  # Restart the agent so it picks up the clean state.
+  stop_background_processes
+  cd "$DEV_BACKEND"
+  mkdir -p .dev-run
+  nohup npm run agents:dev > ".dev-run/agent-$(date +%Y%m%d-%H%M%S).log" 2>&1 &
+  echo $! > ".dev-run/agent.pid"
+  nohup npm run server:dev > ".dev-run/server-$(date +%Y%m%d-%H%M%S).log" 2>&1 &
+  echo $! > ".dev-run/server.pid"
+  echo "  ✓ agent + server restarted"
+  cd "$ROOT"
+fi
+
+echo "→ installing and launching"
+xcrun simctl install "$SIM_ID" "$APP_PATH"
+xcrun simctl terminate "$SIM_ID" "$BUNDLE_ID" 2>/dev/null || true
+xcrun simctl launch "$SIM_ID" "$BUNDLE_ID"
+
+echo ""
+echo "✅  $SCHEME running on $SIM_NAME"

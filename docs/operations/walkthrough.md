@@ -5,9 +5,8 @@ to "I've confirmed the whole security stack works end-to-end." Plan
 on ~30 minutes of clock time, most of it watching Docker build a
 container.
 
-Two paths run in parallel: **backend** (this repo) and **iOS** (the
-sibling `goldilocks-ios` checkout). They don't depend on each other
-in this order, but the backend goes first so the iOS app has
+Two paths run in parallel: **backend** (`backend/`) and **iOS**
+(the repo root). The backend goes first so the iOS app has
 something to talk to.
 
 ---
@@ -32,139 +31,71 @@ If `node` fails, the easiest path on macOS is `brew install node`.
 If `xcodebuild` fails, install Xcode from the App Store (this is the
 slow one — start it before you start anything else if it isn't there).
 
-The two repos should sit side by side, which they already do:
-
-```
-~/Desktop/git/goldilocks-backend
-~/Desktop/git/goldilocks-ios
-```
-
-The backend's backup includes a git bundle of *both* repos by
-default — that's why the sibling layout matters.
-
-There is **no manual `npm install` or `./dev/up` step.** The CLI
-handles both for you on first launch.
+Everything lives in the `goldilocks` monorepo: the iOS app at the
+root, the backend in `backend/`.
 
 ---
 
-## 1. Backend — open the CLI (one command does it all)
+## 1. Backend — setup and install
 
 ```bash
-cd ~/Desktop/git/goldilocks-backend
-npm run cli -- --dev
+cd ~/Desktop/git/goldilocks
+cd backend && npm install
 ```
 
-That's it. The CLI bootstrap will:
+### 2a. Run setup
 
-- Detect that this is a first run and `npm install` the
-  dependencies automatically (~30 s, one-time).
-- Drop you into the interactive dashboard.
+```bash
+./dev/setup
+```
 
-The dashboard navigation is `↑↓ enter`; `q` or `ctrl+c` quits.
-You'll see **Admins**, **Backups**, **Clients**, **Payments**,
-**Settings**, **Systems**, and **Quit**.
+This generates `.env.dev` with strong random secrets, builds the
+`goldilocks-backup` Docker image, mints age keys, seals the env
+file, and generates TLS certificates. Specifically:
 
-On a brand-new checkout where `.env.dev` doesn't exist yet, the CLI
-takes you straight to the setup prompt instead of the dashboard.
-That's the next step.
-
-### 2a. Run setup (one click does everything)
-
-Pick **Settings → Run setup**.
-
-If you've never run setup before, the CLI will tell you it's
-building the backup image and continue automatically after. This
-takes about a minute. You'll see Docker output streaming. When it's
-done, the screen shows a single notice like:
-
-> Wrote .env.dev — dev defaults cover everything else. Generated
-> restic passphrase at dev/restic-passphrase.dev — save it to your
-> password manager (Backups → View backup passphrase). Minted age
-> key (recipient age1abc…) and sealed the env file. Generated TLS
-> material in secrets/tls/.
-
-That single action just:
-
-- Wrote `.env.dev` with strong random `JWT_SECRET`,
+- Writes `.env.dev` with strong random `JWT_SECRET`,
   `AGENT_DB_ENCRYPTION_KEY`, `APP_ENCRYPTION_KEY` (re-runs preserve
   existing values to keep encrypted columns readable).
-- Wrote a strong random restic backup passphrase to
+- Writes a strong random restic backup passphrase to
   `dev/restic-passphrase.dev` (chmod 600, gitignored).
-- Built the `goldilocks-backup` Docker image (which carries
-  `restic`, `age`, `sops`, `git`, and `openssl` — everything the
-  CLI needs for backups, sealed secrets, and TLS minting).
-- Minted a per-env age private key at `secrets/.age/dev.key`,
-  wrote `.sops.yaml`, sealed `.env.dev` into
+- Builds the `goldilocks-backup` Docker image (which carries
+  `restic`, `age`, `sops`, `git`, and `openssl`).
+- Mints a per-env age private key at `secrets/.age/dev.key`,
+  writes `.sops.yaml`, seals `.env.dev` into
   `secrets/dev.env.enc`.
-- Generated a 10-year self-signed TLS CA + a 1-year postgres
+- Generates a 10-year self-signed TLS CA + a 1-year postgres
   server leaf in `secrets/tls/`.
 
 ### 2b. Save the backup passphrase
 
-The passphrase view is reachable from two places — pick whichever
-you land on:
-
-- **Backups → View backup passphrase**, or
-- **Settings → Keys → View restic backup passphrase**.
-
-Either one opens `dev/restic-passphrase.dev` in your default text
-editor. Copy the contents into 1Password (or wherever you keep
-passwords); close the file without saving any changes.
+Open `backend/dev/restic-passphrase.dev` and copy the contents into
+1Password (or wherever you keep passwords).
 
 This is the only unrecoverable secret in the whole system. Losing
-it means losing every backup. It's fine to copy a development
-passphrase into a password manager too — the security model
-benefits from operator habit.
+it means losing every backup.
 
-### 2c. Check the Keys screen — everything should be green
+### 2c. Check key status
 
-Pick **Settings → Keys**. You should see three status lines:
+```bash
+./dev/keys status
+```
 
-- **Seal status: green** — "In sync (last sealed ...)".
-- **TLS status: green** — "Healthy (leaf expires 2027-…)".
-- **Columns: green** — "On — new writes are encrypted in the
-  targeted columns".
+You should see checkmarks for `.env.dev`, age keys, sealed env, and
+TLS certificates.
 
-**If Seal status is yellow** ("Not sealed yet" or ".env.dev has
-changes"): scroll down in the Actions list and pick
-**"Seal .env.dev → secrets/dev.env.enc"**. The status flips to
-green instantly. This happens after a re-run of Setup, because
-Setup regenerates the secrets in `.env.dev` and the encrypted
-copy needs to catch up.
-
-**If TLS status is red** (less likely on a fresh install): pick
-**Renew TLS leaf** in the same screen.
-
-**If Columns is yellow** ("Key present but ENCRYPT_AT_REST_V1=false"):
-this only happens if you've manually edited `.env.dev`. Set the
-flag back to `true` and re-seal.
-
-Pick **Back** to return to Settings, and **Back** again to return
-to the dashboard.
+If the sealed env is out of sync: `./dev/keys seal`.
+If TLS is missing: `./dev/keys init-tls`.
 
 ---
 
 ## 3. Backend — bring the stack up and take the first backup
 
-In the CLI, pick **Systems → Start**. This single action:
-
-- Starts the upstream XMTP node from `goldilocks-ios/dev/up`.
-- Brings up the `goldilocks-db` Postgres container (now requiring
-  SSL with the cert you just minted) and waits for the
-  healthcheck.
-- Runs database migrations.
-- Reports a checklist of services that are up and what's left to
-  start in your own terminal (`server:dev`, `agents:dev`).
-
-When it finishes, in two separate terminals run:
-
 ```bash
-cd ~/Desktop/git/goldilocks-backend
-npm run server:dev          # in terminal 1
-npm run agents:dev          # in terminal 2
+./dev/start
 ```
 
-These stay running for the duration of your test session.
+This starts Docker (XMTP node + Postgres), runs database migrations,
+and launches the backend server and agents as background processes.
 
 Verify the backend is healthy:
 
@@ -173,14 +104,16 @@ curl -s http://localhost:4000/healthz | head
 ```
 
 You should get a 200 with a small JSON body. If you see a TLS
-error talking to the DB, the database certificate didn't get
-picked up — re-run **Settings → Keys → Renew TLS leaf** in the
-CLI and restart the db container.
+error talking to the DB, run `./dev/keys renew-tls` and restart
+the db container.
 
 ### 3a. Run the first backup
 
-Back in the CLI: **Backups → Run a backup now**. Docker output
-streams; the script does:
+```bash
+./dev/backup run
+```
+
+The backup script does:
 
 - `pg_dump` of the dev database, streamed straight into restic
   (no plaintext dump file on disk).
@@ -192,14 +125,12 @@ streams; the script does:
 - `restic check` on a 5% sample of the new repo to catch silent
   corruption.
 
-When it finishes, **Backups** shows your first snapshot listed
-under "Snapshots (newest first)" with a short ID and a timestamp.
+When it finishes, `./dev/backup list` shows your first snapshot
+with a short ID and a timestamp.
 
 ### 3b. Run the restore drill — proves the end-to-end story
 
-**Backups → Run restore drill**.
-
-Confirm the prompt. The drill runs in four steps:
+The restore drill runs in four steps:
 
 1. Runs another fresh backup.
 2. Restores the latest backup run into a parallel compose project
@@ -237,10 +168,9 @@ Notes on what the drill deliberately does NOT do:
 
 ## 4. iOS — build and run
 
-In yet another terminal (or in Xcode's GUI):
+In Xcode:
 
 ```bash
-cd ~/Desktop/git/goldilocks-ios
 open Convos.xcodeproj
 ```
 
@@ -324,8 +254,7 @@ encryption working in one round-trip.
 
 ## 5. Things to know before pushing to production
 
-Production is `--prod` instead of `--dev` everywhere above. Four
-real differences:
+Four real differences in production:
 
 - **The prod backup passphrase is the only unrecoverable secret in
   the system.** Save it in 1Password *and* on paper in a safe before
@@ -335,11 +264,9 @@ real differences:
   `./scripts/tunnel-url.sh` after every restart. For a stable domain,
   switch to the named-tunnel branch in
   `docker-compose.prod.yml` (commented out, with a TODO).
-- **Run the prod restore drill regularly.** Settings → Keys →
-  Encrypt remaining plaintext columns after migration, then take a
-  prod backup, then pull it to your laptop with **Backups → Pull
-  snapshots to laptop**. Test a restore from the laptop copy onto a
-  scratch host once before you actually need it.
+- **Run the prod restore drill regularly.** Take a prod backup,
+  then test a restore from the backup onto a scratch host once
+  before you actually need it.
 - **Save the SOPS age key off the box.** `secrets/.age/prod.key` is
   in the encrypted backup, so a working restore brings it back —
   but a fresh box with no backup needs the key from somewhere else.
@@ -353,57 +280,44 @@ Each likely failure mode and the most direct path back:
 
 **Setup-time issues:**
 
-- **Run setup says "TLS setup failed: docker: command not found".**
-  Docker Desktop isn't running. Start it and re-run.
-- **Run setup says backup image build failed.** Look at the streaming
-  Docker output above the message — usually a network blip pulling
-  the `postgres:16` base image or fetching one of the pinned
-  binaries (restic, age, sops). Re-run setup.
+- **Setup says "TLS setup failed: docker: command not found".**
+  Docker Desktop isn't running. Start it and re-run `./dev/setup`.
+- **Setup says backup image build failed.** Usually a network blip
+  pulling the `postgres:16` base image or fetching one of the pinned
+  binaries (restic, age, sops). Re-run `./dev/setup`.
 
-**Keys screen colors:**
+**Key status issues:**
 
-- **TLS status is red.** Click **Renew TLS leaf** in the same
-  screen. The CA is preserved; only the postgres leaf rotates.
-- **Seal status is yellow ("Not sealed yet" or ".env.dev has
-  changes").** Scroll down in the actions list and pick
-  **"Seal .env.dev → secrets/dev.env.enc"**. The status flips to
-  green instantly. This is normal after a re-run of Setup — Setup
-  refreshes `.env.dev` and the encrypted copy needs to catch up.
-- **Columns is yellow ("Key present but ENCRYPT_AT_REST_V1=false").**
-  You've manually edited `.env.dev` and changed the flag. Set it
-  back to `true` and re-seal.
+- **TLS missing.** Run `./dev/keys init-tls`. The CA is preserved;
+  only the postgres leaf rotates with `./dev/keys renew-tls`.
+- **Sealed env out of sync.** Run `./dev/keys seal`. This is normal
+  after re-running setup — setup refreshes `.env.dev` and the
+  encrypted copy needs to catch up.
 
-**Backups screen issues:**
+**Backup issues:**
 
-- **"Snapshot fetch timed out after 15s" in red.** Docker Desktop
-  isn't running or is unresponsive. Restart it.
-- **"Snapshot fetch error: ... locked" + "Unlock restic repo"
-  action appears.** A previous backup was interrupted and left a
-  stale lock in the repo. Pick **Unlock restic repo** — it clears
-  the lock and the next refresh succeeds.
-- **"Backups → Run a backup now" prints "input/output error" on
-  several files** with the snapshot saving as empty. This is the
-  Docker Desktop on macOS virtiofs bug — should be auto-mitigated
-  by the staging-copy in `backup.sh`. If it recurs, restarting
-  Docker Desktop tends to clear it.
-- **Backup says "passphrase file missing".** The
-  `dev/restic-passphrase.dev` file got deleted somehow. Pick
-  **Backups → Generate backup passphrase** to mint a new one
-  (this invalidates the existing backup repo — fine in dev).
+- **Docker not running.** Start Docker Desktop and retry.
+- **"locked" error.** A previous backup was interrupted and left a
+  stale lock. Run `./dev/backup unlock`.
+- **"input/output error" on several files.** Docker Desktop on macOS
+  virtiofs bug — should be auto-mitigated by the staging-copy in
+  `backup.sh`. If it recurs, restarting Docker Desktop tends to
+  clear it.
+- **"passphrase file missing".** `dev/restic-passphrase.dev` got
+  deleted. Re-run `./dev/setup` to regenerate (this invalidates the
+  existing backup repo — fine in dev).
 
-**Systems → Start issues:**
+**Start issues:**
 
-- **Postgres container exits 1 immediately.** The TLS material is
-  missing or has bad ownership. Run **Settings → Keys → Initialize
-  TLS material** (if there's no CA yet) or **Renew TLS leaf** (if
-  postgres complains specifically about the leaf), then **Systems
-  → Stop** and **Systems → Start** again.
+- **Postgres container exits 1 immediately.** TLS material is
+  missing or has bad ownership. Run `./dev/keys init-tls` (if
+  there's no CA yet) or `./dev/keys renew-tls`, then
+  `./dev/stop && ./dev/start`.
 - **Migrations fail with "ECONNREFUSED localhost:25432".** Your
-  `.env.dev` has a stale `DATABASE_URL`. Settings → Open .env in
-  editor; confirm the URL has port `25433` and
-  `?sslmode=verify-full&sslrootcert=secrets/tls/ca.crt`. Or just
-  re-run Settings → Run setup (it re-templates the URL and now
-  preserves your existing secrets).
+  `.env.dev` has a stale `DATABASE_URL`. Confirm the URL has port
+  `25433` and `?sslmode=verify-full&sslrootcert=secrets/tls/ca.crt`.
+  Or re-run `./dev/setup` (it re-templates the URL and preserves
+  your existing secrets).
 
 **Restore drill issues:**
 
@@ -431,14 +345,13 @@ If something here doesn't match what you see, the code is canonical
 
 ## 7. Where to go next
 
-- [`SECURITY.md`](SECURITY.md) — the operator-facing reference for
+- [`security-backend.md`](../architecture/security-backend.md) — the operator-facing reference for
   the whole security setup. Read this once after you've completed
   this walkthrough; it's the document you'll come back to.
-- [`docs/encryption-and-backup-plan.md`](docs/encryption-and-backup-plan.md)
+- [`encryption-and-backup.md`](encryption-and-backup.md)
   — the implementation plan, with the rationale for every design
   decision. Useful when you're considering an extension.
-- [`docs/production-setup.md`](docs/production-setup.md) — the
+- [`production-setup.md`](production-setup.md) — the
   production runbook proper.
-- [`../goldilocks-ios/SECURITY.md`](../goldilocks-ios/SECURITY.md)
-  — the iOS-side counterpart. Most attacks span both repos; the
-  two docs are designed to be read together.
+- [`security-ios.md`](../architecture/security-ios.md)
+  — the iOS-side counterpart. The two docs are designed to be read together.

@@ -1,0 +1,158 @@
+#!/bin/bash
+set -euo pipefail
+
+# First-time (or re-run) dev environment setup.
+# Generates .env.dev with secrets, creates backup passphrase,
+# builds backup image, generates age key + TLS material.
+#
+# Safe to re-run: preserves existing secrets (JWT_SECRET,
+# AGENT_DB_ENCRYPTION_KEY, APP_ENCRYPTION_KEY) so encrypted
+# data stays readable.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BACKEND_DIR="$SCRIPT_DIR/../backend"
+
+cd "$BACKEND_DIR"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+read_env_value() {
+    local file="$1" key="$2"
+    [ -f "$file" ] || return
+    grep "^${key}=" "$file" 2>/dev/null | tail -1 | cut -d'=' -f2-
+}
+
+set_env_value() {
+    local file="$1" key="$2" value="$3"
+    if grep -q "^${key}=" "$file" 2>/dev/null; then
+        sed -i.bak "s|^${key}=.*|${key}=${value}|" "$file"
+        rm -f "${file}.bak"
+    else
+        echo "${key}=${value}" >> "$file"
+    fi
+}
+
+carry_or_generate() {
+    local key="$1"
+    local existing
+    existing="$(read_env_value "$BACKEND_DIR/.env.dev" "$key")"
+    if [ -n "$existing" ] && [ "$existing" != "replace_me_with_a_random_secret" ] && [[ "$existing" != replace_me* ]]; then
+        echo "$existing"
+    else
+        openssl rand -hex 32
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 1. Generate / preserve secrets
+# ---------------------------------------------------------------------------
+
+echo "==> Generating secrets (preserving existing values)..."
+
+JWT_SECRET="$(carry_or_generate JWT_SECRET)"
+AGENT_DB_ENCRYPTION_KEY="$(carry_or_generate AGENT_DB_ENCRYPTION_KEY)"
+APP_ENCRYPTION_KEY="$(carry_or_generate APP_ENCRYPTION_KEY)"
+
+# ---------------------------------------------------------------------------
+# 2. Write .env.dev from template
+# ---------------------------------------------------------------------------
+
+echo "==> Writing .env.dev from .env.example..."
+
+cp .env.example .env.dev
+
+set_env_value .env.dev JWT_SECRET "$JWT_SECRET"
+set_env_value .env.dev AGENT_DB_ENCRYPTION_KEY "$AGENT_DB_ENCRYPTION_KEY"
+set_env_value .env.dev APP_ENCRYPTION_KEY "$APP_ENCRYPTION_KEY"
+set_env_value .env.dev ENCRYPT_AT_REST_V1 "true"
+
+chmod 600 .env.dev
+echo "    .env.dev written (mode 600)"
+
+# ---------------------------------------------------------------------------
+# 3. Restic backup passphrase
+# ---------------------------------------------------------------------------
+
+if [ -f dev/restic-passphrase.dev ]; then
+    echo "==> Restic passphrase already exists at dev/restic-passphrase.dev — keeping it"
+else
+    echo "==> Generating restic backup passphrase..."
+    mkdir -p dev
+    openssl rand -base64 24 > dev/restic-passphrase.dev
+    chmod 600 dev/restic-passphrase.dev
+    echo "    dev/restic-passphrase.dev written (mode 600)"
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Build backup Docker image (if not present)
+# ---------------------------------------------------------------------------
+
+if docker image inspect goldilocks-backup:latest >/dev/null 2>&1; then
+    echo "==> Backup image goldilocks-backup:latest already exists — skipping build"
+else
+    echo "==> Building backup Docker image..."
+    docker compose --profile backup build backup
+    echo "    goldilocks-backup:latest built"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Generate age key (if missing)
+# ---------------------------------------------------------------------------
+
+if [ -f secrets/.age/dev.key ]; then
+    echo "==> Age key already exists at secrets/.age/dev.key — keeping it"
+else
+    echo "==> Generating age encryption key..."
+    mkdir -p secrets/.age
+
+    AGE_OUTPUT="$(docker run --rm goldilocks-backup:latest age-keygen 2>&1)"
+
+    echo "$AGE_OUTPUT" | grep -v '^#' | grep -v '^$' > secrets/.age/dev.key
+    chmod 600 secrets/.age/dev.key
+
+    RECIPIENT="$(echo "$AGE_OUTPUT" | grep 'public key:' | awk '{print $NF}')"
+    echo "$RECIPIENT" > secrets/.age/dev.key.pub
+
+    echo "    secrets/.age/dev.key written (mode 600)"
+    echo "    secrets/.age/dev.key.pub written (recipient: ${RECIPIENT})"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Write .sops.yaml (if missing)
+# ---------------------------------------------------------------------------
+
+if [ -f .sops.yaml ]; then
+    echo "==> .sops.yaml already exists — keeping it"
+else
+    echo "==> Writing .sops.yaml..."
+    RECIPIENT="$(cat secrets/.age/dev.key.pub)"
+    cat > .sops.yaml <<EOF
+creation_rules:
+  - path_regex: \.env\.dev\$
+    age: ${RECIPIENT}
+EOF
+    echo "    .sops.yaml written"
+fi
+
+# ---------------------------------------------------------------------------
+# 7. Seal .env.dev
+# ---------------------------------------------------------------------------
+
+echo "==> Sealing .env.dev..."
+bash scripts/seal-env.sh dev
+
+# ---------------------------------------------------------------------------
+# 8. Generate TLS material
+# ---------------------------------------------------------------------------
+
+echo "==> Initializing TLS certificates..."
+bash scripts/init-tls.sh dev
+
+# ---------------------------------------------------------------------------
+# Done
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "Setup complete. You can now run ./dev/start to bring up the stack."

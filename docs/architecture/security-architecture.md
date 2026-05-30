@@ -1,6 +1,6 @@
 # Security Architecture
 
-A single-page map of every security primitive in Goldilocks — iOS, backend, and the trust boundary between them. Use this as the orientation guide; the per-feature detail lives in `SECURITY.md` (backend) and `docs/plans/2026-05-29-security-hardening.md` (iOS).
+A single-page map of every security primitive in Goldilocks — iOS, backend, and the trust boundary between them. Use this as the orientation guide; the per-feature detail lives in [`security-backend.md`](security-backend.md) and [`security-ios.md`](security-ios.md).
 
 ---
 
@@ -232,9 +232,9 @@ What requires a coordinated compromise:
 
 ---
 
-## Operational surface — what the CLI exposes
+## Operational surface — what `./dev/security` exposes
 
-`npm run cli -- --prod` → `Security` (added by security plan item 19) surfaces every toggle that doesn't need a redeploy:
+`./dev/security status` surfaces every toggle that doesn't need a redeploy:
 
 - Cert pinning: fetch live cert, show SPKI hash, write into iOS source
 - Cert pinning: switch shadow / enforce mode

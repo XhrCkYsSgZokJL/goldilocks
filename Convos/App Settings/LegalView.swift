@@ -58,10 +58,12 @@ private struct LegalBlock {
 }
 
 extension LegalView {
-    private static let privacyPolicy: [LegalBlock] = [
+    private static var b: BrandConfig { BrandConfig.shared }
+
+    private static var privacyPolicy: [LegalBlock] {[
         LegalBlock(
             heading: nil,
-            text: "Goldilocks Digital helps you secure your digital life. This policy "
+            text: "\(b.brand.privacyIntro) This policy "
                 + "explains what information the app handles, and just as importantly, "
                 + "what it doesn't."
         ),
@@ -75,7 +77,7 @@ extension LegalView {
             heading: "People on your plan",
             text: "The names, emails, and phone numbers you enter for people on your "
                 + "subscription are stored only on your device. We never upload that "
-                + "information to our servers. When you tap “Send to Advisory”, the list "
+                + "information to our servers. When you tap \u{201c}Send to Advisory\u{201d}, the list "
                 + "is delivered to your advisory group as an end-to-end encrypted message."
         ),
         LegalBlock(
@@ -87,7 +89,7 @@ extension LegalView {
         ),
         LegalBlock(
             heading: "Push notifications",
-            text: "If you allow notifications, Apple's Push Notification service delivers "
+            text: "If you allow notifications, Apple\u{2019}s Push Notification service delivers "
                 + "alerts about new messages to your device."
         ),
         LegalBlock(
@@ -114,20 +116,19 @@ extension LegalView {
         ),
         LegalBlock(
             heading: "Contact",
-            text: "Questions about privacy? Email us at support@goldilocksdigital.xyz."
+            text: "Questions about privacy? Email us at \(b.brand.supportEmail)."
         ),
-    ]
+    ]}
 
-    private static let termsOfService: [LegalBlock] = [
+    private static var termsOfService: [LegalBlock] {[
         LegalBlock(
             heading: nil,
-            text: "By downloading or using Goldilocks Digital, you agree to these terms. "
+            text: "By downloading or using \(b.brand.name), you agree to these terms. "
                 + "If you do not agree, please do not use the app."
         ),
         LegalBlock(
             heading: "The service",
-            text: "Goldilocks Digital is a secure messaging app that connects you with "
-                + "digital-asset security advisors."
+            text: b.brand.serviceDescription
         ),
         LegalBlock(
             heading: "Eligibility",
@@ -148,7 +149,7 @@ extension LegalView {
         ),
         LegalBlock(
             heading: "Subscriptions and billing",
-            text: "Paid plans (Light and Active) are billed at the per-seat rates shown in "
+            text: "Paid plans are billed at the per-seat rates shown in "
                 + "the app. When in-app billing is live, charges are handled by our payment "
                 + "providers, and any refund or proration terms will be presented at "
                 + "checkout. You can change or remove your plan from within the app."
@@ -166,8 +167,8 @@ extension LegalView {
         ),
         LegalBlock(
             heading: "Disclaimer and liability",
-            text: "The app is provided “as is”, without warranties of any kind. To the "
-                + "fullest extent permitted by law, Goldilocks Digital is not liable for "
+            text: "The app is provided \u{201c}as is\u{201d}, without warranties of any kind. To the "
+                + "fullest extent permitted by law, \(b.brand.legalEntity) is not liable for "
                 + "indirect, incidental, or consequential losses arising from your use of "
                 + "the app."
         ),
@@ -178,9 +179,9 @@ extension LegalView {
         ),
         LegalBlock(
             heading: "Contact",
-            text: "Questions about these terms? Email us at support@goldilocksdigital.xyz."
+            text: "Questions about these terms? Email us at \(b.brand.supportEmail)."
         ),
-    ]
+    ]}
 }
 
 #Preview {

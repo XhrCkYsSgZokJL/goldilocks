@@ -1,136 +1,174 @@
-# Convos iOS
+# Goldilocks
 
-[![ConvosCore Tests](https://github.com/xmtplabs/convos-ios/actions/workflows/convoscore-tests.yml/badge.svg)](https://github.com/xmtplabs/convos-ios/actions/workflows/convoscore-tests.yml)
-[![SwiftLint](https://github.com/xmtplabs/convos-ios/actions/workflows/swiftlint.yml/badge.svg)](https://github.com/xmtplabs/convos-ios/actions/workflows/swiftlint.yml)
+Goldilocks is a privacy-first advisory platform built on the [XMTP protocol](https://xmtp.org). It pairs an iOS app with a backend service to provide end-to-end encrypted messaging between clients and their advisory teams.
 
-Convos is an everyday private chat app for the surveillance age. Built on the open-source, censorship-resistant, post-quantum secure [XMTP protocol](https://xmtp.org), Convos provides instant, impermanent, and self-evidently private conversations.
+The iOS app is a whitelabeled fork of [Convos](https://convos.org), extended with Goldilocks-specific features: tiered advisory groups, per-seat billing, server-side XMTP agents, and a full security stack (Secure Enclave identity wrapping, encrypted backups, sealed secrets, mTLS to Postgres).
 
-## What is Convos?
-
-Convos is a privacy-first messenger that offers:
-- **No signup** — Simply scan, tap or airdrop into a conversation
-- **No numbers** — New identity in every conversation
-- **No history** — Time bomb your groupchats with irreversible countdowns
-- **No spam** — Every conversation is invitation-only
-- **No tracking** — Zero data collection, not even contact info
-- **No server** — Messages stored on your device, secured by XMTP
-
-Learn more at [convos.org](https://convos.org).
-
-## Project Setup
-
-### Prerequisites
+## Prerequisites
 
 - macOS with Xcode 16+
-- Homebrew
-- Docker (required for running the test suite via `./dev/up`)
+- Node.js 20+
+- Docker Desktop (for Postgres and the local XMTP node)
+- Homebrew (for SwiftLint, SwiftFormat)
 
-### Quick Start
+## Quick Start
 
 ```bash
-# 1. Install dependencies and configure your environment
-./Scripts/setup.sh        # or: make setup
+# 1. Install iOS dependencies (SwiftLint, SwiftFormat, git hooks)
+./Scripts/setup.sh
 
-# 2. Create your local .env from the template
-cp .env.example .env
+# 2. Start the full dev environment (Docker + backend + agents)
+./dev/start
 
-# 3. (Optional) Add a Firebase App Check debug token to .env
-#    See .env comments, or generate one at:
-#    https://console.firebase.google.com/project/convos-otr/appcheck
+# 3. Open the iOS app in Xcode
+open Convos.xcodeproj
+# Select the "Convos (Local)" scheme and run on a simulator
 ```
 
-The setup script will:
-- Configure the repo's Git hooks (`core.hooksPath` → `Scripts/hooks/`), which works for both regular clones and `git worktree`s
-- Configure Xcode defaults for consistent development
-- Install required dependencies:
-  - SwiftLint (code linting, pinned version for compatibility)
-  - SwiftFormat (code formatting)
-  - swift-protobuf (Protocol Buffer support)
-  - GitHub CLI (for release automation)
+That's it. `./dev/start` handles npm install, Docker (XMTP node + Postgres), database migrations, and launches the backend server and agents as background processes.
 
-### Manual Setup
-
-If you prefer to install dependencies individually, run:
+### Other commands
 
 ```bash
-brew install swiftformat swift-protobuf gh
+./dev/setup      # First-time setup (generates .env.dev + secrets)
+./dev/stop       # Stop everything (preserves data)
+./dev/reset      # Wipe all data and start fresh
+./dev/status     # Check what's running
+./dev/test       # Run ConvosCore tests (starts Docker automatically)
 ```
 
-Then run `./Scripts/setup.sh` once to install the pinned SwiftLint version, configure git hooks, and apply Xcode defaults.
+### Operations scripts
 
-### Configuration
-
-The setup script configures Xcode with:
-- Automatic trailing whitespace trimming
-- 120-character page guide
-- Build operation duration display
-- Disabled plugin fingerprint validation for development
-
-For build environments (Local, Dev, Production), bundle IDs, and secrets handling, see [ENVIRONMENTS.md](ENVIRONMENTS.md).
-
-### Useful Make Targets
+For admin management, security configuration, backups, and key management:
 
 ```bash
-make setup           # Run Scripts/setup.sh
-make status          # Show version, secrets, git, and .env status
-make secrets-local   # Regenerate Convos/Config/Secrets.swift for Local builds
-make protobuf        # Regenerate Swift code from .proto files
-make clean           # Remove generated secrets and build artifacts
+./dev/admins list             # List admin slots
+./dev/admins add <name>       # Add an admin (prints upgrade code)
+./dev/backup list             # List backup snapshots
+./dev/keys status             # Show key material status
+./dev/security status         # Show security config
 ```
 
 ## Project Structure
 
 ```
-convos-ios/
-├── Convos/              # Main iOS application
-├── ConvosCore/          # Shared business logic Swift Package
-├── NotificationService/ # Push notification extension
-└── Scripts/             # Build and development scripts
+goldilocks/
+├── Convos/                    iOS app (SwiftUI views + ViewModels)
+├── Convos.xcodeproj/
+├── ConvosCore/                Swift Package: business logic, models, services
+├── ConvosAppData/             Shared foundation (protobuf, serialization)
+├── ConvosInvites/             Invite system package
+├── ConvosCoreiOS/             iOS-specific bridge (UIKit, push notifications)
+├── ConvosLogging/             Logging package
+├── dev/                       Dev scripts + XMTP Docker Compose
+├── shared/
+│   ├── api-types.ts           Canonical API type definitions (TypeScript)
+│   ├── brand.json             Whitelabel configuration
+│   └── codegen/               TypeScript -> Swift/Zod generators
+├── backend/                   Node.js backend
+│   ├── src/                   Fastify server, routes, agents
+│   ├── scripts/               Deployment, security, admin scripts
+│   └── docker-compose.yml     Postgres + notification server
+├── docs/                      All project documentation
+├── package.json               Root: codegen scripts
+└── CLAUDE.md                  AI assistant instructions
 ```
 
-### ConvosCore Package
-
-`ConvosCore` is a Swift Package containing all shared business logic, including:
-- XMTP client management and messaging
-- Database management with GRDB
-- Authentication and identity management
-- Conversation and message handling
-- Push notification support
-
-See [ConvosCore documentation](#convoscore-documentation) below for details.
+The iOS code lives at the repo root (not in a subdirectory) to preserve cherry-pick compatibility with the upstream [convos-ios](https://github.com/ephemeraHQ/convos-ios) repo.
 
 ## Development
 
-### Building
+### iOS App
 
-Open `Convos.xcodeproj` in Xcode and build normally. The project uses Swift Package Manager for dependencies.
+Open `Convos.xcodeproj` in Xcode. Three schemes match the three environments:
+
+| Scheme | Environment | Backend | XMTP Network |
+|--------|-------------|---------|---------------|
+| Convos (Local) | Development | localhost:4000 | Local node |
+| Convos (Dev) | Staging | api.dev.convos.xyz | XMTP Dev |
+| Convos (Prod) | Production | Cloudflare tunnel | XMTP Prod |
+
+For local development, use **Convos (Local)**. The backend must be running (`./dev/start`).
+
+### Backend
+
+The backend runs as background processes managed by `./dev/start`. Logs are in `backend/.dev-run/`:
+
+```bash
+tail -f backend/.dev-run/server-*.log    # API server
+tail -f backend/.dev-run/agent-*.log     # XMTP agents
+```
+
+To run the server or agents in the foreground (for debugging):
+
+```bash
+cd backend
+npm run server:dev     # Fastify API server on :4000
+npm run agents:dev     # XMTP agents (admins + reports)
+```
+
+### Shared Type System
+
+API types are defined once in TypeScript and code-generated into Swift Codable structs and Zod schemas:
+
+```bash
+npm run codegen          # Generate both Swift and Zod
+npm run codegen:check    # Verify generated files are fresh
+```
+
+When adding or changing an API type: edit `shared/api-types.ts`, run `npm run codegen`, commit the generated files.
+
+### Whitelabel Configuration
+
+All brand strings, group names, icons, pricing, tier config, and legal copy are driven by `shared/brand.json`. The iOS app reads it via `BrandConfig.shared`. The backend imports it directly.
+
+To rebrand: edit `shared/brand.json` and rebuild. No code changes needed.
 
 ### Testing
 
-Most ConvosCore tests require Docker to run a local XMTP node.
-
 ```bash
-# Full suite — starts Docker, runs tests, stops Docker
+# ConvosCore tests (requires Docker)
 ./dev/test
 
-# Or manage Docker manually:
-./dev/up                                             # start local XMTP node
-swift test --package-path ConvosCore                 # run ConvosCore tests
-./dev/down                                           # stop when finished
+# Unit tests only (no Docker)
+./dev/test --unit
 
-# iOS app tests via xcodebuild (use a scheme that includes the environment)
-xcodebuild test \
-  -project Convos.xcodeproj \
-  -scheme "Convos (Local)" \
-  -destination "platform=iOS Simulator,name=iPhone 17"
+# Backend tests
+cd backend && npm test
 ```
 
 ### Code Quality
 
-Pre-commit hooks automatically run:
-- SwiftLint for code style
-- SwiftFormat for formatting
+```bash
+swiftlint                # Check for lint issues
+swiftlint --fix          # Auto-fix
+swiftformat .            # Format Swift code
+cd backend && npm run lint       # ESLint
+cd backend && npm run typecheck  # TypeScript
+```
 
-## ConvosCore Documentation
+Pre-commit hooks run SwiftFormat and SwiftLint automatically.
 
-ConvosCore is the core Swift Package containing shared logic between the main app and notification extension. See individual component documentation in the source files for details.
+## Documentation
+
+All documentation lives in [`docs/`](docs/README.md):
+
+- **[Architecture](docs/architecture/)** — security model, identity system, system overview
+- **[Operations](docs/operations/)** — production setup, deployment, backups, environments
+- **[ADRs](docs/adr/)** — architecture decision records
+- **[Plans](docs/plans/)** — feature PRDs and implementation plans
+- **[Investigations](docs/investigations/)** — debugging and research notes
+
+## Security
+
+Goldilocks has a layered security model spanning iOS and backend:
+
+- **iOS**: Secure Enclave identity wrapping, file protection, certificate pinning, screen capture blocking
+- **Backend**: Encrypted backups (restic), sealed secrets (SOPS+age), column encryption (AES-256-GCM), internal mTLS, Cloudflare tunnel
+- **Protocol**: XMTP MLS for end-to-end encrypted messaging
+
+See [docs/architecture/security-architecture.md](docs/architecture/security-architecture.md) for the full security map.
+
+## License
+
+Proprietary. All rights reserved.

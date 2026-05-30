@@ -143,7 +143,7 @@ extension AutoShareSheetView where Content == AnyView {
                             Text("Gold code")
                                 .kerning(1.0)
 
-                            Image("goldilocksLogo")
+                            Image(BrandConfig.shared.assets.logoImageName)
                                 .renderingMode(.template)
                                 .resizable()
                                 .frame(width: 14.0, height: 14.0)

@@ -159,7 +159,7 @@ extension ConvosAPIClientProtocol {
 ///
 /// ConvosAPIClient provides both authenticated and unauthenticated access to the Convos backend, handling:
 /// - JWT authentication with automatic token refresh
-/// - Device registration with Firebase AppCheck
+/// - Device registration
 /// - Attachment uploads via S3 presigned URLs
 /// - Push notification topic subscriptions
 /// - Device and installation management
@@ -489,7 +489,7 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         }
 
         guard overrideJWTToken == nil else {
-            Log.error("Authentication failed in JWT override mode - cannot re-authenticate without AppCheck")
+            Log.error("Authentication failed in JWT override mode - cannot re-authenticate")
             throw APIError.notAuthenticated
         }
 

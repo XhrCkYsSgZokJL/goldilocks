@@ -316,5 +316,5 @@ For extensions to work, the SDK must expose:
 - [ADR 001: Invite System Architecture](../adr/001-invite-system-architecture.md)
 - [ADR 002: Per-Conversation Identity Model](../adr/002-per-conversation-identity-model.md)
 - [ADR 004: Explode Feature](../adr/004-explode-feature.md)
-- [ADR 005: Profile Storage](../adr/005-profile-storage-in-conversation-metadata.md)
+- [ADR 005: Profile Storage](../adr/005-member-profile-system.md)
 - [libxmtp README](https://github.com/xmtp/libxmtp)

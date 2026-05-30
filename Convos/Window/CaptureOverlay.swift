@@ -28,7 +28,7 @@ public struct CaptureOverlayModifier: ViewModifier {
                                 .font(.system(size: 40, weight: .light))
                             Text("Screen recording detected")
                                 .font(.headline)
-                            Text("Goldilocks content is hidden while recording.")
+                            Text("\(BrandConfig.shared.brand.name) content is hidden while recording.")
                                 .font(.subheadline)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 32)

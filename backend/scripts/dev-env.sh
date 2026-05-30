@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 # Goldilocks local dev environment — up / down / status.
 #
-# Ported from the old scripts/goldilocks.zsh shell functions. Normally driven
-# by the Goldilocks CLI (`npm run cli` → "Local dev environment"); also
+# Normally driven by `./dev/start` / `./dev/stop` / `./dev/reset`; also
 # runnable directly:
 #
 #   bash scripts/dev-env.sh up|down|reset|status
 #
 # Override these by exporting them before running:
-#   GOLDILOCKS_IOS    path to the goldilocks-ios repo
 #   CONVOS_BUNDLE_ID  iOS bundle id (keychain entries are scoped to it)
 #   GOLDILOCKS_SIMS   space-separated UDIDs of dedicated sims to erase on `down`
 
@@ -16,7 +14,6 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND="$(dirname "$SCRIPT_DIR")"
-GOLDILOCKS_IOS="${GOLDILOCKS_IOS:-$HOME/Desktop/git/goldilocks-ios}"
 CONVOS_BUNDLE_ID="${CONVOS_BUNDLE_ID:-org.convos.ios-local}"
 GOLDILOCKS_SIMS="${GOLDILOCKS_SIMS:-F6DCC975-A4C8-46A9-81B2-66D0ECE11249}"
 
@@ -59,12 +56,19 @@ dev_up() {
   ( cd "$BACKEND" && bash scripts/init-tls.sh dev ) \
     || { echo "❌  init-tls.sh failed"; return 1; }
 
-  echo "→ starting goldilocks-ios XMTP node"
-  ( cd "$GOLDILOCKS_IOS" && ./dev/up ) || { echo "❌  XMTP node failed to start"; return 1; }
+  # Start core services: XMTP node stack + goldilocks Postgres.
+  # The notification-server and backend are excluded — the backend
+  # runs natively (faster iteration) and the notification server
+  # image isn't publicly available yet.
+  local CORE_SERVICES="xmtp-node xmtp-validation xmtp-anvil xmtp-history xmtp-db xmtp-mlsdb goldilocks-db"
 
-  echo "→ starting goldilocks Postgres (waiting for healthcheck)"
-  ( cd "$BACKEND" && docker compose up -d --wait goldilocks-db ) \
-    || { echo "❌  Postgres failed to become healthy"; return 1; }
+  echo "→ pulling Docker images"
+  ( cd "$BACKEND" && docker compose pull -q $CORE_SERVICES ) \
+    || { echo "❌  docker compose pull failed"; return 1; }
+
+  echo "→ starting Docker services (XMTP node + Postgres)"
+  ( cd "$BACKEND" && docker compose up -d --wait $CORE_SERVICES ) \
+    || { echo "❌  Docker services failed to start"; return 1; }
 
   echo "→ running migrations"
   # The healthcheck guarantees pg is accepting connections, but initdb can
@@ -83,21 +87,15 @@ dev_up() {
   done
 
   echo
-  echo "✅  Goldilocks dev is on. You still need to start, in separate terminals:"
-  echo "   • Backend:  cd $BACKEND && npm run server:dev"
-  echo "   • Agent:    cd $BACKEND && npm run agents:dev"
+  echo "✅  Goldilocks dev infrastructure is up (database + XMTP node)."
 }
 
 dev_down() {
   echo "🛑  Goldilocks dev: stopping services (data kept)"
   echo
 
-  echo "→ goldilocks-backend dev stack down"
-  ( cd "$BACKEND" && docker compose down ) || echo "   (backend stack was not running)"
-
-  echo "→ goldilocks-ios XMTP node down"
-  ( cd "$GOLDILOCKS_IOS" && docker compose -f dev/docker-compose.yml -p convos-ios down ) \
-    || echo "   (XMTP node was not running)"
+  echo "→ docker compose down"
+  ( cd "$BACKEND" && docker compose down ) || echo "   (stack was not running)"
 
   echo
   echo "✅  Goldilocks dev stopped. Data and identities are kept — 'Start' brings it back."
@@ -120,15 +118,31 @@ dev_reset() {
   echo "   Convos bundle id: $CONVOS_BUNDLE_ID"
   echo
 
-  echo "→ goldilocks-backend dev stack down (-v wipes Postgres volume)"
-  ( cd "$BACKEND" && docker compose down -v ) || echo "   (backend stack was not running)"
-
-  echo "→ goldilocks-ios XMTP node down (-v wipes node data)"
-  ( cd "$GOLDILOCKS_IOS" && docker compose -f dev/docker-compose.yml -p convos-ios down -v ) \
-    || echo "   (XMTP node was not running)"
+  echo "→ docker compose down -v (wipes Postgres + XMTP data)"
+  ( cd "$BACKEND" && docker compose down -v ) || echo "   (stack was not running)"
 
   echo "→ removing .agent-data (admins/reports private keys)"
   rm -rf "$BACKEND/.agent-data"
+
+  # Erase the ./dev/sim simulator if it exists — not just uninstall the
+  # app, but wipe the entire device including keychain. The XMTP identity
+  # key lives in the keychain and survives app uninstall. If the key
+  # persists, the next app install reuses the same inbox but creates a
+  # new XMTP installation, leading to stale-installation MLS failures
+  # ("Setting up your channels..." forever).
+  local dev_sim_file
+  dev_sim_file="$(dirname "$BACKEND")/.dev-sim-id"
+  if [[ -f "$dev_sim_file" ]]; then
+    local dev_sim
+    dev_sim=$(cat "$dev_sim_file")
+    echo "→ erasing dev simulator $dev_sim (clears keychain + app data)"
+    run_timeout 20 xcrun simctl shutdown "$dev_sim" >/dev/null 2>&1 || true
+    if run_timeout 45 xcrun simctl erase "$dev_sim" >/dev/null 2>&1; then
+      echo "   erased"
+    else
+      echo "   erase failed (continuing)"
+    fi
+  fi
 
   echo "→ uninstalling Convos from booted simulators"
   local booted
@@ -210,12 +224,8 @@ dev_reset() {
 }
 
 dev_status() {
-  echo "📦  Containers — backend dev stack:"
+  echo "📦  Containers:"
   ( cd "$BACKEND" && docker compose ps 2>/dev/null ) || echo "   (not running)"
-  echo
-  echo "📦  Containers — goldilocks-ios XMTP node:"
-  ( cd "$GOLDILOCKS_IOS" && docker compose -f dev/docker-compose.yml -p convos-ios ps 2>/dev/null ) \
-    || echo "   (not running)"
   echo
   echo "📱  Booted simulators:"
   run_timeout 30 xcrun simctl list devices 2>/dev/null | grep "Booted" || echo "   (none)"

@@ -275,7 +275,7 @@ export default async function meRoutes(app: FastifyInstance) {
   // POST /v2/admin/upgrade
   // body: { code }
   // Claims a CLI-created admin slot. Each admin row carries its own
-  // uniquely-generated `upgrade_code` (issued by `npm run cli`). The
+  // uniquely-generated `upgrade_code` (issued by `./dev/admins add`). The
   // person enters that code in the iOS debug area; we bind their inbox_id
   // to the matching slot. The UPDATE fires `admin_changed` → the agent
   // adds the inbox to the cross-admin groups + every Advisory. A wrong

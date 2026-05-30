@@ -21,7 +21,7 @@ type: log
 
 ## Methodology
 
-- `./dev/up` to bring the local XMTP node + pgbackend up.
+- `./dev/start` to bring the local XMTP node + pgbackend up.
 - `swift test --package-path ConvosCore` for the full suite; filter
   with `--filter SuiteName` for targeted passes.
 - N = 5 for checkpoint-local passes; N = 15 for the C13 whole-suite

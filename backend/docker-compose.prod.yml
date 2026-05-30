@@ -254,10 +254,10 @@ services:
       # Restic passphrase. The operator chooses where this lives —
       # default is ./.restic-passphrase.prod (chmod 600, gitignored).
       - ./.restic-passphrase.prod:/run/secrets/restic_password:ro
-      # Source repos. The backend repo is the cwd; the iOS repo path
-      # comes from the .env.prod variable (defaults to a sibling).
+      # Source repos. The backend is the cwd; the monorepo root
+      # (containing the iOS app) is the parent directory.
       - .:/source/goldilocks-backend:ro
-      - ${HOST_GOLDILOCKS_IOS_DIR:-../goldilocks-ios}:/source/goldilocks-ios:ro
+      - ${HOST_GOLDILOCKS_IOS_DIR:-..}:/source/goldilocks-ios:ro
       # The script itself.
       - ./scripts/backup.sh:/backup.sh:ro
     entrypoint: ["/backup.sh"]

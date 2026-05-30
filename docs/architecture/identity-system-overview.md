@@ -1,6 +1,6 @@
 # Identity System Overview
 
-This document describes how the Convos iOS identity system works after the single-inbox refactor (see [ADR 011](adr/011-single-inbox-identity-model.md)). It covers the shape of the system today, what changed from the previous per-conversation-inbox model, and the typical flows a new reader should understand before touching identity code.
+This document describes how the Convos iOS identity system works after the single-inbox refactor (see [ADR 011](../adr/011-single-inbox-identity-model.md)). It covers the shape of the system today, what changed from the previous per-conversation-inbox model, and the typical flows a new reader should understand before touching identity code.
 
 ## Before the refactor (per-conversation inbox model)
 

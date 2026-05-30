@@ -12,9 +12,9 @@ This document is a plan, not a change. Nothing here is implemented yet.
 
 ### Do we have a restore function?
 
-Yes — for production. The CLI's `--prod → Backups` screen lists backups, runs
-one on demand, and restores either the database or the agent identities
-(`restoreDatabaseScript` / `restoreAgentScript` in `scripts/goldilocks.tsx`;
+Yes — for production. `./dev/backup` lists backups, runs one on demand,
+and restores either the database or the agent identities
+(`scripts/backup.sh` / `scripts/restore.sh`;
 also documented in `docs/production-setup.md §6`).
 
 What's missing is *confidence* in it:

@@ -20,6 +20,17 @@ struct ConvosApp: App {
         // thing in init().
         GoldilocksRolePrefs.applyToKeychain()
 
+        let brand = BrandConfig.shared
+        GoldilocksPlan.configure(
+            monthlyPricePerPersonCents: brand.pricing.monthlyPricePerPersonCents,
+            priceLabel: brand.pricing.priceLabel
+        )
+        GoldilocksMembershipTier.configure(
+            silverThreshold: brand.tiers.thresholds.silver,
+            goldThreshold: brand.tiers.thresholds.gold,
+            descriptions: brand.tiers.descriptions
+        )
+
         ConfigManager.configure(overrides: ConvosSecretOverrides(
             apiBaseURL: Secrets.CONVOS_API_BASE_URL,
             xmtpCustomHost: Secrets.XMTP_CUSTOM_HOST,

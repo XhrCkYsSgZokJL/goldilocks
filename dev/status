@@ -1,0 +1,31 @@
+#!/bin/bash
+set -euo pipefail
+
+# Show status of all dev environment components.
+#
+# Usage: ./dev/status
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_lib.sh"
+
+cd "$DEV_BACKEND"
+
+echo "📊  Dev environment status"
+echo ""
+
+echo "Processes:"
+for proc in server agent simulator caddy stripe; do
+  if [ -f ".dev-run/${proc}.pid" ]; then
+    pid=$(cat ".dev-run/${proc}.pid" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      echo "  ● $proc (pid $pid)"
+    else
+      echo "  ○ $proc (stale pid file)"
+    fi
+  else
+    echo "  ○ $proc"
+  fi
+done
+echo ""
+
+bash scripts/dev-env.sh status

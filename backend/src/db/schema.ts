@@ -194,8 +194,8 @@ export const billingCheckouts = pgTable(
   (t) => ({ clientIdx: index('billing_checkouts_client_idx').on(t.clientId) }),
 );
 
-// CLI-managed admin registry. The `npm run cli` tool creates one row
-// per admin with a human name and a uniquely-generated `upgrade_code`.
+// Admin registry managed via `./dev/admins`. Creates one row per admin
+// with a human name and a uniquely-generated `upgrade_code`.
 // The person installs the app, registers as a client, and types that
 // code in the debug area to claim the slot — that fills in `inbox_id` +
 // `claimed_at`. /v2/me returns `isAdmin: true` once an enabled row

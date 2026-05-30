@@ -5,8 +5,8 @@ what protects what, where, and how. It is written for developers
 joining the project, security reviewers, and anyone trying to extend
 the app without accidentally regressing one of the guarantees.
 
-The Goldilocks-backend side of the conversation is covered in the
-backend repo's [`SECURITY.md`](https://github.com/xmtplabs/goldilocks-backend/blob/main/SECURITY.md).
+The backend side of the conversation is covered in
+[`security-backend.md`](security-backend.md).
 This document covers the device side.
 
 ---
@@ -74,8 +74,8 @@ mistake or compromise doesn't expose everything:
 | **SQLCipher local DB** | Messages on the device | libxmtp's local store, encrypted with the database key from the identity |
 | **TLS to the backend** | Eavesdropping on the API path | Cloudflare-terminated HTTPS to the backend tunnel |
 
-Each layer's design rationale is in the goldilocks-backend repo's
-[`docs/encryption-and-backup-plan.md`](https://github.com/xmtplabs/goldilocks-backend/blob/main/docs/encryption-and-backup-plan.md)
+Each layer's design rationale is in
+[`encryption-and-backup.md`](../operations/encryption-and-backup.md)
 under F8. The sections that follow document how the running app
 depends on each one, and what a developer needs to do to keep them
 working.
@@ -172,7 +172,7 @@ operation that needed it. Don't hold it on a long-lived property.
 ### The entitlement-level default
 
 The main app target's
-[`Convos/Convos.entitlements`](Convos/Convos.entitlements) sets:
+[`Convos/Convos.entitlements`](../../Convos/Convos.entitlements) sets:
 
 ```xml
 <key>com.apple.developer.default-data-protection</key>
@@ -185,7 +185,7 @@ between the user pressing the power button and the next Touch ID /
 Face ID / passcode unlock.
 
 The
-[`NotificationService/NotificationService.entitlements`](NotificationService/NotificationService.entitlements)
+[`NotificationService/NotificationService.entitlements`](../../NotificationService/NotificationService.entitlements)
 target relaxes that to `NSFileProtectionCompleteUnlessOpen` for the
 extension only. The push notification path wakes while the device
 is locked — `Complete` would prevent the extension from decrypting
@@ -196,7 +196,7 @@ the payload at all.
 If a write site needs a different protection class than the
 entitlement default (background URLSession downloads that have to
 land while locked, for example), use the
-[`ConvosCore/Sources/ConvosCore/Storage/ProtectedFile.swift`](ConvosCore/Sources/ConvosCore/Storage/ProtectedFile.swift)
+[`ConvosCore/Sources/ConvosCore/Storage/ProtectedFile.swift`](../../ConvosCore/Sources/ConvosCore/Storage/ProtectedFile.swift)
 helper:
 
 ```swift
@@ -278,14 +278,6 @@ items that should be visible across other related processes. New
 keychain items default to the app-group entry unless they have a
 reason to be more or less restricted.
 
-### Firebase App Check (in flight removal)
-
-App Check is currently active and is being removed (see the backend
-plan's open-decisions section). Don't add new code that depends on
-App Check; if you need device attestation, plan around Apple's
-DCAppAttestService directly — it's the v2 follow-up identified in
-the plan.
-
 ---
 
 ## 6. Patterns to follow when adding new code
@@ -358,8 +350,8 @@ These are deliberate v1 trade-offs documented in the backend plan:
   SE-wrapped key handle would make every existing encrypted blob
   instantly unrecoverable. Cleaner than wiping the SQLCipher DB
   byte by byte; a v2 follow-up.
-- **App Attest as defense in depth.** Apple-native attestation is
-  stronger than App Check on iOS; pending the Firebase rip-out.
+- **App Attest as defense in depth.** Apple-native attestation for
+  device verification; a future addition.
 - **No SE-on-SE-replace path.** If the Secure Enclave key is lost
   for any reason (corrupted keychain item, device wipe), the
   identity is unrecoverable. The SIWE re-onboarding path is the
@@ -385,22 +377,20 @@ clarifying questions shortly after.
 
 ## 9. Where to find more detail
 
-- The backend's
-  [`SECURITY.md`](https://github.com/xmtplabs/goldilocks-backend/blob/main/SECURITY.md)
-  — the other half of the system. Most attacks span both repos;
+- [`security-backend.md`](security-backend.md)
+  — the other half of the system. Most attacks span both sides;
   the two docs are meant to be read together.
-- The backend's
-  [`docs/encryption-and-backup-plan.md`](https://github.com/xmtplabs/goldilocks-backend/blob/main/docs/encryption-and-backup-plan.md)
+- [`encryption-and-backup.md`](../operations/encryption-and-backup.md)
   — the implementation plan. F8 is the iOS section.
-- [`ConvosCore/Sources/ConvosCore/Auth/SecureEnclave/IdentityKeyWrapper.swift`](ConvosCore/Sources/ConvosCore/Auth/SecureEnclave/IdentityKeyWrapper.swift)
+- [`IdentityKeyWrapper.swift`](../../ConvosCore/Sources/ConvosCore/Auth/SecureEnclave/IdentityKeyWrapper.swift)
   — the protocol.
-- [`ConvosCore/Sources/ConvosCoreiOS/SecureEnclaveIdentityKeyWrapper.swift`](ConvosCore/Sources/ConvosCoreiOS/SecureEnclaveIdentityKeyWrapper.swift)
+- [`SecureEnclaveIdentityKeyWrapper.swift`](../../ConvosCoreiOS/Sources/ConvosCoreiOS/SecureEnclaveIdentityKeyWrapper.swift)
   — the implementation.
-- [`ConvosCore/Sources/ConvosCore/Auth/Keychain/KeychainIdentityStore.swift`](ConvosCore/Sources/ConvosCore/Auth/Keychain/KeychainIdentityStore.swift)
+- [`KeychainIdentityStore.swift`](../../ConvosCore/Sources/ConvosCore/Auth/Keychain/KeychainIdentityStore.swift)
   — the store that uses the wrapper.
-- [`ConvosCore/Sources/ConvosCore/Storage/ProtectedFile.swift`](ConvosCore/Sources/ConvosCore/Storage/ProtectedFile.swift)
+- [`ProtectedFile.swift`](../../ConvosCore/Sources/ConvosCore/Storage/ProtectedFile.swift)
   — the file-protection helper.
-- [`ConvosCore/Tests/ConvosCoreTests/IdentityKeyWrapperTests.swift`](ConvosCore/Tests/ConvosCoreTests/IdentityKeyWrapperTests.swift)
+- [`IdentityKeyWrapperTests.swift`](../../ConvosCore/Tests/ConvosCoreTests/IdentityKeyWrapperTests.swift)
   — tests for the wrapper protocol contract.
 
 If anything here drifts out of sync with the code, the code is

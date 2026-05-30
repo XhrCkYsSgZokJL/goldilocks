@@ -25,8 +25,6 @@ public protocol DeviceRegistrationManagerProtocol: Actor {
 /// App-level manager for device registration with the backend.
 ///
 /// Device registration is a device-level concern (not inbox-specific).
-/// It uses Firebase AppCheck for authentication, not JWT tokens (which are inbox-specific).
-///
 /// This allows device registration to happen immediately on app launch,
 /// without waiting for any inbox to be authorized.
 ///
@@ -71,7 +69,6 @@ public actor DeviceRegistrationManager: DeviceRegistrationManagerProtocol {
     /// Registers the device with the backend if needed (first time or token changed).
     /// Can be called multiple times safely - will skip if already registered with same token.
     ///
-    /// Uses Firebase AppCheck for authentication (device-level, not inbox-specific).
     /// This can be called immediately on app launch, without waiting for inbox authorization.
     ///
     /// Retry strategy: Will retry on every call if previous attempt failed (UserDefaults not updated on failure).

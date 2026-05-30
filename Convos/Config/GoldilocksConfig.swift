@@ -52,9 +52,10 @@ enum GoldilocksConfig {
     ///   rendered under the "Admin" section header) followed by the
     ///   admin's own Advisory + Reports (rendered under "Client").
     static var groupNames: [String] {
+        let b = BrandConfig.shared.groups
         switch role {
-        case .client: return ["Advisory", "Reports"]
-        case .admin:  return ["Admins", "Audit Log", "Advisory", "Reports"]
+        case .client: return b.client
+        case .admin:  return b.admin + b.client
         }
     }
 
@@ -75,14 +76,13 @@ enum GoldilocksConfig {
     /// list and the admin grid. The Admins + Audit Log coordination
     /// groups keep flat names. Used by `isGoldilocksGroup` and the icon
     /// picker below — both treat the prefix as the brand-defining marker.
-    static let allGroupNamePrefixes: [String] = ["Advisory", "Reports", "Admins", "Audit Log"]
+    static var allGroupNamePrefixes: [String] { BrandConfig.shared.groups.all }
 
     /// True if `name` matches one of the Goldilocks brand prefixes
     /// (handles both bare "Admins" / "Audit Log" and per-client
     /// "Advisory #N" / "Reports #N").
     static func isGoldilocksGroupName(_ name: String) -> Bool {
-        if name == "Admins" || name == "Audit Log" { return true }
-        for prefix in ["Advisory", "Reports"] where name == prefix || name.hasPrefix("\(prefix) ") {
+        for prefix in BrandConfig.shared.groups.all where name == prefix || name.hasPrefix("\(prefix) ") {
             return true
         }
         return false
@@ -91,12 +91,11 @@ enum GoldilocksConfig {
     /// SF Symbol name to use as the avatar for a given Goldilocks group.
     /// Falls back to a generic chat icon if the name isn't mapped.
     static func iconSymbolName(for groupName: String) -> String {
-        if groupName == "Admins" { return "shield.lefthalf.filled" }
-        if groupName == "Audit Log" { return "scroll.fill" }
-        if groupName == "History" || groupName.hasPrefix("History ") { return "clock.fill" }
-        if groupName.hasPrefix("Advisory") { return "lightbulb.fill" }
-        if groupName.hasPrefix("Reports") { return "doc.text.fill" }
-        return "bubble.left.and.bubble.right.fill"
+        let icons = BrandConfig.shared.groupIcons
+        for (key, icon) in icons where key != "default" {
+            if groupName == key || groupName.hasPrefix("\(key) ") { return icon }
+        }
+        return icons["default"] ?? "bubble.left.and.bubble.right.fill"
     }
 }
 
@@ -129,14 +128,15 @@ extension Conversation {
     ///   - Client: only the Client section — their own Advisory + Reports.
     var goldilocksPinnedSection: GoldilocksPinnedSection? {
         guard let name else { return nil }
+        let b = BrandConfig.shared.groups
         switch GoldilocksConfig.role {
         case .admin:
-            if name == "Admins" || name == "Audit Log" { return .admin }
+            if b.admin.contains(name) { return .admin }
             guard let number = GoldilocksConfig.ownClientNumber else { return nil }
-            if name == "Advisory #\(number)" || name == "Reports #\(number)" { return .client }
+            for g in b.client where name == "\(g) #\(number)" { return .client }
             return nil
         case .client:
-            if name.hasPrefix("Advisory") || name.hasPrefix("Reports") { return .client }
+            for g in b.client where name.hasPrefix(g) { return .client }
             return nil
         }
     }
@@ -163,11 +163,9 @@ extension Conversation {
         guard let name else { return true }
         switch GoldilocksConfig.role {
         case .admin:
-            // Allow everything through here; staleness filter trims to
-            // the admin's owned set (Admins + own Advisory + own Reports).
             return true
         case .client:
-            return name != "Admins" && name != "Audit Log"
+            return !BrandConfig.shared.groups.admin.contains(name)
         }
     }
 }

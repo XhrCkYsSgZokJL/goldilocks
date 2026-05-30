@@ -24,7 +24,7 @@ Most tests require the local XMTP node:
 ```
 
 This script will:
-1. Start Docker containers (`./dev/up`)
+1. Start Docker containers (`./dev/start`)
 2. Wait for XMTP node to be ready on port 5556
 3. Run all tests
 4. Stop containers when done
@@ -45,14 +45,14 @@ Run a specific test by name. **Note:** Most tests require Docker to be running f
 
 ```bash
 # Start Docker first (for most tests)
-./dev/up
+./dev/start
 
 # Then run specific test
 swift test --filter "TestClassName" --package-path ConvosCore
 swift test --filter "TestClassName/testMethodName" --package-path ConvosCore
 
 # When done
-./dev/down
+./dev/stop
 ```
 
 Examples:
@@ -79,22 +79,22 @@ swift test --filter "InboxLifecycle" --package-path ConvosCore
 
 ```bash
 # Start XMTP node
-./dev/up
+./dev/start
 
 # Stop XMTP node
-./dev/down
+./dev/stop
 
 # Check if running
 docker ps | grep xmtp
 
 # View logs
-./dev/compose logs
+./dev/status
 ```
 
 ## On Failure
 
 1. **Docker not running**: `docker info` - make sure Docker Desktop is running
 2. **XMTP node not ready**: Check port 5556 with `nc -z localhost 5556`
-3. **View container logs**: `./dev/compose logs`
+3. **View container logs**: `cd backend && docker compose logs`
 4. **Build failures**: Run `swift build --package-path ConvosCore` to see errors
-5. **Restart fresh**: `./dev/down && ./dev/up`
+5. **Restart fresh**: `./dev/stop && ./dev/start`

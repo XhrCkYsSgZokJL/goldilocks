@@ -30,9 +30,8 @@
 #   --yes                     skip the "this will overwrite..." confirmation.
 #   -h, --help                show this help.
 #
-# Restore is driven by the same goldilocks CLI's Backups screen (see
-# scripts/goldilocks.tsx). Running this script by hand is fine; it's
-# the same thing the CLI does.
+# Restore is driven by `./dev/backup restore`. Running this script
+# by hand is fine.
 #
 # Design notes in docs/encryption-and-backup-plan.md F2.
 

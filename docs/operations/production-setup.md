@@ -9,7 +9,7 @@ Cloudflare account, no static IP.
 
 Built and ready: the backend API and server-side agents, the production
 Docker stack, the Cloudflare quick tunnel, on-box (encrypted) attachment
-storage, and the `goldilocks` control CLI.
+storage, and the operations scripts.
 
 Still to do, to go live:
 
@@ -32,57 +32,49 @@ runs on your Mac.
 (for the iOS app). The dev environment also drives the **goldilocks-ios**
 repo — clone it next to this one.
 
-1. **Clone both repos and install dependencies.** The CLI expects the iOS
-   repo beside this one (override with the `GOLDILOCKS_IOS` environment
-   variable).
+1. **Clone the repo and install dependencies.**
 
    ```
-   cd goldilocks-backend && npm install
+   cd goldilocks/backend && npm install
    ```
 
-   That one `npm install` is the only manual dependency step — it bootstraps
-   the CLI itself. From there the CLI handles it: the dev **Start** runs
-   `npm install` for you, and so does a production deploy.
-
-2. **Start the CLI and let it create `.env.dev`:**
+2. **Run first-time setup to create `.env.dev`:**
 
    ```
-   npm run cli -- --dev
+   ./dev/setup
    ```
 
-   On first run it sees there's no `.env.dev` and offers to set one up —
-   say yes. It copies `.env.example`, generates the secrets, and writes
-   `.env.dev`; the dev defaults (dev Postgres, local XMTP node, mock
-   attachment storage) cover everything else. You can revisit this any time
-   under **Settings**.
+   This copies `.env.example`, generates secrets (`POSTGRES_PASSWORD`,
+   `JWT_SECRET`, `AGENT_DB_ENCRYPTION_KEY`, `APP_ENCRYPTION_KEY`), builds
+   the backup Docker image, generates age keys and TLS certificates, and
+   writes `.env.dev`.
 
-3. **Start the dev environment.** Still in the CLI, choose
-   **Settings → Systems → Start**. That's the whole thing in one step — it
-   installs dependencies, brings up the local XMTP node and the dev
-   Postgres, runs migrations, and starts the backend server and the agents
-   in the background. **Settings → Systems → Stop** takes it all back down;
-   **Settings → View logs** opens the dev log folder. (Non-interactive:
-   `npm run cli -- --dev stack up`.)
+3. **Start the dev environment.**
+
+   ```
+   ./dev/start
+   ```
+
+   This installs dependencies, brings up the local XMTP node and the dev
+   Postgres, runs migrations, and starts the backend server and agents
+   in the background. `./dev/stop` takes it all back down; `./dev/status`
+   checks what's running.
 
 4. **Create an admin slot** so you can reach the admin side of the app:
 
    ```
-   npm run cli -- --dev admins add <your-name>
+   ./dev/admins add <your-name>
    ```
 
    Note the 16-digit upgrade code it prints (shown as 1234-5678-9012-3456).
 
-5. **Build the iOS app.** In the goldilocks-ios repo, build the
+5. **Build the iOS app.** Open `Convos.xcodeproj`, select the
    **Convos (Local)** scheme and run it in a simulator — it talks to the
    backend on your machine. Register as a client; to become an admin, enter
    the upgrade code from step 4 in the app's debug area.
 
 When all of that works you have a full local environment, and you're ready
 for Part 2.
-
-> Tip: `source scripts/goldilocks.zsh` from your `~/.zshrc` and you can run
-> `goldilocks --dev` (or `goldilocks --prod`) from anywhere instead of
-> `npm run cli --`.
 
 ## Part 2 — Production deployment
 
@@ -141,19 +133,18 @@ by moving to a custom domain before any real public launch.
 
 ## 1. Secrets and the `.env.prod` file
 
-On the box, in the repo, start the CLI:
+On the box, in the repo, create `.env.prod` from the example and fill in
+the production values:
 
 ```
-npm run cli -- --prod
+cp backend/.env.production.example backend/.env.prod
+chmod 600 backend/.env.prod
+$EDITOR backend/.env.prod
 ```
 
-It sees there's no `.env.prod` and offers to set one up — say yes. The
-wizard copies `.env.production.example`, **generates** `POSTGRES_PASSWORD`,
-`JWT_SECRET`, and `AGENT_DB_ENCRYPTION_KEY`, prompts for the XMTP production
-gRPC endpoint (step 3 — you can skip it and fill it in later), and writes
-`.env.prod` with `chmod 600`. Revisit it any time under **Environment &
-setup**, which can also re-run setup, check the required values, or open the
-file in your editor.
+Generate the required secrets (or use `openssl rand -hex 32` for each):
+`POSTGRES_PASSWORD`, `JWT_SECRET`, `AGENT_DB_ENCRYPTION_KEY`, and
+`APP_ENCRYPTION_KEY`.
 
 A few values the wizard leaves at their defaults:
 
@@ -170,14 +161,13 @@ A few values the wizard leaves at their defaults:
 `.env.prod`; it's gitignored. `GOLDILOCKS_ALLOW_SELF_PROMOTE` is absent on
 purpose — `docker-compose.prod.yml` forces it off.
 
-> **At-rest secrets**: the CLI seals `.env.prod` into `secrets/prod.env.enc`
-> (SOPS + age) and unseals it for editing in **Settings → Keys**. The
-> sealed file is what gets backed up and what the deploy reads.
-> `scripts/with-prod-secrets.sh` decrypts it into the deploy process env
-> in-memory before exec'ing `docker compose` — the runtime path never
-> requires `.env.prod` to exist on disk. After editing + re-sealing,
-> `rm .env.prod` to shrink the plaintext window on the box. See F3 in
-> `docs/encryption-and-backup-plan.md`.
+> **At-rest secrets**: seal `.env.prod` with `./dev/keys seal` (SOPS + age).
+> The sealed file (`secrets/prod.env.enc`) is what gets backed up and what
+> the deploy reads. `scripts/with-prod-secrets.sh` decrypts it into the
+> deploy process env in-memory before exec'ing `docker compose` — the
+> runtime path never requires `.env.prod` to exist on disk. After editing
+> + re-sealing, `rm .env.prod` to shrink the plaintext window on the box.
+> See F3 in `docs/encryption-and-backup-plan.md`.
 
 ## 2. The Cloudflare quick tunnel
 
@@ -216,8 +206,7 @@ also be built against the XMTP production network so the two match.
 
 ## 4. Deploy
 
-First deploy and every deploy after it — from the CLI (`--prod` → **Deploy**),
-or directly:
+First deploy and every deploy after it:
 
 ```
 ./scripts/deploy.sh
@@ -247,22 +236,20 @@ app if it changed (step 5).
 
 ## 5. Point the iOS app at the backend
 
-The CLI does this for you. Whenever the tunnel comes up — `--prod` →
-**Cloudflare tunnel → Start** (or **Restart**, or a stack **Start**) — it
-reads the tunnel URL and writes it into the iOS app's production config,
-`goldilocks-ios/Convos/Config/config.prod.json` (the `backendUrl` field).
-There's also **Cloudflare tunnel → Point the iOS app at this backend** to
-re-sync without restarting anything. The CLI finds the iOS repo beside this
-one, or at `$GOLDILOCKS_IOS`.
+Read the tunnel URL and write it into the iOS app's production config:
 
-That leaves one genuinely manual step — building a native app can't be
-driven from here: open the **production** scheme in Xcode, build, and ship
-it through TestFlight / the App Store. The iOS build must also target the
-XMTP **production** network so it matches the backend.
+```
+URL=$(./scripts/tunnel-url.sh)
+# Update Convos/Config/config.prod.json with the backendUrl
+```
+
+Then open the **production** scheme in Xcode, build, and ship through
+TestFlight / the App Store. The iOS build must also target the XMTP
+**production** network so it matches the backend.
 
 > **Whenever the tunnel URL changes** (box reboot, `cloudflared` restart):
-> the CLI re-syncs `config.prod.json` the next time the tunnel comes up — you
-> just rebuild and ship. The backend itself needs no change; it auto-detects
+> re-run `./scripts/tunnel-url.sh`, update `config.prod.json`, rebuild and
+> ship. The backend itself needs no change; it auto-detects
 > the new host. One side effect of self-hosted storage: attachments sent
 > *before* the change keep their old URL baked into the message, so they
 > stop loading after a URL change — newly sent attachments are fine. To
@@ -276,10 +263,9 @@ The `backup` service runs `scripts/backup.sh` once a day: a `pg_dump` of the
 database and a tar of the agent identity data, written to `./backups` and
 pruned after 30 days.
 
-The CLI handles all of this — `--prod` → **Backups** lists every backup, runs
-one on demand, and restores the database or the agent identities from a
-chosen file. The commands below are what it runs, if you'd rather do it by
-hand.
+Use `./dev/backup` to manage backups — `list` shows every snapshot, `run`
+creates one on demand, `restore` restores from a chosen snapshot, and
+`verify` checks integrity.
 
 Attachment files (the `goldilocks-attachments` volume) are **not** in the
 nightly backup — they can be large, and the `attachments` table already
@@ -388,38 +374,46 @@ the empty volume is first attached.
 
 ## Operations cheatsheet
 
-Day-to-day operations go through the interactive control CLI. It always
-targets one environment, chosen with `--dev` or `--prod`:
+Day-to-day operations use the `./dev/` scripts from the monorepo root:
 
+```bash
+# Dev lifecycle
+./dev/setup              # First-time setup (generates .env.dev + secrets)
+./dev/start              # Start everything (Docker + backend + agents)
+./dev/stop               # Stop everything
+./dev/reset              # Wipe data and start fresh
+./dev/status             # Check what's running
+
+# Admin management
+./dev/admins list        # List all admin slots
+./dev/admins add <name>  # Add admin (prints upgrade code)
+./dev/admins remove <name>
+
+# Backups
+./dev/backup run         # Run a backup now
+./dev/backup list        # List snapshots
+./dev/backup restore     # Restore from latest (or specify ID)
+./dev/backup verify      # Check backup integrity
+
+# Keys and secrets
+./dev/keys status        # Show key material status
+./dev/keys seal          # Seal .env.dev -> secrets/dev.env.enc
+./dev/keys unseal        # Unseal secrets/dev.env.enc -> .env.dev
+./dev/keys init-tls      # Generate TLS CA + certificates
+./dev/keys renew-tls     # Rotate postgres TLS leaf cert
+
+# Security
+./dev/security status    # Show security config
+./dev/security pins show # Show iOS cert pin hashes
+./dev/security ttl jwt <seconds>
+./dev/security ttl refresh <days>
 ```
-npm run cli -- --prod
-```
 
-It opens a menu — arrow keys move, Enter selects — covering admins, a
-read-only client-subscriptions view, the production stack (deploy, status,
-logs, restart, backups), and the Cloudflare tunnel (start / stop, show URL).
-`--dev` instead targets the local development environment. If you source
-`scripts/goldilocks.zsh` from your shell, the CLI is available anywhere as
-`goldilocks --prod` / `goldilocks --dev`.
+For production, wrap any `docker compose` invocation in
+`scripts/with-prod-secrets.sh` so the SOPS-sealed env is decrypted
+in-memory and never written to disk:
 
-Everything also has a non-interactive form, for scripting — the environment
-flag is required here too:
-
-```
-npm run cli -- --prod stack deploy
-npm run cli -- --prod stack status
-npm run cli -- --prod stack logs backend
-npm run cli -- --prod stack backup
-npm run cli -- --prod tunnel url
-npm run cli -- --prod admins list
-npm run cli -- --prod clients list
-```
-
-The raw commands still work if you prefer them. Wrap any `docker compose`
-invocation in `scripts/with-prod-secrets.sh` so the SOPS-sealed env is
-decrypted in-memory for that command and never written to disk:
-
-```
+```bash
 W=./scripts/with-prod-secrets.sh
 $W docker compose -f docker-compose.prod.yml ps
 $W docker compose -f docker-compose.prod.yml logs -f backend

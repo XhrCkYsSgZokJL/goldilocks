@@ -1,0 +1,254 @@
+#!/bin/bash
+set -euo pipefail
+
+# Security configuration for the dev environment.
+#
+# Usage:
+#   ./dev/security status                Show security config status
+#   ./dev/security pins show             Show current iOS cert pin hashes
+#   ./dev/security pins add <pem-path>   Compute SPKI hash from PEM and add to iOS
+#   ./dev/security pins clear            Remove all pin hashes
+#   ./dev/security pins mode [shadow|enforce]  Get or set pinning mode
+#   ./dev/security secure-window [on|off]      Toggle screenshot protection in dev
+#   ./dev/security ttl jwt <seconds>     Set JWT access token TTL
+#   ./dev/security ttl refresh <days>    Set refresh token TTL
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$SCRIPT_DIR/.."
+BACKEND_DIR="$ROOT_DIR/backend"
+BACKUP_IMAGE="goldilocks-backup:latest"
+
+PINNER_PATH="$ROOT_DIR/ConvosCore/Sources/ConvosCore/Networking/CertificatePinner.swift"
+API_CLIENT_PATH="$ROOT_DIR/ConvosCore/Sources/ConvosCore/API/ConvosAPIClient.swift"
+DEV_XCCONFIG="$ROOT_DIR/Convos/Config/Dev.xcconfig"
+
+read_env_value() {
+    local file="$1" key="$2"
+    [ -f "$file" ] || return
+    grep "^${key}=" "$file" 2>/dev/null | tail -1 | cut -d'=' -f2- || true
+}
+
+set_env_value() {
+    local file="$1" key="$2" value="$3"
+    if grep -q "^${key}=" "$file" 2>/dev/null; then
+        sed -i.bak "s|^${key}=.*|${key}=${value}|" "$file"
+        rm -f "${file}.bak"
+    else
+        echo "${key}=${value}" >> "$file"
+    fi
+}
+
+read_pin_hashes() {
+    [ -f "$PINNER_PATH" ] || { echo ""; return; }
+    grep -A 20 'apiSpkiHashes:.*Set<String>.*=' "$PINNER_PATH" \
+        | sed -n '/\[/,/\]/p' \
+        | grep '"' \
+        | sed 's/.*"\([^"]*\)".*/\1/' || true
+}
+
+read_pin_mode() {
+    [ -f "$API_CLIENT_PATH" ] || { echo "unknown"; return; }
+    grep -o 'GoldilocksPinning\.defaultPinner(mode: \.\(shadow\|enforce\))' "$API_CLIENT_PATH" \
+        | sed 's/.*\.\(shadow\|enforce\).*/\1/' || echo "unknown"
+}
+
+read_secure_window() {
+    [ -f "$DEV_XCCONFIG" ] || { echo "unknown"; return; }
+    if grep -q 'SWIFT_ACTIVE_COMPILATION_CONDITIONS.*DEBUG_DISABLE_SECURE_WINDOW' "$DEV_XCCONFIG" 2>/dev/null; then
+        echo "on"
+    else
+        echo "off"
+    fi
+}
+
+cmd="${1:-help}"
+
+case "$cmd" in
+    status)
+        echo "Security status"
+        echo ""
+
+        hashes="$(read_pin_hashes)"
+        count=0
+        if [ -n "$hashes" ]; then
+            count="$(echo "$hashes" | wc -l | tr -d ' ')"
+        fi
+        echo "  iOS pin hashes:  ${count} pin(s)"
+
+        mode="$(read_pin_mode)"
+        echo "  iOS pin mode:    ${mode}"
+
+        sw="$(read_secure_window)"
+        if [ "$sw" = "on" ]; then
+            echo "  Secure window:   DEBUG flag ON (screenshots not blocked in dev)"
+        elif [ "$sw" = "off" ]; then
+            echo "  Secure window:   off (blocked everywhere)"
+        else
+            echo "  Secure window:   unknown"
+        fi
+
+        jwt_ttl="$(read_env_value "$BACKEND_DIR/.env.dev" JWT_TTL_SECONDS)"
+        refresh_ttl="$(read_env_value "$BACKEND_DIR/.env.dev" REFRESH_TTL_DAYS)"
+        echo "  JWT TTL:         ${jwt_ttl:-3600 (default)}s"
+        echo "  Refresh TTL:     ${refresh_ttl:-30 (default)}d"
+
+        enc_v1="$(read_env_value "$BACKEND_DIR/.env.dev" ENCRYPT_AT_REST_V1)"
+        app_key="$(read_env_value "$BACKEND_DIR/.env.dev" APP_ENCRYPTION_KEY)"
+        enc_status="off"
+        [ "$enc_v1" = "true" ] && enc_status="on"
+        key_status="missing"
+        [ ${#app_key} -eq 64 ] && key_status="present"
+        echo "  F4 encryption:   ${enc_status} (key: ${key_status})"
+
+        tls_dir="$BACKEND_DIR/secrets/tls"
+        if [ -f "$tls_dir/ca.crt" ] && [ -f "$tls_dir/postgres.crt" ] && \
+           [ -f "$tls_dir/client-backend.crt" ] && [ -f "$tls_dir/client-agent.crt" ]; then
+            echo "  F5 mTLS:         present"
+        else
+            echo "  F5 mTLS:         incomplete"
+        fi
+
+        if [ -f "$BACKEND_DIR/secrets/dev.env.enc" ]; then
+            echo "  F3 sealed env:   present"
+        else
+            echo "  F3 sealed env:   not sealed"
+        fi
+        echo ""
+        ;;
+
+    pins)
+        subcmd="${2:-help}"
+        case "$subcmd" in
+            show)
+                hashes="$(read_pin_hashes)"
+                if [ -z "$hashes" ]; then
+                    echo "No pin hashes configured (pinner falls back to OS trust)"
+                else
+                    echo "Current iOS pin hashes:"
+                    echo "$hashes" | while read -r h; do echo "  $h"; done
+                fi
+                echo ""
+                echo "Mode: $(read_pin_mode)"
+                ;;
+            add)
+                pem_path="${3:-}"
+                [ -z "$pem_path" ] && { echo "Usage: ./dev/security pins add <path-to-pem>"; exit 1; }
+                [ -f "$pem_path" ] || { echo "Error: $pem_path not found"; exit 1; }
+
+                abs_dir="$(cd "$(dirname "$pem_path")" && pwd)"
+                base="$(basename "$pem_path")"
+                hash="$(docker run --rm \
+                    -v "${abs_dir}:/work:ro" -w /work \
+                    --entrypoint sh "$BACKUP_IMAGE" \
+                    -c "openssl x509 -in '${base}' -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64 -A")"
+
+                [ -z "$hash" ] && { echo "Error: failed to compute SPKI hash"; exit 1; }
+                echo "Computed SPKI hash: $hash"
+
+                if grep -q "\"${hash}\"" "$PINNER_PATH" 2>/dev/null; then
+                    echo "Already present in CertificatePinner.swift"
+                    exit 0
+                fi
+
+                existing="$(read_pin_hashes)"
+                all_hashes=""
+                if [ -n "$existing" ]; then
+                    all_hashes="$existing"$'\n'"$hash"
+                else
+                    all_hashes="$hash"
+                fi
+                body="$(echo "$all_hashes" | sed 's/.*/"&",/' | sed 's/^/        /')"
+                replacement="[\n${body}\n    ]"
+
+                python3 -c "
+import re, sys
+text = open('$PINNER_PATH').read()
+pattern = r'(apiSpkiHashes:\s*Set<String>\s*=\s*)\[[\s\S]*?\]'
+body = '''[\n${body}\n    ]'''
+result = re.sub(pattern, lambda m: m.group(1) + body, text)
+open('$PINNER_PATH', 'w').write(result)
+"
+                echo "Added pin to CertificatePinner.swift. Rebuild iOS to apply."
+                ;;
+            clear)
+                python3 -c "
+import re
+text = open('$PINNER_PATH').read()
+pattern = r'(apiSpkiHashes:\s*Set<String>\s*=\s*)\[[\s\S]*?\]'
+result = re.sub(pattern, r'\1[]', text)
+open('$PINNER_PATH', 'w').write(result)
+"
+                echo "Cleared all pin hashes. Rebuild iOS to apply."
+                ;;
+            mode)
+                new_mode="${3:-}"
+                if [ -z "$new_mode" ]; then
+                    echo "Current pinning mode: $(read_pin_mode)"
+                    exit 0
+                fi
+                if [ "$new_mode" != "shadow" ] && [ "$new_mode" != "enforce" ]; then
+                    echo "Usage: ./dev/security pins mode [shadow|enforce]"
+                    exit 1
+                fi
+                sed -i.bak "s/GoldilocksPinning\.defaultPinner(mode: \.\(shadow\|enforce\))/GoldilocksPinning.defaultPinner(mode: .${new_mode})/" "$API_CLIENT_PATH"
+                rm -f "${API_CLIENT_PATH}.bak"
+                echo "Pinning mode set to .${new_mode}. Rebuild iOS to apply."
+                ;;
+            *)
+                echo "Usage: ./dev/security pins <show|add|clear|mode>"
+                ;;
+        esac
+        ;;
+
+    secure-window)
+        action="${2:-}"
+        if [ -z "$action" ]; then
+            sw="$(read_secure_window)"
+            echo "Secure-window debug flag: $sw"
+            exit 0
+        fi
+        if [ "$action" = "on" ]; then
+            if grep -q 'DEBUG_DISABLE_SECURE_WINDOW' "$DEV_XCCONFIG" 2>/dev/null; then
+                echo "Already on"
+            else
+                sed -i.bak 's/^\(SWIFT_ACTIVE_COMPILATION_CONDITIONS *= *\)\(.*\)/\1\2 DEBUG_DISABLE_SECURE_WINDOW/' "$DEV_XCCONFIG"
+                rm -f "${DEV_XCCONFIG}.bak"
+                echo "DEBUG_DISABLE_SECURE_WINDOW enabled. Rebuild iOS to apply."
+            fi
+        elif [ "$action" = "off" ]; then
+            sed -i.bak 's/ *DEBUG_DISABLE_SECURE_WINDOW//' "$DEV_XCCONFIG"
+            rm -f "${DEV_XCCONFIG}.bak"
+            echo "DEBUG_DISABLE_SECURE_WINDOW disabled. Rebuild iOS to apply."
+        else
+            echo "Usage: ./dev/security secure-window [on|off]"
+        fi
+        ;;
+
+    ttl)
+        kind="${2:-}"
+        value="${3:-}"
+        if [ "$kind" = "jwt" ] && [ -n "$value" ]; then
+            set_env_value "$BACKEND_DIR/.env.dev" "JWT_TTL_SECONDS" "$value"
+            echo "Set JWT_TTL_SECONDS=$value in .env.dev"
+        elif [ "$kind" = "refresh" ] && [ -n "$value" ]; then
+            set_env_value "$BACKEND_DIR/.env.dev" "REFRESH_TTL_DAYS" "$value"
+            echo "Set REFRESH_TTL_DAYS=$value in .env.dev"
+        else
+            echo "Usage: ./dev/security ttl <jwt|refresh> <value>"
+        fi
+        ;;
+
+    help|*)
+        echo "Usage: ./dev/security <command>"
+        echo ""
+        echo "Commands:"
+        echo "  status                    Show security config status"
+        echo "  pins show                 Show current iOS cert pin hashes"
+        echo "  pins add <pem-path>       Compute SPKI hash and add to iOS"
+        echo "  pins clear                Remove all pin hashes"
+        echo "  pins mode [shadow|enforce] Get or set pinning mode"
+        echo "  secure-window [on|off]    Toggle screenshot protection in dev"
+        echo "  ttl jwt <seconds>         Set JWT access token TTL"
+        echo "  ttl refresh <days>        Set refresh token TTL"
+        ;;
+esac

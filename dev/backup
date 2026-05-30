@@ -1,0 +1,114 @@
+#!/bin/bash
+set -euo pipefail
+
+# Backup management for the dev environment.
+#
+# Usage:
+#   ./dev/backup run              Run a backup now
+#   ./dev/backup list             List all snapshots
+#   ./dev/backup restore [ID]     Restore from snapshot (latest if no ID)
+#   ./dev/backup verify           Check backup integrity
+#   ./dev/backup unlock           Clear stale restic locks
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BACKEND_DIR="$SCRIPT_DIR/../backend"
+
+cd "$BACKEND_DIR"
+
+RESTIC_REPO="$BACKEND_DIR/backups/restic-dev"
+PASSPHRASE_FILE="$BACKEND_DIR/dev/restic-passphrase.dev"
+BACKUP_IMAGE="goldilocks-backup:latest"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+check_passphrase() {
+    if [ ! -f "$PASSPHRASE_FILE" ]; then
+        echo "Error: restic passphrase not found at $PASSPHRASE_FILE"
+        echo "Run ./dev/setup first to generate it."
+        exit 1
+    fi
+}
+
+restic_cmd() {
+    local readonly_flag=""
+    if [ "${1:-}" = "--ro" ]; then
+        readonly_flag=":ro"
+        shift
+    fi
+    docker run --rm \
+        --entrypoint restic \
+        -v "${RESTIC_REPO}:/repo${readonly_flag}" \
+        -v "${PASSPHRASE_FILE}:/passphrase:ro" \
+        -e RESTIC_REPOSITORY=/repo \
+        -e RESTIC_PASSWORD_FILE=/passphrase \
+        "$BACKUP_IMAGE" \
+        ${readonly_flag:+--no-lock} \
+        "$@"
+}
+
+usage() {
+    echo "Usage: ./dev/backup <command>"
+    echo ""
+    echo "Commands:"
+    echo "  run              Run a backup now"
+    echo "  list             List all snapshots"
+    echo "  restore [ID]     Restore from snapshot (latest if no ID)"
+    echo "  verify           Check backup integrity"
+    echo "  unlock           Clear stale restic locks"
+    echo "  help             Show this help"
+}
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+    run)
+        check_passphrase
+        echo "==> Running backup..."
+        bash scripts/backup.sh
+        ;;
+
+    list)
+        check_passphrase
+        echo "==> Listing snapshots..."
+        restic_cmd --ro snapshots
+        ;;
+
+    restore)
+        check_passphrase
+        ID="${1:-latest}"
+        echo "==> Restoring from snapshot: $ID"
+        bash scripts/restore.sh --env dev "$RESTIC_REPO" "$ID"
+        ;;
+
+    verify)
+        check_passphrase
+        echo "==> Verifying backup integrity (sampling 5% of data)..."
+        restic_cmd --ro check --read-data-subset=5%
+        echo "    Verification complete."
+        ;;
+
+    unlock)
+        check_passphrase
+        echo "==> Clearing stale restic locks..."
+        restic_cmd unlock
+        echo "    Locks cleared."
+        ;;
+
+    help|--help|-h|"")
+        usage
+        ;;
+
+    *)
+        echo "Unknown command: $cmd"
+        echo ""
+        usage
+        exit 1
+        ;;
+esac

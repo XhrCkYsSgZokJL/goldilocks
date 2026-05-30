@@ -12,7 +12,7 @@ struct ConversationsListEmptyCTA: View {
                     .font(.largeTitle)
                     .fontWeight(.bold)
                     .foregroundStyle(.colorTextPrimary)
-                Text("Goldilocks Digital is provisioning your private channels. They'll appear here in a moment.")
+                Text("\(BrandConfig.shared.brand.name) is provisioning your private channels. They\u{2019}ll appear here in a moment.")
                     .font(.callout)
                     .foregroundStyle(.colorTextSecondary)
                 HStack(spacing: DesignConstants.Spacing.step3x) {

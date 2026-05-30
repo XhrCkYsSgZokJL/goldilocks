@@ -93,7 +93,8 @@ echo "✅ SwiftLint ${SWIFTLINT_VERSION} is installed"
 # Check and install SwiftFormat
 if ! command -v swiftformat &> /dev/null; then
     echo "Installing SwiftFormat..."
-    if ! brew install swiftformat; then
+    brew install swiftformat || true
+    if ! command -v swiftformat &> /dev/null; then
         echo "❌ Failed to install SwiftFormat. Please try installing manually:"
         echo "  brew install swiftformat"
         exit 1
@@ -103,7 +104,8 @@ fi
 # Check and install swift-protobuf
 if ! command -v protoc-gen-swift &> /dev/null; then
     echo "Installing swift-protobuf..."
-    if ! brew install swift-protobuf; then
+    brew install swift-protobuf || true
+    if ! command -v protoc-gen-swift &> /dev/null; then
         echo "❌ Failed to install swift-protobuf. Please try installing manually:"
         echo "  brew install swift-protobuf"
         exit 1
@@ -113,7 +115,8 @@ fi
 # Check and install tmux (required by convos-task for parallel worktree sessions)
 if ! command -v tmux &> /dev/null; then
     echo "Installing tmux..."
-    if ! brew install tmux; then
+    brew install tmux || true
+    if ! command -v tmux &> /dev/null; then
         echo "❌ Failed to install tmux. Please try installing manually:"
         echo "  brew install tmux"
         exit 1
@@ -124,7 +127,8 @@ fi
 if [ ! "${CI}" = true ]; then
     if ! command -v gh >/dev/null 2>&1; then
         echo "Installing GitHub CLI..."
-        if ! brew install gh; then
+        brew install gh || true
+        if ! command -v gh >/dev/null 2>&1; then
             echo "❌ Failed to install GitHub CLI. Please try installing manually:"
             echo "  brew install gh"
             exit 1
@@ -197,87 +201,6 @@ if [ ! "${CI}" = true ]; then
                 SHELL_RC_UPDATED=true
             fi
         fi
-    fi
-fi
-
-################################################################################
-# Firebase App Check Debug Token                                                #
-################################################################################
-
-if [ ! "${CI}" = true ] || [ "${CLAUDE_SETUP}" = "1" ]; then
-    REPO_ROOT="$(cd "${DIRNAME}/.." && pwd)"
-    PARENT_DIR="$(dirname "${REPO_ROOT}")"
-    PARENT_ENV="${PARENT_DIR}/.env"
-    LOCAL_ENV="${REPO_ROOT}/.env"
-    FIREBASE_CONSOLE_URL="https://console.firebase.google.com/u/1/project/convos-otr/appcheck/apps"
-
-    # Reads FIREBASE_APP_CHECK_DEBUG_TOKEN from a file, or empty string if missing/unset.
-    read_firebase_token() {
-        local file="$1"
-        [ -f "$file" ] || { echo ""; return; }
-        grep "^FIREBASE_APP_CHECK_DEBUG_TOKEN=" "$file" | tail -1 | cut -d'=' -f2-
-    }
-
-    # Matches the /firebase-token slash command's "new token" report.
-    print_firebase_report() {
-        local token="$1"
-        local pinned_path="$2"
-        local symlink_note="$3"
-        echo ""
-        echo "🔥 Firebase App Check Debug Token"
-        echo ""
-        echo "Token: ${token}"
-        echo ""
-        echo "✓ Pinned in ${pinned_path}"
-        if [ -n "${symlink_note}" ]; then
-            echo "${symlink_note}"
-        fi
-        echo ""
-        echo "Register it in Firebase Console if you haven't already:"
-        echo "${FIREBASE_CONSOLE_URL}"
-        echo ""
-        echo "1. Click the link"
-        echo "2. Pick the iOS app for your scheme:"
-        echo "   - Dev:   org.convos.ios-preview"
-        echo "   - Local: org.convos.ios-local"
-        echo "   - Prod:  org.convos.ios"
-        echo "3. Overflow menu (⋮) → Manage debug tokens → Add debug token"
-        echo "4. Paste the UUID above"
-    }
-
-    LOCAL_TOKEN="$(read_firebase_token "${LOCAL_ENV}")"
-    PARENT_TOKEN="$(read_firebase_token "${PARENT_ENV}")"
-
-    if [ -n "${LOCAL_TOKEN}" ] || [ -n "${PARENT_TOKEN}" ]; then
-        if [ -L "${LOCAL_ENV}" ]; then
-            echo "✅ Firebase App Check debug token is configured (via ${LOCAL_ENV} → $(readlink "${LOCAL_ENV}"))"
-        elif [ -f "${LOCAL_ENV}" ] && [ -n "${LOCAL_TOKEN}" ]; then
-            echo "✅ Firebase App Check debug token is configured in ${LOCAL_ENV}"
-        else
-            echo "✅ Firebase App Check debug token is configured in ${PARENT_ENV}"
-        fi
-    else
-        # Nothing set anywhere — generate, pin in parent, symlink local.
-        NEW_TOKEN="$(uuidgen)"
-        if [ -f "${PARENT_ENV}" ] && grep -q "^FIREBASE_APP_CHECK_DEBUG_TOKEN=" "${PARENT_ENV}"; then
-            sed -i.bak "s|^FIREBASE_APP_CHECK_DEBUG_TOKEN=.*|FIREBASE_APP_CHECK_DEBUG_TOKEN=${NEW_TOKEN}|" "${PARENT_ENV}"
-            rm -f "${PARENT_ENV}.bak"
-        else
-            echo "FIREBASE_APP_CHECK_DEBUG_TOKEN=${NEW_TOKEN}" >> "${PARENT_ENV}"
-        fi
-
-        SYMLINK_NOTE=""
-        if [ ! -e "${LOCAL_ENV}" ] && [ ! -L "${LOCAL_ENV}" ]; then
-            ln -s ../.env "${LOCAL_ENV}"
-            SYMLINK_NOTE="✓ Linked .env → ../.env at ${LOCAL_ENV}"
-        elif [ -L "${LOCAL_ENV}" ]; then
-            link_target="$(readlink "${LOCAL_ENV}")"
-            SYMLINK_NOTE="✓ .env → ${link_target} symlink already in place at ${LOCAL_ENV}"
-        elif [ -f "${LOCAL_ENV}" ]; then
-            SYMLINK_NOTE=$'⚠️  '"${LOCAL_ENV}"$' is a regular file, not a symlink.\n   To share one token across worktrees:\n     cat .env >> ../.env && rm .env && ln -s ../.env .env'
-        fi
-
-        print_firebase_report "${NEW_TOKEN}" "${PARENT_ENV}" "${SYMLINK_NOTE}"
     fi
 fi
 

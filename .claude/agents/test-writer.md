@@ -90,13 +90,13 @@ final class MyFeatureTests: XCTestCase {
 **Single test (Docker usually required):**
 ```bash
 # Start Docker first
-./dev/up
+./dev/start
 
 # Run specific test
 swift test --filter "TestClassName/testMethodName" --package-path ConvosCore
 
 # Stop when done
-./dev/down
+./dev/stop
 ```
 
 **Isolated unit tests (no Docker - limited subset):**

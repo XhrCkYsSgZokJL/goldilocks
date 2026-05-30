@@ -31,7 +31,7 @@ Phase 1 ships as one Graphite stack (six PRs on top of the plan PR). Phase 2 ite
 
 **Files:** `Dockerfile`, possibly `docker-compose.yml`, `docker-compose.prod.yml`.
 
-**Acceptance:** Container starts, `whoami` inside is `node`, all writes to mounted volumes succeed, push/attachment flows work end-to-end in `dev/up`.
+**Acceptance:** Container starts, `whoami` inside is `node`, all writes to mounted volumes succeed, push/attachment flows work end-to-end in `dev/start`.
 
 ---
 

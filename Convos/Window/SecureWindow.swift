@@ -37,6 +37,7 @@ public enum SecureWindow {
     /// Installs the secure-canvas trick on the first key UIWindow the
     /// app creates. Safe to call multiple times — only the first call
     /// has any effect. Call from `AppDelegate.didFinishLaunching`.
+    @MainActor
     public static func installWhenWindowAppears() {
         #if DEBUG_DISABLE_SECURE_WINDOW
         return

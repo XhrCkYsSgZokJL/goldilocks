@@ -115,30 +115,20 @@ FOOTER_EOF
     
     echo "🏁 Generated Secrets.swift with auto-detected IP"
 
-# Part 1b: Generate Secrets.swift for Dev builds (read Firebase token from .env)
+# Part 1b: Generate Secrets.swift for Dev builds
 elif [ "$TARGET_NAME" = "Convos" ] && [ "$CONFIGURATION" = "Dev" ]; then
     echo "🔧 Dev build detected - generating secrets from .env"
-    
+
     SECRETS_FILE="${SRCROOT}/Convos/Config/Secrets.swift"
-    
+
     # Create directory if needed
     mkdir -p "${SRCROOT}/Convos/Config"
-    
-    # Read Firebase debug token from .env
-    FIREBASE_TOKEN=""
+
     CONVOS_API_BASE_URL=""
     if [ -f "${SRCROOT}/.env" ]; then
-        FIREBASE_TOKEN=$(grep -v '^#' "${SRCROOT}/.env" | grep '^FIREBASE_APP_CHECK_DEBUG_TOKEN=' | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//' || true)
-
         CONVOS_API_BASE_URL=$(grep -v '^#' "${SRCROOT}/.env" | grep '^CONVOS_API_BASE_URL=' | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//' || true)
     fi
-    
-    if [ -n "$FIREBASE_TOKEN" ]; then
-        echo "✅ Found Firebase debug token in .env"
-    else
-        echo "⚠️  No Firebase debug token in .env - you may need to register tokens manually"
-    fi
-    
+
     # Generate Secrets.swift for Dev
     cat > "$SECRETS_FILE" << EOF
 import Foundation
@@ -156,7 +146,6 @@ enum Secrets {
     static let XMTP_CUSTOM_HOST = ""
     static let GATEWAY_URL = ""
     static let SENTRY_DSN = ""
-    static let FIREBASE_APP_CHECK_DEBUG_TOKEN = "$FIREBASE_TOKEN"
     static let GIT_COMMIT_SHA: String = "$(swift_escape "$GIT_SHA")"
 }
 

@@ -24,12 +24,10 @@ if [ "$CONFIGURATION" = "Local" ]; then
 
     CONVOS_API_BASE_URL=""
     XMTP_CUSTOM_HOST=""
-    FIREBASE_TOKEN=""
 
     if [ -f "${SRCROOT}/.env" ]; then
         CONVOS_API_BASE_URL=$(grep -v '^#' "${SRCROOT}/.env" | grep '^CONVOS_API_BASE_URL=' | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//' || true)
         XMTP_CUSTOM_HOST=$(grep -v '^#' "${SRCROOT}/.env" | grep '^XMTP_CUSTOM_HOST=' | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//' || true)
-        FIREBASE_TOKEN=$(grep -v '^#' "${SRCROOT}/.env" | grep '^FIREBASE_APP_CHECK_DEBUG_TOKEN=' | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//' || true)
     fi
 
     cat > "$SECRETS_FILE" << EOF
@@ -41,32 +39,22 @@ enum Secrets {
     static let XMTP_CUSTOM_HOST = "${XMTP_CUSTOM_HOST:-$LOCAL_IP}"
     static let GATEWAY_URL = ""
     static let SENTRY_DSN = ""
-    static let FIREBASE_APP_CHECK_DEBUG_TOKEN = "$FIREBASE_TOKEN"
     static let GIT_COMMIT_SHA: String = "$(swift_escape "$GIT_SHA")"
 }
 // swiftlint:enable all
 EOF
     echo "🏁 Generated Secrets.swift for Local"
 
-# Part 2: Generate Secrets.swift for Dev builds (read Firebase token from .env)
+# Part 2: Generate Secrets.swift for Dev builds
 elif [ "$CONFIGURATION" = "Dev" ]; then
     echo "🔧 Dev build detected - generating secrets from .env"
 
     SECRETS_FILE="${SRCROOT}/Convos/Config/Secrets.swift"
     mkdir -p "${SRCROOT}/Convos/Config"
 
-    FIREBASE_TOKEN=""
     CONVOS_API_BASE_URL=""
     if [ -f "${SRCROOT}/.env" ]; then
-        FIREBASE_TOKEN=$(grep -v '^#' "${SRCROOT}/.env" | grep '^FIREBASE_APP_CHECK_DEBUG_TOKEN=' | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//' || true)
-
         CONVOS_API_BASE_URL=$(grep -v '^#' "${SRCROOT}/.env" | grep '^CONVOS_API_BASE_URL=' | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//' || true)
-    fi
-
-    if [ -n "$FIREBASE_TOKEN" ]; then
-        echo "✅ Found Firebase debug token in .env"
-    else
-        echo "⚠️  No Firebase debug token in .env - you may need to register tokens manually"
     fi
 
     cat > "$SECRETS_FILE" << EOF
@@ -78,7 +66,6 @@ enum Secrets {
     static let XMTP_CUSTOM_HOST = ""
     static let GATEWAY_URL = ""
     static let SENTRY_DSN = ""
-    static let FIREBASE_APP_CHECK_DEBUG_TOKEN = "$FIREBASE_TOKEN"
     static let GIT_COMMIT_SHA: String = "$(swift_escape "$GIT_SHA")"
 }
 // swiftlint:enable all

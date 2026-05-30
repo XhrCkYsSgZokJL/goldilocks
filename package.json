@@ -1,0 +1,11 @@
+{
+  "name": "goldilocks",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "codegen": "cd shared/codegen && npm run generate",
+    "codegen:swift": "cd shared/codegen && npm run generate:swift",
+    "codegen:zod": "cd shared/codegen && npm run generate:zod",
+    "codegen:check": "npm run codegen && git diff --exit-code ConvosCore/Sources/ConvosCore/API/Generated/ backend/src/generated/"
+  }
+}

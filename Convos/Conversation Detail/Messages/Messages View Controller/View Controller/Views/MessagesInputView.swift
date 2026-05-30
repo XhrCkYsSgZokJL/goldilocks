@@ -546,7 +546,7 @@ private struct ComposerSideConvoCard: View {
                 Text(emoji)
                     .font(.system(size: 120))
             } else {
-                Image("goldilocksLogo")
+                Image(BrandConfig.shared.assets.logoImageName)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .foregroundStyle(.colorTextPrimaryInverted)

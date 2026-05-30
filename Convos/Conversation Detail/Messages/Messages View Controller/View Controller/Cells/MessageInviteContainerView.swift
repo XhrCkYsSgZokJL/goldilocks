@@ -136,7 +136,7 @@ struct MessageInviteView: View {
                         Text(emoji)
                             .font(.system(size: 160))
                     } else {
-                        Image("goldilocksLogo")
+                        Image(BrandConfig.shared.assets.logoImageName)
                             .resizable()
                             .tint(.colorTextPrimaryInverted)
                             .foregroundStyle(.colorTextPrimaryInverted)

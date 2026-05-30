@@ -52,10 +52,18 @@ public enum GoldilocksMembershipTier: String, Codable, Sendable, Equatable, Case
     case gold
     case emerald
 
-    /// Active-member thresholds — one source of truth for the tier math
-    /// and the user-facing copy.
-    public static let silverMemberThreshold: Int = 1
-    public static let goldMemberThreshold: Int = 4
+    nonisolated(unsafe) private static var _silverThreshold: Int = 1
+    nonisolated(unsafe) private static var _goldThreshold: Int = 4
+    nonisolated(unsafe) private static var _descriptions: [String: String] = [:]
+
+    public static func configure(silverThreshold: Int, goldThreshold: Int, descriptions: [String: String] = [:]) {
+        _silverThreshold = silverThreshold
+        _goldThreshold = goldThreshold
+        _descriptions = descriptions
+    }
+
+    public static var silverMemberThreshold: Int { _silverThreshold }
+    public static var goldMemberThreshold: Int { _goldThreshold }
 
     /// Human-facing tier name.
     public var displayName: String {
@@ -70,17 +78,15 @@ public enum GoldilocksMembershipTier: String, Codable, Sendable, Equatable, Case
     /// One-line explanation of how this tier is reached. Always names
     /// both Silver and Gold thresholds so the client can see what it
     /// takes to move up regardless of which tier they're on today.
+    private static let defaultDescriptions: [String: String] = [
+        "bronze": "Bronze is the free plan. One active member unlocks Silver, and four unlock Gold with priority reports.",
+        "silver": "Silver applies with active coverage for one or more members. Reach four members for Gold with priority reports.",
+        "gold": "Gold delivers priority reports for plans with four or more active members.",
+        "emerald": "Emerald is awarded by Goldilocks and supersedes the automatic tier.",
+    ]
+
     public var membershipDetail: String {
-        switch self {
-        case .bronze:
-            return "Bronze is the free plan. One active member unlocks Silver, and four unlock Gold with priority reports."
-        case .silver:
-            return "Silver applies with active coverage for one or more members. Reach four members for Gold with priority reports."
-        case .gold:
-            return "Gold delivers priority reports for plans with four or more active members."
-        case .emerald:
-            return "Emerald is awarded by Goldilocks and supersedes the automatic tier."
-        }
+        Self._descriptions[rawValue] ?? Self.defaultDescriptions[rawValue] ?? ""
     }
 
     /// The membership tier for a given active-member count. Emerald

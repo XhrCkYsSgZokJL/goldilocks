@@ -9,21 +9,16 @@ extension GoldilocksMembershipTier {
     /// SF Symbols doesn't ship an emerald glyph specifically, so we use
     /// `diamond.fill` — the generic gem-shape — coloured with our
     /// emerald green to read as an emerald cut stone.
-    var iconName: String {
-        switch self {
-        case .bronze, .silver, .gold: return "seal.fill"
-        case .emerald: return "diamond.fill"
-        }
+    private var style: BrandConfig.Tiers.TierStyle? {
+        BrandConfig.shared.tiers.styles[rawValue]
     }
 
-    /// Accent colour for tier text and icons.
+    var iconName: String {
+        style?.icon ?? "seal.fill"
+    }
+
     var accentColor: Color {
-        switch self {
-        case .bronze: return Color(red: 0.72, green: 0.45, blue: 0.20)
-        case .silver: return Color(red: 0.52, green: 0.55, blue: 0.60)
-        case .gold: return Color(red: 0.80, green: 0.61, blue: 0.13)
-        case .emerald: return Color(red: 0.20, green: 0.62, blue: 0.40)
-        }
+        style?.color ?? .gray
     }
 
     /// Faint wash placed behind tier-coloured rows and badges.

@@ -1,17 +1,76 @@
-# Goldilocks-specific Docker stack.
+# Goldilocks dev Docker stack — everything in one compose project.
 #
-# Brings up:
+# XMTP node services:
+#   - xmtp-node              XMTP message node (gRPC on 5555/5556)
+#   - xmtp-validation        MLS validation service
+#   - xmtp-anvil             Local Ethereum chain (Foundry)
+#   - xmtp-history           Message history sync server
+#   - xmtp-db                Postgres for XMTP node store
+#   - xmtp-mlsdb             Postgres for XMTP MLS store
+#
+# Backend services:
 #   - goldilocks-db          Postgres for the backend + notification server
 #   - notification-server    XMTP push relay (APNs / FCM)
 #   - backend                The Fastify app
 #
-# Bring up the upstream XMTP node first via convos-ios's `./dev/up`, then
-# run `docker compose -f goldilocks-backend/docker-compose.yml up -d`.
-# The notification server connects to the XMTP node on the host network.
+# From the monorepo root, run `./dev/start` to bring up everything
+# (Docker + background processes) in one command.
 
 name: goldilocks
 
 services:
+  # ── XMTP node services ──────────────────────────────────────────────
+
+  xmtp-node:
+    image: ghcr.io/xmtp/node-go:main
+    platform: linux/amd64
+    environment:
+      - GOWAKU-NODEKEY=8a30dcb604b0b53627a5adc054dbf434b446628d4bd1eccc681d223f0550ce67
+    command:
+      - --store.enable
+      - --store.db-connection-string=postgres://postgres:xmtp@xmtp-db:5432/postgres?sslmode=disable
+      - --store.reader-db-connection-string=postgres://postgres:xmtp@xmtp-db:5432/postgres?sslmode=disable
+      - --mls-store.db-connection-string=postgres://postgres:xmtp@xmtp-mlsdb:5432/postgres?sslmode=disable
+      - --mls-validation.grpc-address=xmtp-validation:50051
+      - --api.enable-mls
+      - --wait-for-db=30s
+      - --api.authn.enable
+    ports:
+      - 5555:5555
+      - 5556:5556
+    depends_on:
+      - xmtp-db
+
+  xmtp-validation:
+    image: ghcr.io/xmtp/mls-validation-service:main
+    platform: linux/amd64
+
+  xmtp-anvil:
+    image: ghcr.io/foundry-rs/foundry
+    platform: linux/amd64
+    entrypoint: ["anvil", "--host", "0.0.0.0"]
+    working_dir: /anvil
+    ports:
+      - 8545:8545
+
+  xmtp-history:
+    image: ghcr.io/xmtp/message-history-server:main
+    platform: linux/amd64
+    ports:
+      - "5558:5558"
+
+  xmtp-db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: xmtp
+
+  xmtp-mlsdb:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: xmtp
+
+  # ── Backend services ─────────────────────────────────────────────────
+
   goldilocks-db:
     image: postgres:16
     environment:
@@ -71,13 +130,13 @@ services:
     depends_on:
       goldilocks-db:
         condition: service_healthy
+      xmtp-node:
+        condition: service_started
     environment:
       # Postgres
       DB_CONNECTION_STRING: postgres://goldilocks:goldilocks@goldilocks-db:5432/goldilocks?sslmode=disable
-      # XMTP node — uses the host network to reach the convos-ios `node` container.
-      # On macOS, host.docker.internal points at the host. The XMTP node listens
-      # on 5556 (gRPC) on the host.
-      XMTP_GRPC_ADDRESS: host.docker.internal:5556
+      # XMTP node — same compose network, reachable by service name.
+      XMTP_GRPC_ADDRESS: xmtp-node:5556
       # APNs — REQUIRES an Apple Developer membership. Until you have one,
       # leave these blank and push delivery will silently no-op.
       # Once you have a .p8 auth key, mount it and set the path here.
@@ -91,8 +150,6 @@ services:
       LOG_LEVEL: info
     ports:
       - "8080:8080"     # gRPC API the notification server exposes
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     # Mount your APNs key here once you have it. Until then this is a no-op.
     # volumes:
     #   - ./secrets/apns_auth_key.p8:/run/secrets/apns_auth_key.p8:ro
@@ -138,7 +195,7 @@ services:
   #   AGENT_DB_DIR=./.agent-data npm run agents:dev
   #
   # The local run reaches Postgres via the published 25433 port and the
-  # XMTP node via localhost:5555 (convos-ios `./dev/up`). To dockerize
+  # XMTP node via localhost:5555 (`./dev/start`). To dockerize
   # later, switch the runtime base to node:20-bookworm-slim and uncomment
   # this service.
   #
@@ -220,7 +277,7 @@ services:
       # and would just add weight + recursion risk to the snapshot.
       - ./dev/restic-passphrase.dev:/run/secrets/restic_password:ro
       - .:/source/goldilocks-backend:ro
-      - ${HOST_GOLDILOCKS_IOS_DIR:-../goldilocks-ios}:/source/goldilocks-ios:ro
+      - ${HOST_GOLDILOCKS_IOS_DIR:-..}:/source/goldilocks-ios:ro
       - ./scripts/backup.sh:/backup.sh:ro
     entrypoint: ["/backup.sh"]
 

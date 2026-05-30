@@ -1,0 +1,135 @@
+#!/bin/bash
+set -euo pipefail
+
+# Manage encryption keys and secrets for the dev environment.
+#
+# Usage:
+#   ./dev/keys status             Show key material status
+#   ./dev/keys seal               Seal .env.dev -> secrets/dev.env.enc
+#   ./dev/keys unseal             Unseal secrets/dev.env.enc -> .env.dev
+#   ./dev/keys init-tls           Generate TLS CA + certificates
+#   ./dev/keys renew-tls          Rotate postgres TLS leaf cert
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BACKEND_DIR="$SCRIPT_DIR/../backend"
+
+cd "$BACKEND_DIR"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+check_exists() {
+    if [ -f "$1" ]; then
+        echo "  ✓ $2"
+        return 0
+    else
+        echo "  ✗ $2"
+        return 1
+    fi
+}
+
+usage() {
+    echo "Usage: ./dev/keys <command>"
+    echo ""
+    echo "Commands:"
+    echo "  status             Show key material status"
+    echo "  seal               Seal .env.dev -> secrets/dev.env.enc"
+    echo "  unseal             Unseal secrets/dev.env.enc -> .env.dev"
+    echo "  init-tls           Generate TLS CA + certificates"
+    echo "  renew-tls          Rotate postgres TLS leaf cert"
+    echo "  help               Show this help"
+}
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+    status)
+        echo "Key material status (dev):"
+        echo ""
+
+        echo "Secrets:"
+        check_exists .env.dev ".env.dev (plaintext env)" || true
+
+        # Check if APP_ENCRYPTION_KEY is set
+        if [ -f .env.dev ]; then
+            AEK="$(grep "^APP_ENCRYPTION_KEY=" .env.dev 2>/dev/null | cut -d'=' -f2-)"
+            if [ -n "$AEK" ] && [ "$AEK" != "replace_me" ]; then
+                echo "  ✓ APP_ENCRYPTION_KEY is set"
+            else
+                echo "  ✗ APP_ENCRYPTION_KEY is not set"
+            fi
+        fi
+
+        check_exists dev/restic-passphrase.dev "Restic passphrase (dev/restic-passphrase.dev)" || true
+
+        echo ""
+        echo "Age encryption:"
+        check_exists secrets/.age/dev.key "Age private key (secrets/.age/dev.key)" || true
+        check_exists secrets/.age/dev.key.pub "Age public key (secrets/.age/dev.key.pub)" || true
+
+        echo ""
+        echo "Sealed env:"
+        check_exists secrets/dev.env.enc "Sealed env (secrets/dev.env.enc)" || true
+
+        # Check if sealed env is in sync with plaintext
+        if [ -f secrets/dev.env.enc ] && [ -f .env.dev ]; then
+            if [ secrets/dev.env.enc -nt .env.dev ]; then
+                echo "    (sealed is newer than plaintext — may need unseal)"
+            elif [ .env.dev -nt secrets/dev.env.enc ]; then
+                echo "    (plaintext is newer than sealed — may need seal)"
+            else
+                echo "    (in sync)"
+            fi
+        fi
+
+        echo ""
+        echo "TLS certificates:"
+        check_exists secrets/tls/ca.crt "TLS CA (secrets/tls/ca.crt)" || true
+        check_exists secrets/tls/ca.key "TLS CA key (secrets/tls/ca.key)" || true
+        check_exists secrets/tls/postgres.crt "Postgres server cert (secrets/tls/postgres.crt)" || true
+        check_exists secrets/tls/postgres.key "Postgres server key (secrets/tls/postgres.key)" || true
+        check_exists secrets/tls/client-backend.crt "Client cert: backend (secrets/tls/client-backend.crt)" || true
+        check_exists secrets/tls/client-backend.key "Client key: backend (secrets/tls/client-backend.key)" || true
+        check_exists secrets/tls/client-agent.crt "Client cert: agent (secrets/tls/client-agent.crt)" || true
+        check_exists secrets/tls/client-agent.key "Client key: agent (secrets/tls/client-agent.key)" || true
+        check_exists secrets/tls/client-backup.crt "Client cert: backup (secrets/tls/client-backup.crt)" || true
+        check_exists secrets/tls/client-backup.key "Client key: backup (secrets/tls/client-backup.key)" || true
+        ;;
+
+    seal)
+        echo "==> Sealing .env.dev..."
+        bash scripts/seal-env.sh dev
+        ;;
+
+    unseal)
+        echo "==> Unsealing secrets/dev.env.enc..."
+        bash scripts/unseal-env.sh dev
+        ;;
+
+    init-tls)
+        echo "==> Initializing TLS certificates..."
+        bash scripts/init-tls.sh dev
+        ;;
+
+    renew-tls)
+        echo "==> Renewing TLS leaf certificates..."
+        bash scripts/renew-tls.sh dev
+        ;;
+
+    help|--help|-h|"")
+        usage
+        ;;
+
+    *)
+        echo "Unknown command: $cmd"
+        echo ""
+        usage
+        exit 1
+        ;;
+esac

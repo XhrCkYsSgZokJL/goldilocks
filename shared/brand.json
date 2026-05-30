@@ -1,0 +1,69 @@
+{
+  "brand": {
+    "name": "Goldilocks Digital",
+    "tagline": "Helping you secure your digital life.",
+    "privacyIntro": "Goldilocks Digital helps you secure your digital life.",
+    "serviceDescription": "Goldilocks Digital is a secure messaging app that connects you with digital-asset security advisors.",
+    "supportEmail": "support@goldilocksdigital.xyz",
+    "legalEntity": "Goldilocks Digital LLC",
+    "footerCredit": "Modified in private by Goldilocks Digital"
+  },
+  "groups": {
+    "client": ["Advisory", "Reports"],
+    "admin": ["Admins", "Audit Log"]
+  },
+  "groupIcons": {
+    "Admins": "shield.lefthalf.filled",
+    "Audit Log": "scroll.fill",
+    "Advisory": "lightbulb.fill",
+    "Reports": "doc.text.fill",
+    "History": "clock.fill",
+    "default": "bubble.left.and.bubble.right.fill"
+  },
+  "pricing": {
+    "monthlyPricePerPersonCents": 12500,
+    "currency": "USD",
+    "priceLabel": "$125/mo per person"
+  },
+  "tiers": {
+    "thresholds": {
+      "silver": 1,
+      "gold": 4
+    },
+    "styles": {
+      "bronze": {
+        "colorHex": "#B87333",
+        "colorRGB": [0.72, 0.45, 0.20],
+        "icon": "seal.fill"
+      },
+      "silver": {
+        "colorHex": "#858A99",
+        "colorRGB": [0.52, 0.55, 0.60],
+        "icon": "seal.fill"
+      },
+      "gold": {
+        "colorHex": "#CC9C21",
+        "colorRGB": [0.80, 0.61, 0.13],
+        "icon": "seal.fill"
+      },
+      "emerald": {
+        "colorHex": "#339E66",
+        "colorRGB": [0.20, 0.62, 0.40],
+        "icon": "diamond.fill"
+      }
+    },
+    "descriptions": {
+      "bronze": "Bronze is the free plan. One active member unlocks Silver, and four unlock Gold with priority reports.",
+      "silver": "Silver applies with active coverage for one or more members. Reach four members for Gold with priority reports.",
+      "gold": "Gold delivers priority reports for plans with four or more active members.",
+      "emerald": "Emerald is awarded by Goldilocks and supersedes the automatic tier."
+    }
+  },
+  "assets": {
+    "logoImageName": "goldilocksLogo"
+  },
+  "legal": {
+    "privacyPolicyUrl": "https://goldilocksdigital.xyz/privacy",
+    "termsOfServiceUrl": "https://goldilocksdigital.xyz/terms"
+  }
+}

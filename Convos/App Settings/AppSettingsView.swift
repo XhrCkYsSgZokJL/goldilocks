@@ -11,7 +11,7 @@ struct ConvosToolbarButton: View {
             action()
         } label: {
             HStack(spacing: DesignConstants.Spacing.stepX) {
-                Image("goldilocksLogo")
+                Image(BrandConfig.shared.assets.logoImageName)
                     .resizable()
                     .renderingMode(.template)
                     .aspectRatio(contentMode: .fit)
@@ -19,7 +19,7 @@ struct ConvosToolbarButton: View {
                     .frame(width: 24.0, height: 24.0)
                     .accessibilityHidden(true)
 
-                Text("Goldilocks Digital")
+                Text(BrandConfig.shared.brand.name)
                     .font(.body)
                     .foregroundStyle(.colorTextPrimary)
                     .padding(.trailing, DesignConstants.Spacing.stepX)
@@ -102,7 +102,7 @@ struct AppSettingsView: View {
             }
             .listRowInsets(.init(top: 0, leading: DesignConstants.Spacing.step4x, bottom: 0, trailing: 10.0))
         } footer: {
-            Text("Your Goldilocks Digital plan")
+            Text("Your \(BrandConfig.shared.brand.name) plan")
         }
     }
 
@@ -165,7 +165,7 @@ struct AppSettingsView: View {
             List {
                 Section {
                     VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepX) {
-                        Text("Goldilocks Digital")
+                        Text(BrandConfig.shared.brand.name)
                             .font(.title)
                             .fontWeight(.bold)
                             .tracking(Font.convosTitleTracking)
@@ -191,7 +191,7 @@ struct AppSettingsView: View {
                     } message: {
                         Text("Enter the secret admin upgrade code.")
                     }
-                    .alert("Goldilocks Role", isPresented: $showingUpgradeResult, presenting: upgradeResultMessage) { _ in
+                    .alert("\(BrandConfig.shared.brand.name) Role", isPresented: $showingUpgradeResult, presenting: upgradeResultMessage) { _ in
                         Button("OK", role: .cancel) {}
                     } message: { message in
                         Text(message)
@@ -301,7 +301,7 @@ struct AppSettingsView: View {
                                 .foregroundStyle(.colorTextTertiary)
                         }
                         HStack {
-                            Text("Modified in private by Goldilocks Digital")
+                            Text(BrandConfig.shared.brand.footerCredit)
                             Spacer()
                             Text("V1.0.0")
                                 .foregroundStyle(.colorTextTertiary)

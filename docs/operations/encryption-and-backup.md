@@ -43,15 +43,6 @@ commodity storage (iCloud Drive, USB stick, laptop, an untrusted SFTP
 host) is safe to use. F7 makes copying off-box a one-command
 operation; running it is on you.
 
-**Firebase is still in the iOS codebase as of this writing.** I
-checked: FirebaseCore + FirebaseAppCheck are still in
-`ConvosCore/Package.swift`, `GoogleService-Info.{Prod,Dev,Local}.plist`
-exist, and `FirebaseHelper.swift` plus several call sites
-(`ConvosAPIClient.swift`, `DeviceRegistrationManager.swift`,
-`SessionStateMachine.swift`, `AppEnvironment.swift`,
-`ConvosApp.swift`) still reference it. This plan is written as if
-the rip-out is in flight; flag if that's stale.
-
 ---
 
 ## Features
@@ -63,8 +54,7 @@ integration that surfaces the rest.
 ### F1 — Restic-based encrypted backup, run manually
 
 Replace `scripts/backup.sh` with a restic-based pipeline, invoked by
-the operator on demand — either via the existing CLI
-(`goldilocks --prod → Backups → Run now`) or directly with
+the operator on demand via `./dev/backup run` or directly with
 `./scripts/backup.sh`.
 
 The backup is a one-shot Docker container. No long-running service,
@@ -496,8 +486,7 @@ What's deferred to v2 (not in this PR):
 - Crypto-shredding on logout (one-shot delete of the SE-wrapped
   key handle to make the entire keychain item unrecoverable
   without erasing the SQLCipher DB byte-by-byte).
-- App Attest as defense in depth alongside the existing Firebase
-  App Check (still pending Firebase rip-out anyway).
+- App Attest as defense in depth for device verification.
 
 The iOS app already has AES-256-GCM for profile images, Keychain
 for identity, and SQLCipher (via XMTP) for the local message DB.
@@ -544,12 +533,11 @@ the device unlocks at least once). Plan: split storage so identity
 material is `Complete`, push-decryption material is
 `CompleteUnlessOpen`, and nothing leaks into the wrong bucket.
 
-### F9 — CLI integration (everything reachable from `goldilocks`)
+### F9 — Script integration (everything reachable from `./dev/`)
 
-Every operator-facing action lands in the existing CLI
-(`scripts/goldilocks.tsx`) so there's never a "run this bash command
-I memorised three months ago" step. F9 changes are small in code
-but high-leverage for usability.
+Every operator-facing action lands in the `./dev/` scripts so
+there's never a "run this bash command I memorised three months ago"
+step.
 
 #### Dashboard menu (today)
 
@@ -722,13 +710,9 @@ A snapshot test at app startup that walks
 `URLs(for: .applicationSupportDirectory, …)` and asserts no file
 in the protected set has a weaker protection class.
 
-**F9 — CLI integration.** End-to-end test that invokes the CLI in
-one-shot mode (via the existing `runOneShot(argv)` entry point in
-`scripts/goldilocks.tsx`), driving it through Setup → Backup →
-Restore programmatically and asserting the expected files land in
-the expected places. Add a new `runOneShot` subcommand per Keys
-action so the same scripted path covers `goldilocks keys rotate
-sops --env=dev` etc.
+**F9 — Script integration.** End-to-end test that invokes the dev
+scripts (`./dev/setup`, `./dev/backup run`, `./dev/backup restore`)
+and asserts the expected files land in the expected places.
 
 ---
 
@@ -841,11 +825,6 @@ minutes.
   Distinct master keys would give stronger blast-radius isolation
   if a per-column key leaks; one master is simpler. Recommend the
   HKDF approach (plan default).
-- **Firebase removal status.** Plan is written as if Firebase is
-  being removed from the iOS app. Removal hasn't landed in the
-  working copy. Confirm whether removal is in flight, scheduled, or
-  was reverted — affects nothing in this plan, but worth tracking
-  so the iOS dependency list doesn't quietly drift.
 - **Keys screen — which rows ship in v1?** Seven rows proposed
   (restic passphrase, SOPS, `APP_ENCRYPTION_KEY`, step-ca root,
   agent signing keys, JWT secret, Lighthouse wallet). The first

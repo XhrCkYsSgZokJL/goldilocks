@@ -6,7 +6,7 @@ how, and what an operator needs to do (and not do) to keep the
 guarantees intact.
 
 The implementation plan and design rationale live in
-[`docs/encryption-and-backup-plan.md`](docs/encryption-and-backup-plan.md).
+[`encryption-and-backup.md`](../operations/encryption-and-backup.md).
 This document focuses on the running system.
 
 ---
@@ -87,29 +87,18 @@ the operator never has to remember which file lives where.
 
 From a fresh checkout, with Docker running:
 
-1. `npm run cli -- --dev` (or `--prod`).
-2. Pick the environment if prompted.
-3. **Settings → Run setup.** In one screen the CLI:
-   - writes `.env.<env>` with strong random `JWT_SECRET`,
-     `AGENT_DB_ENCRYPTION_KEY`, `APP_ENCRYPTION_KEY`, and
-     `POSTGRES_PASSWORD` (prod);
-   - generates the restic backup passphrase at
-     `.restic-passphrase.<env>` (chmod 600, gitignored);
-   - mints the SOPS age key at `secrets/.age/<env>.key`, writes
-     `.sops.yaml`, and seals `.env.<env>` to
-     `secrets/<env>.env.enc`;
-   - mints the TLS CA + postgres server leaf in `secrets/tls/`;
-   - leaves a notice on screen telling you to save the
-     restic passphrase somewhere safe.
-4. **Backups → Build backup image** (one-time, ~1 min). Prebuilds the
-   image so the first backup doesn't wait on it.
-5. **Backups → View backup passphrase**, copy to your password
-   manager, close the file without saving.
-6. Bring the stack up via the normal path (`./dev/up` for dev,
-   `./scripts/deploy.sh` for prod).
+1. `./dev/setup` — generates `.env.dev` with strong random `JWT_SECRET`,
+   `AGENT_DB_ENCRYPTION_KEY`, `APP_ENCRYPTION_KEY`, and
+   `POSTGRES_PASSWORD`; generates the restic backup passphrase
+   (chmod 600, gitignored); mints the SOPS age key at
+   `secrets/.age/dev.key`, writes `.sops.yaml`, seals `.env.dev` to
+   `secrets/dev.env.enc`; mints the TLS CA + postgres server leaf in
+   `secrets/tls/`.
+2. Save the restic passphrase (`backend/dev/restic-passphrase.dev`)
+   to your password manager.
+3. `./dev/start` to bring the stack up (or `./scripts/deploy.sh` for prod).
 
-The Keys screen (Settings → Keys) is the single dashboard for
-inspecting and managing all of the above.
+Use `./dev/keys status` to inspect all key material.
 
 ### Running a backup
 
@@ -521,25 +510,24 @@ clarifying questions shortly after.
 
 ## 8. Where to find more detail
 
-- [`docs/encryption-and-backup-plan.md`](docs/encryption-and-backup-plan.md)
+- [`encryption-and-backup.md`](../operations/encryption-and-backup.md)
   — the implementation plan, with the rationale for each design
   decision (including the divergences from the original options:
   `step` CLI rather than step-ca-as-service, AES-256-GCM via native
   `crypto` rather than libsodium-wrappers, manual backup cadence
   rather than scheduled, local-only rather than off-site).
-- [`docs/backup-restore-hardening-plan.md`](docs/backup-restore-hardening-plan.md)
+- [`backup-restore-hardening.md`](../operations/backup-restore-hardening.md)
   — the original analytical case for *why* the pre-F1 backup was
   insufficient. Preserved for historical context.
-- [`docs/production-setup.md`](docs/production-setup.md) — the
+- [`production-setup.md`](../operations/production-setup.md) — the
   production-deployment runbook.
-- [`scripts/backup.sh`](scripts/backup.sh),
-  [`scripts/restore.sh`](scripts/restore.sh),
-  [`scripts/init-tls.sh`](scripts/init-tls.sh) — the actual
+- [`backend/scripts/backup.sh`](../../backend/scripts/backup.sh),
+  [`backend/scripts/restore.sh`](../../backend/scripts/restore.sh),
+  [`backend/scripts/init-tls.sh`](../../backend/scripts/init-tls.sh) — the actual
   implementations, with comments that explain the design choices
   at the point of execution.
-- [`scripts/goldilocks.tsx`](scripts/goldilocks.tsx) — the CLI.
-  Search for "F1" / "F3" / "F4" / "F5" to find the relevant
-  helpers.
+- [`backend/scripts/admins.ts`](../../backend/scripts/admins.ts) — admin slot management.
+- `./dev/keys`, `./dev/backup`, `./dev/security` — operational scripts.
 
 If something here drifts out of sync with the code, the code is
 canonical. Open a PR against this document the same day.

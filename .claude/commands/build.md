@@ -102,7 +102,6 @@ If `--run` was specified and build succeeded:
 **IMPORTANT: Do NOT automatically:**
 - Capture device screenshots or UI hierarchy
 - Test or interact with the app
-- Check logs for Firebase debug tokens
 - Perform any device capture operations
 
 Only perform device capture/testing when the user explicitly requests it.

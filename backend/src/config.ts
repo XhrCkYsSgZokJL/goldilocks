@@ -59,16 +59,16 @@ const schema = z.object({
   SIWE_URI: z.string().url().default('http://localhost:4000/api/v2/me'),
 
   // XMTP node gRPC — used to verify a caller's eth address is bound to
-  // the inbox they claim. Defaults match `dev/up`.
+  // the inbox they claim. Defaults match `dev/start`.
   XMTP_GRPC_URL: z.string().default('localhost:5556'),
   XMTP_GRPC_SECURE: z.coerce.boolean().default(false),
 
   // XMTP network the server-side agents (admins-agent, reports-agent)
   // connect to. Must match the network the iOS app is on. 'local' points
-  // at the convos-ios `./dev/up` node.
+  // at the `./dev/start` node.
   XMTP_NETWORK: z.enum(['local', 'dev', 'production']).default('local'),
   // Custom XMTP API URL for 'local' network. Ignored on dev/production.
-  // The convos-ios local node serves gRPC on 5556 (h2c) — the iOS client
+  // The local XMTP node serves gRPC on 5556 (h2c) — the iOS client
   // hits the same port.
   XMTP_API_URL: z.string().default('http://localhost:5556'),
 

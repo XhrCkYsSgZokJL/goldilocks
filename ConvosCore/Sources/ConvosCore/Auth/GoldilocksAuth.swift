@@ -124,16 +124,18 @@ public enum GoldilocksAuth {
     }
 }
 
-/// The Goldilocks Digital plan. There is exactly one plan today, priced
-/// per person; the constants live here so iOS and the backend stay in
-/// step.
+/// The Goldilocks Digital plan. Configured at launch from brand.json via
+/// `GoldilocksPlan.configure(cents:label:)`.
 public enum GoldilocksPlan {
-    /// Monthly price per person, in whole US dollars.
-    public static let monthlyPricePerPerson: Int = 125
+    nonisolated(unsafe) private static var _monthlyPricePerPersonCents: Int = 12500
+    nonisolated(unsafe) private static var _priceLabel: String = "$125/mo per person"
 
-    /// Monthly price per person, in cents.
-    public static let monthlyPricePerPersonCents: Int = monthlyPricePerPerson * 100
+    public static func configure(monthlyPricePerPersonCents cents: Int, priceLabel label: String) {
+        _monthlyPricePerPersonCents = cents
+        _priceLabel = label
+    }
 
-    /// Human-facing per-person price label.
-    public static let priceLabel: String = "$\(monthlyPricePerPerson)/mo per person"
+    public static var monthlyPricePerPerson: Int { _monthlyPricePerPersonCents / 100 }
+    public static var monthlyPricePerPersonCents: Int { _monthlyPricePerPersonCents }
+    public static var priceLabel: String { _priceLabel }
 }

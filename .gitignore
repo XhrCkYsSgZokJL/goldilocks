@@ -15,8 +15,8 @@
 .claude/settings.local.json
 .convos-task
 
-## Goldilocks backend (lives here temporarily; move to its own repo when ready)
-goldilocks-backend/
+## Codegen dependencies
+shared/codegen/node_modules/
 
 ## User settings
 xcuserdata/
@@ -123,6 +123,7 @@ claude-code-resources/
 
 # Claude Code local files
 .claude/.simulator_id
+.dev-sim-id
 .derivedData/
 .claude/task-simulator.json
 *.profraw

@@ -572,6 +572,7 @@
 				D8A2B68D2DA4BA4B00EF8577 /* Sources */,
 				D8A2B68E2DA4BA4B00EF8577 /* Frameworks */,
 				D8A2B68F2DA4BA4B00EF8577 /* Resources */,
+				DA0BCA012F38A00000BRAND1 /* Copy Brand Config */,
 				D808503B2DC94F4C00E708B0 /* Embed Foundation Extensions */,
 				D85B9BA02DD26BC400831D58 /* Embed Frameworks */,
 			);
@@ -789,6 +790,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/Scripts/build-phases/copy-env-config-main-app.sh\"\n";
+		};
+		DA0BCA012F38A00000BRAND1 /* Copy Brand Config */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/shared/brand.json",
+			);
+			name = "Copy Brand Config";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/brand.json",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "cp \"${SRCROOT}/shared/brand.json\" \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}/brand.json\"\n";
 		};
 		DAFC98F62E37C4E700991094 /* Copy Environment Config */ = {
 			isa = PBXShellScriptBuildPhase;

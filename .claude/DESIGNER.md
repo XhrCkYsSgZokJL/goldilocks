@@ -46,7 +46,6 @@ If you accidentally try to push to main or dev, STOP and create a feature branch
 - If you're unsure about something, ask Claude to explain
 - If Claude seems confused about the codebase, have it search for examples
 - If builds fail with confusing errors, try `/build` again or ask for help
-- For Firebase token issues, run `/firebase-token`
 
 ## Commands Reference
 
@@ -57,4 +56,3 @@ If you accidentally try to push to main or dev, STOP and create a feature branch
 | `/build` | Build the app |
 | `/build --run` | Build and launch in simulator |
 | `/test` | Run tests |
-| `/firebase-token` | Get Firebase debug token from logs |

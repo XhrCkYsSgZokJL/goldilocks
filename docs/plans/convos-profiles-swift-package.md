@@ -163,6 +163,6 @@ profiles.find(inboxId: "...")
 
 ## Related Documents
 
-- [ADR 005: Profile Storage](../adr/005-profile-storage-in-conversation-metadata.md)
+- [ADR 005: Profile Storage](../adr/005-member-profile-system.md)
 - [ConvosInvites Package](./convos-invites-swift-package.md)
 - [Extensions Architecture](./convos-extensions-architecture.md)
