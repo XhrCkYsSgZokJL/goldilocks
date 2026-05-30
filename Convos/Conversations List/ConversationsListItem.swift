@@ -52,8 +52,8 @@ struct ListItemView<LeadingContent: View, SubtitleContent: View, AccessoryConten
 
             if isUnread {
                 Circle()
-                    .fill(Color.primary)
-                    .frame(width: 16, height: 16)
+                    .fill(Color.colorFillPrimary)
+                    .frame(width: 10, height: 10)
                     .accessibilityHidden(true)
                     .transition(.scale.combined(with: .opacity))
             }

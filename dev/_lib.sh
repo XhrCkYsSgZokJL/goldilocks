@@ -10,6 +10,16 @@ goldilocks_compose() {
   docker compose -f "$DEV_BACKEND/docker-compose.yml" "$@"
 }
 
+clean_old_logs() {
+  local name="$1"
+  local dir="$DEV_BACKEND/.dev-run"
+  local -a old
+  old=($(ls -t "$dir/${name}"-*.log 2>/dev/null | tail -n +2))
+  if [ ${#old[@]} -gt 0 ]; then
+    rm -f "${old[@]}"
+  fi
+}
+
 stop_background_processes() {
   cd "$DEV_BACKEND"
   for proc in server agent simulator caddy stripe; do

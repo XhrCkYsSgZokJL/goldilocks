@@ -450,22 +450,14 @@ class ReportsWatcher {
         }
       }
 
-      // Echo the actual content to the admin audit log. The preface
-      // tells admins WHO received this; the body / attachment that
-      // follow are exactly what landed in the recipient channel(s).
-      // Failures here don't roll back the client-side posts — the
-      // audit log is best-effort.
+      // Echo to the admin audit log so admins can see what went out.
       if (succeeded.length > 0) {
         const preface: string = buildAuditPreface(target, title, {
           sentCount: succeeded.length,
           totalCount: recipients.length,
         });
         if (messageBody !== null) {
-          await this.opts.audit.postText(`${preface}\n\n${messageBody}`);
-        } else {
-          // Attachment-only post — the preface needs to stand on its
-          // own as a header so the file that follows has context.
-          await this.opts.audit.postText(`${preface}: ${title}`);
+          await this.opts.audit.postText(`${preface}: ${messageBody}`);
         }
         if (remoteAttachment) {
           await this.opts.audit.postAttachment(remoteAttachment);

@@ -188,14 +188,14 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
   });
 
   // ---------------------------------------------------------------------
-  // POST /v2/billing/cancel — stop cover and refund the unused balance.
+  // POST /v2/billing/cancel — stop cover and refund unused future months.
   //
-  // Coverage starts the moment a person is verified onto the plan, so
-  // every top-up is pro-rata only — there's no buyer's-remorse window.
-  // Refunds run newest-checkout-first against the live (settled)
-  // balance, so the charges touched are as recent as possible (well
-  // within Stripe's refund window).
-  // returns: { refundedCents }
+  // The current month is treated as an immediate cost — third-party
+  // services are triggered the moment coverage starts, so that month
+  // is non-refundable. Only complete future months are returned.
+  // Refunds run newest-checkout-first so the charges touched are as
+  // recent as possible (within Stripe's refund window).
+  // returns: { refundedCents, retainedCents }
   // ---------------------------------------------------------------------
   app.post('/v2/billing/cancel', { preHandler: requireJwt }, async (req, reply) => {
     if (!isStripeConfigured()) {
@@ -208,8 +208,15 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
 
     const settled = settle(client);
     let refundedTotal = 0;
+    const rate = monthlyRateCents(client);
 
-    if (settled.balanceCents > 0) {
+    // The current month is non-refundable — services are already being
+    // consumed. Subtract one month's rate from the settled balance so
+    // only future unused months are in the refund budget.
+    const retainedCents: number = Math.min(rate, settled.balanceCents);
+    const refundBudget: number = Math.max(0, settled.balanceCents - rate);
+
+    if (refundBudget > 0) {
       const stripe = getStripe();
       const refundable = await db
         .select()
@@ -221,9 +228,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
         ))
         .orderBy(desc(billingCheckouts.createdAt));
 
-      // Pro-rata budget: the unused balance still owed back, split
-      // across the refundable checkouts newest-first.
-      let proRataBudget = settled.balanceCents;
+      let proRataBudget = refundBudget;
 
       for (const checkout of refundable) {
         const remaining = checkout.amountCents - checkout.refundedCents;
@@ -257,7 +262,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
       .set({ billingBalanceCents: 0, billingBalanceAsOf: settled.asOf })
       .where(eq(clients.id, client.id));
 
-    return reply.code(200).send({ refundedCents: refundedTotal });
+    return reply.code(200).send({ refundedCents: refundedTotal, retainedCents });
   });
 
   // ---------------------------------------------------------------------

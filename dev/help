@@ -12,7 +12,8 @@ Lifecycle
   ./dev/status             Show what's running
 
 iOS
-  ./dev/sim                Build + launch in simulator (no Xcode needed)
+  ./dev/sim                Build + relaunch in simulator (no Xcode needed)
+  ./dev/sim --skip-build   Relaunch without rebuilding
   ./dev/sim --clean        Wipe all state, then build + launch fresh
   ./dev/sim --stop         Stop the running app
   ./dev/test               Run tests (starts Docker automatically)

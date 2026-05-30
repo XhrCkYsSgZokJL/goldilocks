@@ -28,6 +28,14 @@ import {
 } from '../db/schema.js';
 import type { AgentIdentity } from './store.js';
 import { WorkQueue } from './work-queue.js';
+import {
+  refreshInboxStates,
+  refreshGroupInstallations,
+  logInboxInstallations,
+  clientNoLongerMember,
+  safe,
+  log,
+} from './xmtp-helpers.js';
 
 const ADMINS_GROUP_NAME = 'Admins';
 const ADMINS_GROUP_DESCRIPTION = 'Channel for all admins';
@@ -327,7 +335,7 @@ export class AdminsAgent {
       // if the agent is ever down.
       const fresh: Group = group;
       for (const inboxId of adminInboxIds) {
-        await safe(() => fresh.addSuperAdmin(inboxId), `addSuperAdmin(${inboxId.slice(0, 8)}…)`);
+        await safe(() => fresh.addSuperAdmin(inboxId), `[admins] addSuperAdmin(${inboxId.slice(0, 8)}…)`);
       }
       await lockGroupMetadata(fresh, '[admins]');
       return;
@@ -345,7 +353,7 @@ export class AdminsAgent {
       /* superAdminAll */ true,
       /* lockedInboxIds */ new Set([this.inboxId]),
     );
-    await refreshGroupInstallations(group);
+    await refreshGroupInstallations(group, '[admins]');
     await lockGroupMetadata(group, '[admins]');
   }
 
@@ -399,7 +407,7 @@ export class AdminsAgent {
       });
       const fresh: Group = group;
       for (const inboxId of adminInboxIds) {
-        await safe(() => fresh.addSuperAdmin(inboxId), `Alerts addSuperAdmin(${inboxId.slice(0, 8)}…)`);
+        await safe(() => fresh.addSuperAdmin(inboxId), `[admins] Alerts addSuperAdmin(${inboxId.slice(0, 8)}…)`);
       }
       await lockGroupMetadata(fresh, '[admins]');
       return;
@@ -412,7 +420,7 @@ export class AdminsAgent {
       /* superAdminAll */ true,
       /* lockedInboxIds */ new Set([this.inboxId]),
     );
-    await refreshGroupInstallations(group);
+    await refreshGroupInstallations(group, '[admins]');
     await lockGroupMetadata(group, '[admins]');
   }
 
@@ -455,7 +463,7 @@ export class AdminsAgent {
       // The client may have exploded their Advisory or otherwise removed
       // themselves from the MLS group. Detect that and reprovision a
       // fresh Advisory for them — same recovery path as a missing group.
-      if (await clientNoLongerMember(group, row.clientInboxId)) {
+      if (await clientNoLongerMember(group, row.clientInboxId, '[admins]')) {
         log(`[admins] Advisory #${row.clientNumber} ${row.xmtpGroupId.slice(0, 8)}… client no longer a member (exploded?). Recreating.`);
         try {
           await this.createAdvisoryFor(
@@ -480,13 +488,13 @@ export class AdminsAgent {
       await this.syncMembership(group, [...desired], /* superAdminAll */ false, /* lockedInboxIds */ new Set([row.clientInboxId, this.inboxId]));
       // Promote (or re-promote) admins as super-admin.
       for (const inboxId of adminInboxIds) {
-        await safe(() => group.addSuperAdmin(inboxId), `Advisory #${row.clientNumber} addSuperAdmin(${inboxId.slice(0, 8)}…)`);
+        await safe(() => group.addSuperAdmin(inboxId), `[admins] Advisory #${row.clientNumber} addSuperAdmin(${inboxId.slice(0, 8)}…)`);
       }
       // Fold any new installations of existing members into the group.
       // iOS clients can rotate installations on every relaunch (the
       // "Error building client, trying create..." path); without this
       // their fresh installation can't decrypt the original welcome.
-      await refreshGroupInstallations(group);
+      await refreshGroupInstallations(group, '[admins]');
       await lockGroupMetadata(group, '[admins]');
     }
   }
@@ -533,7 +541,7 @@ export class AdminsAgent {
     // Defensive metadata write — createGroup options don't always stick.
     await this.enforceGroupMetadata(group, name, description);
     for (const inboxId of adminInboxIds) {
-      await safe(() => group.addSuperAdmin(inboxId), `Advisory #${payload.clientNumber} addSuperAdmin(${inboxId.slice(0, 8)}…)`);
+      await safe(() => group.addSuperAdmin(inboxId), `[admins] Advisory #${payload.clientNumber} addSuperAdmin(${inboxId.slice(0, 8)}…)`);
     }
     await lockGroupMetadata(group, '[admins]');
     await db
@@ -555,7 +563,7 @@ export class AdminsAgent {
     if (sendWelcome) {
       await safe(
         () => group.sendText(ADVISORY_WELCOME_MESSAGE),
-        `Advisory #${payload.clientNumber} welcome message`,
+        `[admins] Advisory #${payload.clientNumber} welcome message`,
       );
       log(`[admins] Posted welcome message to Advisory #${payload.clientNumber}`);
     }
@@ -584,15 +592,15 @@ export class AdminsAgent {
 
     if (toAdd.length > 0) {
       log(`[admins]   add ${toAdd.length} member(s) to ${group.id.slice(0, 8)}…`);
-      await safe(() => group.addMembers(toAdd), 'addMembers');
+      await safe(() => group.addMembers(toAdd), '[admins] addMembers');
     }
     if (toRemove.length > 0) {
       log(`[admins]   remove ${toRemove.length} member(s) from ${group.id.slice(0, 8)}…`);
-      await safe(() => group.removeMembers(toRemove), 'removeMembers');
+      await safe(() => group.removeMembers(toRemove), '[admins] removeMembers');
     }
     if (superAdminAll) {
       for (const id of desiredInboxIds) {
-        await safe(() => group.addSuperAdmin(id), `addSuperAdmin(${id.slice(0, 8)}…)`);
+        await safe(() => group.addSuperAdmin(id), `[admins] addSuperAdmin(${id.slice(0, 8)}…)`);
       }
     }
   }
@@ -633,10 +641,10 @@ export class AdminsAgent {
     log(`[admins]   group ${group.id.slice(0, 8)}… current name="${currentName ?? '<unset>'}", desc="${currentDescription ?? '<unset>'}"`);
     if (currentName !== name) {
       log(`[admins]   renaming group ${group.id.slice(0, 8)}…: "${currentName ?? ''}" → "${name}"`);
-      await safe(() => (group as any).updateName(name), `updateName(${name})`);
+      await safe(() => (group as any).updateName(name), `[admins] updateName(${name})`);
     }
     if (currentDescription !== description) {
-      await safe(() => (group as any).updateDescription(description), 'updateDescription');
+      await safe(() => (group as any).updateDescription(description), '[admins] updateDescription');
     }
   }
 }
@@ -696,125 +704,6 @@ async function lockGroupMetadata(group: Group, agentLabel: string): Promise<void
   }
 }
 
-/**
- * Force the group to update its key tree with the latest installations
- * of every current member. This is what lets a freshly-rotated installation
- * (e.g. iOS recreates its installation on every launch via the "Error
- * building client, trying create..." fallback) actually decrypt the
- * group's welcome and start receiving traffic.
- *
- * The method name has shifted across @xmtp/node-sdk versions; try the
- * known surfaces in order.
- */
-async function refreshGroupInstallations(group: Group): Promise<void> {
-  const g = group as any;
-  try {
-    if (g.updateInstallations) {
-      await g.updateInstallations();
-      return;
-    }
-    if (g.syncInstallations) {
-      await g.syncInstallations();
-      return;
-    }
-    if (g.update_installations) {
-      await g.update_installations();
-      return;
-    }
-    // Fallback: re-add the same members. In V3 this triggers an
-    // installation refresh as a side effect.
-    const members = await group.members();
-    const inboxIds = members.map((m: any) => m.inboxId);
-    if (g.addMembers) await g.addMembers(inboxIds);
-  } catch (err) {
-    log(`[admins] refreshGroupInstallations failed (non-fatal): ${(err as Error).message}`);
-  }
-}
-
-async function refreshInboxStates(client: Client, inboxIds: string[]): Promise<void> {
-  const c = client as any;
-  try {
-    if (c.preferences?.inboxStateFromInboxIds) {
-      await c.preferences.inboxStateFromInboxIds(inboxIds, true);
-      return;
-    }
-    if (c.preferences?.syncAll) {
-      await c.preferences.syncAll();
-      return;
-    }
-    if (c.conversations?.syncAll) {
-      await c.conversations.syncAll();
-      return;
-    }
-    if (c.conversations?.sync) {
-      await c.conversations.sync();
-      return;
-    }
-  } catch (err) {
-    console.warn(`[agent] refreshInboxStates failed (non-fatal): ${(err as Error).message}`);
-  }
-}
-
-/**
- * Log how many XMTP installations an inbox currently has, and return that
- * count. A welcome is HPKE-sealed per installation; a pile-up of stale
- * installations (from repeated app reinstalls) is the prime suspect when a
- * client cannot decrypt the welcome for a freshly created group, and a
- * count of 0 means a group created now would be undeliverable. Returns -1
- * when the count can't be read (SDK surface missing / error) so callers
- * can tell "unknown" apart from a genuine 0. Best-effort: the node-sdk
- * surface for this has shifted across versions.
- */
-async function logInboxInstallations(client: Client, inboxId: string, label: string): Promise<number> {
-  try {
-    const c = client as any;
-    const states = await c.preferences?.inboxStateFromInboxIds?.([inboxId], true);
-    const state = Array.isArray(states) ? states[0] : states;
-    if (!state) {
-      // SDK surface unavailable or no state returned. Report -1 ("unknown")
-      // so callers don't defer group creation on a read miss.
-      log(`${label} inbox ${inboxId.slice(0, 8)}… installation count unavailable`);
-      return -1;
-    }
-    const installations = (state.installations ?? []) as Array<{ id?: string }>;
-    const ids = installations.map((i) => (i.id ?? '').slice(0, 8)).filter((s: string) => s.length > 0);
-    log(`${label} inbox ${inboxId.slice(0, 8)}… has ${installations.length} XMTP installation(s): [${ids.join(', ')}]`);
-    if (installations.length >= 8) {
-      log(`${label} ⚠️ ${installations.length} installations is near/over XMTP's ~10-per-inbox limit — welcome delivery to the newest installation becomes unreliable. The inbox needs stale-installation revocation.`);
-    }
-    return installations.length;
-  } catch (err) {
-    log(`${label} could not read inbox installations (non-fatal): ${(err as Error).message}`);
-    return -1;
-  }
-}
-
-/**
- * Returns true iff `clientInboxId` is not currently a member of `group`.
- * Used to detect post-explode state: the agent stays in the group as
- * super-admin while the client is removed, so the group still loads but
- * shouldn't be considered the client's Advisory anymore.
- */
-async function clientNoLongerMember(group: Group, clientInboxId: string): Promise<boolean> {
-  try {
-    await group.sync();
-    const members = await group.members();
-    const target = clientInboxId.toLowerCase();
-    return !members.some((m: any) => (m.inboxId as string).toLowerCase() === target);
-  } catch (err) {
-    log(`[admins] clientNoLongerMember check failed (treating as member): ${(err as Error).message}`);
-    return false;
-  }
-}
-
-async function safe(fn: () => Promise<unknown>, label: string): Promise<void> {
-  try {
-    await fn();
-  } catch (err) {
-    log(`[admins] ${label} failed: ${(err as Error).message}`);
-  }
-}
-
-function log(msg: string): void {
-  console.log(`${new Date().toISOString()} ${msg}`);
-}
+// Shared XMTP helpers (refreshGroupInstallations, refreshInboxStates,
+// logInboxInstallations, clientNoLongerMember, safe, log) are imported
+// from ./xmtp-helpers.js — see the import block at the top of this file.

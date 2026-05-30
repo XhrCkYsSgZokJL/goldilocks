@@ -15,6 +15,13 @@ import { db } from '../db/client.js';
 import { clients, clientChannels, reportJobs } from '../db/schema.js';
 import type { AgentIdentity } from './store.js';
 import { WorkQueue } from './work-queue.js';
+import {
+  refreshInboxStates,
+  refreshGroupInstallations,
+  logInboxInstallations,
+  clientNoLongerMember,
+  log,
+} from './xmtp-helpers.js';
 
 // Per-client Reports naming: "Reports #N" so the iOS list and admin
 // grid can disambiguate clients without an extra subtitle.
@@ -176,7 +183,7 @@ export class ReportsAgent {
       }
       // Post-explode: client is no longer in the MLS group. Reprovision
       // a fresh Reports for them.
-      if (await clientNoLongerMember(group, row.clientInboxId)) {
+      if (await clientNoLongerMember(group, row.clientInboxId, '[reports]')) {
         log(`[reports] Reports #${row.clientNumber} ${row.xmtpGroupId.slice(0, 8)}… client no longer a member (exploded?). Recreating.`);
         await this.createReportsFor({
           clientId: row.clientId,
@@ -192,7 +199,7 @@ export class ReportsAgent {
         REPORTS_GROUP_DESCRIPTION,
       );
       // Pick up any new installations the client has rotated in.
-      await refreshGroupInstallations(group);
+      await refreshGroupInstallations(group, '[reports]');
       await lockGroupMetadata(group);
     }
   }
@@ -508,108 +515,6 @@ async function lockGroupMetadata(group: Group): Promise<void> {
   }
 }
 
-/**
- * Bring the group's MLS key tree up to date with the current installation
- * set of every member. Mirrors the helper in admins-agent.ts.
- */
-async function refreshGroupInstallations(group: Group): Promise<void> {
-  const g = group as any;
-  try {
-    if (g.updateInstallations) {
-      await g.updateInstallations();
-      return;
-    }
-    if (g.syncInstallations) {
-      await g.syncInstallations();
-      return;
-    }
-    if (g.update_installations) {
-      await g.update_installations();
-      return;
-    }
-    const members = await group.members();
-    const inboxIds = members.map((m: any) => m.inboxId);
-    if (g.addMembers) await g.addMembers(inboxIds);
-  } catch (err) {
-    log(`[reports] refreshGroupInstallations failed (non-fatal): ${(err as Error).message}`);
-  }
-}
-
-/**
- * Returns true iff `clientInboxId` is not currently a member of `group`.
- * The agent stays in the group as super-admin after an explode, so the
- * group itself still loads — the only signal is that the client is gone.
- */
-async function clientNoLongerMember(group: Group, clientInboxId: string): Promise<boolean> {
-  try {
-    await group.sync();
-    const members = await group.members();
-    const target = clientInboxId.toLowerCase();
-    return !members.some((m: any) => (m.inboxId as string).toLowerCase() === target);
-  } catch (err) {
-    log(`[reports] clientNoLongerMember check failed (treating as member): ${(err as Error).message}`);
-    return false;
-  }
-}
-
-async function refreshInboxStates(client: Client, inboxIds: string[]): Promise<void> {
-  const c = client as any;
-  try {
-    if (c.preferences?.inboxStateFromInboxIds) {
-      await c.preferences.inboxStateFromInboxIds(inboxIds, true);
-      return;
-    }
-    if (c.preferences?.syncAll) {
-      await c.preferences.syncAll();
-      return;
-    }
-    if (c.conversations?.syncAll) {
-      await c.conversations.syncAll();
-      return;
-    }
-    if (c.conversations?.sync) {
-      await c.conversations.sync();
-      return;
-    }
-  } catch (err) {
-    console.warn(`[agent] refreshInboxStates failed (non-fatal): ${(err as Error).message}`);
-  }
-}
-
-/**
- * Log how many XMTP installations an inbox currently has, and return that
- * count. A welcome is HPKE-sealed per installation; a pile-up of stale
- * installations (from repeated app reinstalls) is the prime suspect when a
- * client cannot decrypt the welcome for a freshly created group, and a
- * count of 0 means a group created now would be undeliverable. Returns -1
- * when the count can't be read (SDK surface missing / error) so callers
- * can tell "unknown" apart from a genuine 0. Best-effort: the node-sdk
- * surface for this has shifted across versions.
- */
-async function logInboxInstallations(client: Client, inboxId: string, label: string): Promise<number> {
-  try {
-    const c = client as any;
-    const states = await c.preferences?.inboxStateFromInboxIds?.([inboxId], true);
-    const state = Array.isArray(states) ? states[0] : states;
-    if (!state) {
-      // SDK surface unavailable or no state returned. Report -1 ("unknown")
-      // so callers don't defer group creation on a read miss.
-      log(`${label} inbox ${inboxId.slice(0, 8)}… installation count unavailable`);
-      return -1;
-    }
-    const installations = (state.installations ?? []) as Array<{ id?: string }>;
-    const ids = installations.map((i) => (i.id ?? '').slice(0, 8)).filter((s: string) => s.length > 0);
-    log(`${label} inbox ${inboxId.slice(0, 8)}… has ${installations.length} XMTP installation(s): [${ids.join(', ')}]`);
-    if (installations.length >= 8) {
-      log(`${label} ⚠️ ${installations.length} installations is near/over XMTP's ~10-per-inbox limit — welcome delivery to the newest installation becomes unreliable. The inbox needs stale-installation revocation.`);
-    }
-    return installations.length;
-  } catch (err) {
-    log(`${label} could not read inbox installations (non-fatal): ${(err as Error).message}`);
-    return -1;
-  }
-}
-
-function log(msg: string): void {
-  console.log(`${new Date().toISOString()} ${msg}`);
-}
+// Shared XMTP helpers (refreshGroupInstallations, refreshInboxStates,
+// logInboxInstallations, clientNoLongerMember, safe, log) are imported
+// from ./xmtp-helpers.js — see the import block at the top of this file.

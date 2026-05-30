@@ -455,9 +455,12 @@ public enum ConvosAPI {
     public struct GoldilocksCancelResponse: Codable, Sendable {
         /// How much was refunded to the card, in cents.
         public let refundedCents: Int
+        /// How much was retained (current month, non-refundable), in cents.
+        public let retainedCents: Int
 
-        public init(refundedCents: Int) {
+        public init(refundedCents: Int, retainedCents: Int = 0) {
             self.refundedCents = refundedCents
+            self.retainedCents = retainedCents
         }
     }
 

@@ -157,6 +157,7 @@ public struct GoldilocksBillingStatusResponse: Codable, Sendable {
 
 public struct GoldilocksCancelResponse: Codable, Sendable {
     public let refundedCents: Int
+    public let retainedCents: Int
 }
 
 public struct GoldilocksPeopleListResponse: Codable, Sendable {

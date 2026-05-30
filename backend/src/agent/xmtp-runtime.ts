@@ -65,6 +65,25 @@ export async function bootAgentClient(identity: AgentIdentity): Promise<Client> 
     await recordInboxId(identity.kind, client.inboxId);
   }
 
+  // Revoke every installation on this inbox except the one we just
+  // booted. Without this, stale installations pile up each time the
+  // agent restarts with a fresh local DB (e.g. after `./dev/reset`
+  // wipes `.agent-data`). Stale installations are still registered
+  // on the XMTP network and receive HPKE-sealed welcomes that nobody
+  // decrypts — once the count hits ~10 the network starts dropping
+  // welcomes for the newest (live) installation too.
+  try {
+    const before = await client.preferences.fetchInboxState();
+    const staleCount = (before.installations?.length ?? 1) - 1;
+    if (staleCount > 0) {
+      console.log(`[agent] ${identity.kind}: revoking ${staleCount} stale installation(s) (keeping ${client.installationId.slice(0, 8)}…)`);
+      await client.revokeAllOtherInstallations();
+      console.log(`[agent] ${identity.kind}: stale installations revoked`);
+    }
+  } catch (err) {
+    console.warn(`[agent] ${identity.kind}: revokeAllOtherInstallations failed (non-fatal): ${(err as Error).message}`);
+  }
+
   return client;
 }
 

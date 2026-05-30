@@ -130,7 +130,10 @@ struct AppSettingsView: View {
                     Text("Invoices")
                         .foregroundStyle(.colorTextSecondary)
                     Spacer()
-                    Text("Coming soon")
+                    Text("Reserved")
+                        .foregroundStyle(.colorTextTertiary)
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(.colorTextTertiary)
                 }
                 .listRowInsets(.init(top: 0, leading: DesignConstants.Spacing.step4x, bottom: 0, trailing: 10.0))
@@ -252,10 +255,7 @@ struct AppSettingsView: View {
                         }
                     }
                     .listRowInsets(.init(top: 0, leading: DesignConstants.Spacing.step4x, bottom: 0, trailing: 10.0))
-                }
-                .listRowSeparatorTint(.colorBorderSubtle)
 
-                Section {
                     NavigationLink {
                         LegalView()
                     } label: {
@@ -605,7 +605,7 @@ struct MembershipView: View {
             } header: {
                 Text("Coverage")
             } footer: {
-                Text("Tap to close coverage and refund your unused balance to your card.")
+                Text("Tap to cancel. The current month is non-refundable; remaining future months are refunded to your card.")
             }
         }
     }
@@ -678,7 +678,10 @@ struct MembershipView: View {
 
     private var paymentSectionFooter: some View {
         let verb: String = isCoverageActive ? "Extends" : "Adds"
-        return Text("\(verb) \(prepaidDuration.displayName) of coverage. Editing your membership moves the coverage date.")
+        let refundNote: String = paymentMethod == .crypto
+            ? " Crypto refunds are processed manually."
+            : ""
+        return Text("\(verb) \(prepaidDuration.displayName) of coverage. Editing your membership moves the coverage date.\(refundNote)")
     }
 
     @ViewBuilder
@@ -749,7 +752,7 @@ struct MembershipView: View {
     }
 
     private var cancelConfirmMessage: String {
-        "Coverage ends now. Your unused balance is refunded to your card, pro-rata against your most recent top-ups."
+        "Coverage ends now. The current month is non-refundable. Any remaining future months are refunded."
     }
 
     @ViewBuilder
@@ -911,7 +914,12 @@ struct MembershipView: View {
             let result = try await session.cancelGoldilocksBilling()
             billingStatus = try await session.fetchGoldilocksBillingStatus()
             cacheCoverageActive()
-            showBillingResult("Coverage cancelled. $\(result.refundedCents / 100) refunded to your card.")
+            let refundDollars: Int = result.refundedCents / 100
+            if refundDollars > 0 {
+                showBillingResult("Coverage cancelled. $\(refundDollars) refunded to your card.")
+            } else {
+                showBillingResult("Coverage cancelled. No refund — the current month is non-refundable.")
+            }
         } catch {
             showBillingResult("Couldn't cancel coverage: \(error.localizedDescription)")
         }

@@ -78,8 +78,8 @@ async function main(): Promise<void> {
   const adminsClient = await bootAgentClient(adminsIdentity);
   const reportsClient = await bootAgentClient(reportsIdentity);
 
-  console.log(`[agent] admins-agent inbox=${adminsClient.inboxId.slice(0, 8)}…`);
-  console.log(`[agent] reports-agent inbox=${reportsClient.inboxId.slice(0, 8)}…`);
+  console.log(`[agent] admins-agent inbox=${adminsClient.inboxId.slice(0, 8)}… installation=${adminsClient.installationId.slice(0, 8)}…`);
+  console.log(`[agent] reports-agent inbox=${reportsClient.inboxId.slice(0, 8)}… installation=${reportsClient.installationId.slice(0, 8)}…`);
 
   const adminsAgent = new AdminsAgent(adminsClient, adminsIdentity);
   const reportsAgent = new ReportsAgent(reportsClient, reportsIdentity);

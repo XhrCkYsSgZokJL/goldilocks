@@ -26,6 +26,7 @@ start_process() {
     echo "  $name already running"
     return
   fi
+  clean_old_logs "$name"
   local log=".dev-run/${name}-$(date +%Y%m%d-%H%M%S).log"
   nohup "$@" > "$log" 2>&1 &
   echo $! > ".dev-run/${name}.pid"

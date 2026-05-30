@@ -8,7 +8,7 @@ set -euo pipefail
 #   ./dev/sim --clean              # wipe all state, then build + launch
 #   ./dev/sim --device "iPhone 17 Pro"   # pick a specific device
 #   ./dev/sim --scheme "Convos (Dev)"    # use a different scheme
-#   ./dev/sim --skip-build               # just launch (reuse last build)
+#   ./dev/sim --skip-build               # relaunch without rebuilding
 #   ./dev/sim --stop                     # stop the running app
 #
 # On first run, picks an iPhone simulator and remembers it in
@@ -246,6 +246,11 @@ if $CLEAN || [[ "$app_installed" == "false" ]]; then
     echo "→ fresh install detected: wiping XMTP/agent/DB state"
   fi
 
+  # Uninstall the app to wipe its sandbox (the local XMTP DB lives
+  # there; without this, old groups show as duplicates after the
+  # server-side state is wiped).
+  xcrun simctl uninstall "$SIM_ID" "$BUNDLE_ID" 2>/dev/null || true
+
   # Reset the simulator keychain to clear any stale XMTP identity keys.
   # Re-add the Caddy root cert afterward so HTTPS still works.
   xcrun simctl keychain "$SIM_ID" reset 2>/dev/null || true
@@ -267,6 +272,8 @@ if $CLEAN || [[ "$app_installed" == "false" ]]; then
   stop_background_processes
   cd "$DEV_BACKEND"
   mkdir -p .dev-run
+  clean_old_logs agent
+  clean_old_logs server
   nohup npm run agents:dev > ".dev-run/agent-$(date +%Y%m%d-%H%M%S).log" 2>&1 &
   echo $! > ".dev-run/agent.pid"
   nohup npm run server:dev > ".dev-run/server-$(date +%Y%m%d-%H%M%S).log" 2>&1 &
