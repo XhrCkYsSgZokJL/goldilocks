@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: OSV scan SPM dependencies
-        uses: google/osv-scanner-action/osv-scanner-action@v2.0.2
+        uses: google/osv-scanner-action/osv-scanner-action@v2.3.8
         with:
           # Package.resolved is the SPM lockfile-equivalent. osv-scanner
           # parses it and queries osv.dev for known advisories.
