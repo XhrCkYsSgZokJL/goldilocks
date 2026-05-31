@@ -103,7 +103,7 @@ public enum AppEnvironment: Sendable {
         case .local(config: let config), .dev(config: let config), .production(config: let config):
             return config.relyingPartyIdentifier
         case .tests:
-            return "local.convos.org"
+            return "local.goldilocksdigital.xyz"
         }
     }
 

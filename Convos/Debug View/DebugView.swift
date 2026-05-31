@@ -10,14 +10,14 @@ private struct SafariTestSheet: View {
                 .font(.title2)
                 .bold()
 
-            Text("Tap the button below to open convos.org in an in-app Safari view. This tests that .safariSheet works from inside a presented sheet.")
+            Text("Tap the button below to open goldilocksdigital.xyz in an in-app Safari view. This tests that .safariSheet works from inside a presented sheet.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
-            let action = { safariURL = URL(string: "https://convos.org") }
+            let action = { safariURL = URL(string: "https://goldilocksdigital.xyz") }
             Button(action: action) {
-                Text("Open convos.org")
+                Text("Open goldilocksdigital.xyz")
             }
             .convosButtonStyle(.rounded(fullWidth: true))
         }

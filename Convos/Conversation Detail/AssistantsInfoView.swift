@@ -51,19 +51,6 @@ struct AssistantsInfoView: View {
                     }
                     .convosButtonStyle(.rounded(fullWidth: true))
                 }
-
-                let learnMoreAction = { safariURL = URL(string: "https://learn.convos.org/assistants") }
-                Button(action: learnMoreAction) {
-                    HStack(spacing: DesignConstants.Spacing.stepX) {
-                        Text("Learn more")
-                            .font(.body)
-                        Image(systemName: "chevron.right")
-                            .font(.footnote)
-                            .foregroundStyle(.colorFillTertiary)
-                    }
-                }
-                .convosButtonStyle(.text)
-                .frame(maxWidth: .infinity)
             }
             .padding(.horizontal, horizontalPadding)
             .padding(.top, DesignConstants.Spacing.step4x)

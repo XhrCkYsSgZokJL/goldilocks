@@ -13,7 +13,6 @@ struct PhotosInfoSheet: View {
                 .init("Convos never sees or saves to your Camera Roll. Image metadata is never shared.", size: .small),
             ],
             primaryButtonAction: { dismiss() },
-            learnMoreURL: URL(string: "https://learn.convos.org/pics"),
             showDragIndicator: true
         )
     }

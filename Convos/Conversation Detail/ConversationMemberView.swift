@@ -7,7 +7,6 @@ struct ConversationMemberView: View {
 
     @State private var presentingBlockConfirmation: Bool = false
     @Environment(\.dismiss) private var dismiss: DismissAction
-    @Environment(\.openURL) private var openURL: OpenURLAction
 
     var body: some View {
         List {
@@ -69,28 +68,6 @@ struct ConversationMemberView: View {
 
     @ViewBuilder
     private var agentSections: some View {
-        if member.agentVerification.isVerified {
-            Section {
-                let action = { openURL(Constant.getSkillsURL) }
-                Button(action: action) {
-                    cardRow(title: "Get skills")
-                }
-            } footer: {
-                Text("Browse 100+ curated capabilities")
-                    .foregroundStyle(.colorTextSecondary)
-            }
-
-            Section {
-                let action = { openURL(Constant.learnAboutAssistantsURL) }
-                Button(action: action) {
-                    cardRow(title: "Learn about assistants")
-                }
-            } footer: {
-                Text("Capabilities, privacy and security")
-                    .foregroundStyle(.colorTextSecondary)
-            }
-        }
-
         if viewModel.canRemoveMembers {
             Section {
                 let action = {
@@ -208,10 +185,6 @@ struct ConversationMemberView: View {
 
     private enum Constant {
         static let agentLabel: String = "IA"
-        // swiftlint:disable:next force_unwrapping
-        static let getSkillsURL: URL = URL(string: "https://convos.org/assistants")!
-        // swiftlint:disable:next force_unwrapping
-        static let learnAboutAssistantsURL: URL = URL(string: "https://learn.convos.org/assistants")!
     }
 }
 

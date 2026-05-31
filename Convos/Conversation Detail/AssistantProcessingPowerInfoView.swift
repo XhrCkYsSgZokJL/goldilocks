@@ -2,7 +2,6 @@ import SwiftUI
 
 struct AssistantProcessingPowerInfoView: View {
     @Environment(\.dismiss) private var dismiss: DismissAction
-    @Environment(\.openURL) private var openURL: OpenURLAction
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass: UserInterfaceSizeClass?
 
     private let horizontalPadding: CGFloat = DesignConstants.Spacing.step10x
@@ -26,19 +25,11 @@ struct AssistantProcessingPowerInfoView: View {
                 .foregroundStyle(.colorTextSecondary)
 
             VStack(spacing: DesignConstants.Spacing.step2x) {
-                let learnURL = URL(string: "https://learn.convos.org/assistants-processing-power")
-                let learnAction = { if let learnURL { openURL(learnURL) } }
-                Button(action: learnAction) {
-                    Text("Learn about power")
-                }
-                .convosButtonStyle(.rounded(fullWidth: true))
-
                 let dismissAction = { dismiss() }
                 Button(action: dismissAction) {
                     Text("Continue")
                 }
-                .convosButtonStyle(.text)
-                .frame(maxWidth: .infinity)
+                .convosButtonStyle(.rounded(fullWidth: true))
             }
             .padding(.top, DesignConstants.Spacing.step4x)
         }

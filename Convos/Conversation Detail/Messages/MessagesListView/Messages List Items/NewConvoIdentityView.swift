@@ -80,8 +80,6 @@ struct NewConvoIdentityInfoSheet: View {
             ],
             primaryButtonTitle: "Awesome",
             primaryButtonAction: { dismiss() },
-            learnMoreTitle: "About infinite identity",
-            learnMoreURL: URL(string: "https://learn.convos.org/infinite-identity"),
             showDragIndicator: true
         )
     }

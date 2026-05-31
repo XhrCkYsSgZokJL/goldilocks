@@ -378,7 +378,7 @@ private struct ReplyReferenceInvitePreview: View {
         if let description = invite.conversationDescription, !description.isEmpty {
             return description
         }
-        return "convos.org"
+        return "goldilocksdigital.xyz"
     }
 
     var body: some View {

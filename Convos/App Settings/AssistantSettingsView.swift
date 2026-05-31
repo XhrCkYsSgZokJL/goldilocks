@@ -78,18 +78,6 @@ struct AssistantSettingsView: View {
             }
 
             Section {
-                if let learnURL = URL(string: "https://learn.convos.org/assistants") {
-                    Link(destination: learnURL) {
-                        HStack {
-                            Text("Learn about assistants")
-                                .foregroundStyle(.colorTextPrimary)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(.colorTextTertiary)
-                        }
-                    }
-                }
             } footer: {
                 Text("Capabilities, privacy and security")
             }

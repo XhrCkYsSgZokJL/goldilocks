@@ -146,7 +146,7 @@ final class LinkTextView: UITextView, LinkHitTestable {
 
 #Preview {
     VStack(spacing: 20) {
-        LinkDetectingTextView("Check out https://convos.org for more info")
+        LinkDetectingTextView("Check out https://goldilocksdigital.xyz for more info")
 
         LinkDetectingTextView("Visit www.example.com or email us at hello@example.com")
 

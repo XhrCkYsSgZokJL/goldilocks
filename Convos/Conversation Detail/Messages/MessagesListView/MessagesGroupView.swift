@@ -457,7 +457,7 @@ struct MessagesGroupView: View {
             id: "link-incoming",
             sender: alice,
             messages: [
-                .message(Message.mock(text: "Check out https://convos.org", sender: alice), .existing),
+                .message(Message.mock(text: "Check out https://goldilocksdigital.xyz", sender: alice), .existing),
             ],
             isLastGroup: false,
             isLastGroupSentByCurrentUser: false

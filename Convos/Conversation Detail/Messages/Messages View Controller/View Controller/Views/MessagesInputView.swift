@@ -614,7 +614,7 @@ private struct ComposerSideConvoCard: View {
     @Previewable @State var sendButtonEnabled: Bool = false
     @Previewable @State var profileImage: UIImage?
     @Previewable @State var selectedAttachmentImage: UIImage?
-    @Previewable @State var pendingInviteURLPreview: String? = "https://convos.xyz/invite/test-code"
+    @Previewable @State var pendingInviteURLPreview: String? = "https://goldilocksdigital.xyz/invite/test-code"
     @Previewable @State var animateAvatarForQuickname: Bool = false
     @Previewable @FocusState var focusState: MessagesViewInputFocus?
 

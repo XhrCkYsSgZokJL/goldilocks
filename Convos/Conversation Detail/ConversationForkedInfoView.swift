@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ConversationForkedInfoView: View {
     let onDelete: () -> Void
-    @Environment(\.openURL) private var openURL: OpenURLAction
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignConstants.Spacing.step6x) {
@@ -33,15 +32,6 @@ struct ConversationForkedInfoView: View {
                     Text("Delete convo")
                 }
                 .convosButtonStyle(.rounded(fullWidth: true, backgroundColor: .colorBackgroundInverted))
-
-                Button {
-                    // swiftlint:disable:next force_unwrapping
-                    openURL(URL(string: "https://learn.convos.org/error-01")!)
-                } label: {
-                    Text("Learn more")
-                }
-                .convosButtonStyle(.text)
-                .frame(maxWidth: .infinity)
             }
             .padding(.top, DesignConstants.Spacing.step4x)
         }

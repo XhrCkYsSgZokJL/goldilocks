@@ -70,7 +70,7 @@ struct EmojiBubble: View {
             )
             MessageBubble(
                 style: .normal,
-                message: "Check out https://convos.org for more info",
+                message: "Check out https://goldilocksdigital.xyz for more info",
                 isOutgoing: type == .outgoing,
                 profile: .mock(),
             )

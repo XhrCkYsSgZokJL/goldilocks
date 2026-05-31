@@ -12,7 +12,6 @@ struct RevealMediaInfoSheet: View {
                 .init("Revealing is a personal preference, and no one else in the convo will know your choice."),
             ],
             primaryButtonAction: { dismiss() },
-            learnMoreURL: URL(string: "https://learn.convos.org/reveal")
         )
     }
 }

@@ -1,13 +1,13 @@
 {
   "environment": "production",
-  "backendUrl": "https://api.prod.convos.xyz/api",
+  "backendUrl": "https://api.goldilocksdigital.xyz/api",
   "xmtpNetwork": "production",
   "bundleId": "org.convos.ios",
   "appGroupIdentifier": "group.org.convos.ios",
-  "relyingPartyIdentifier": "convos.org",
+  "relyingPartyIdentifier": "goldilocksdigital.xyz",
   "associatedDomains": [
-    "popup.convos.org",
-    "app.convos.org"
+    "goldilocksdigital.xyz",
+    "app.goldilocksdigital.xyz"
   ],
-  "appUrlScheme": "convos"
+  "appUrlScheme": "goldilocks"
 }
