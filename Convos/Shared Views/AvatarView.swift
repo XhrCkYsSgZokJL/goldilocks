@@ -62,8 +62,12 @@ struct ProfileAvatarView: View {
     let useSystemPlaceholder: Bool
     var agentVerification: AgentVerification = .unverified
 
+    private var isGoldilocksBot: Bool {
+        profile.isAgent || GoldilocksAgentTrust.contains(inboxId: profile.inboxId)
+    }
+
     var body: some View {
-        if profile.isAgent, profileImage == nil, let botImage = BrandConfig.shared.assets.botImageName {
+        if isGoldilocksBot, profileImage == nil, let botImage = BrandConfig.shared.assets.botImageName {
             Image(botImage)
                 .resizable()
                 .scaledToFill()
@@ -148,7 +152,8 @@ struct ConversationAvatarView: View {
         case .customImage:
             MonogramView(name: conversation.computedDisplayName)
         case let .profile(profile, verification):
-            if profile.isAgent, let botImage = BrandConfig.shared.assets.botImageName {
+            let isBotProfile: Bool = profile.isAgent || GoldilocksAgentTrust.contains(inboxId: profile.inboxId)
+            if isBotProfile, let botImage = BrandConfig.shared.assets.botImageName {
                 Image(botImage)
                     .resizable()
                     .scaledToFill()
@@ -180,11 +185,12 @@ struct MessageAvatarView: View {
 
     var body: some View {
         Group {
+            let isBotProfile: Bool = profile.isAgent || GoldilocksAgentTrust.contains(inboxId: profile.inboxId)
             if let image = cachedImage {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-            } else if profile.isAgent, let botImage = BrandConfig.shared.assets.botImageName {
+            } else if isBotProfile, let botImage = BrandConfig.shared.assets.botImageName {
                 Image(botImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)

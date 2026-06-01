@@ -35,35 +35,43 @@ struct ContactDetailView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    avatarSection
-                    infoSection
-                    actionsSection
+        if showsCloseButton {
+            NavigationStack {
+                content
+            }
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                avatarSection
+                infoSection
+                actionsSection
+            }
+            .padding()
+        }
+        .background(Color.colorBackgroundRaisedSecondary.ignoresSafeArea())
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if showsCloseButton {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
                 }
-                .padding()
             }
-            .background(Color.colorBackgroundRaisedSecondary.ignoresSafeArea())
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if showsCloseButton {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close") { dismiss() }
-                    }
-                }
-            }
-            .confirmationDialog(
-                "Block \(contact.resolvedDisplayName)?",
-                isPresented: $presentingBlockConfirmation,
-                titleVisibility: .visible
-            ) {
-                let action: () -> Void = { toggleBlock() }
-                Button("Block", role: .destructive, action: action)
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("They won't be able to message you.")
-            }
+        }
+        .confirmationDialog(
+            "Block \(contact.resolvedDisplayName)?",
+            isPresented: $presentingBlockConfirmation,
+            titleVisibility: .visible
+        ) {
+            let action: () -> Void = { toggleBlock() }
+            Button("Block", role: .destructive, action: action)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("They won't be able to message you.")
         }
     }
 
