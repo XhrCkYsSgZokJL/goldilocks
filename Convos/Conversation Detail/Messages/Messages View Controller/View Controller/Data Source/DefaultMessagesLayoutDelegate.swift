@@ -97,6 +97,9 @@ final class DefaultMessagesLayoutDelegate: MessagesLayoutDelegate {
     }
 
     private func estimatedAttachmentHeight(for attachment: HydratedAttachment, width: CGFloat) -> CGFloat {
+        if attachment.isHTMLFile {
+            return 160.0
+        }
         switch attachment.mediaType {
         case .audio:
             // VoiceMemoBubbleContent: 12pt top padding + 36pt play button + 12pt

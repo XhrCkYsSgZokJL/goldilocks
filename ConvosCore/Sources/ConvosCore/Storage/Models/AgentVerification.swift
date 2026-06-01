@@ -31,4 +31,17 @@ public enum AgentVerification: Codable, Hashable, Sendable {
             return issuer
         }
     }
+
+    public var roleLabel: String? {
+        switch self {
+        case .unverified:
+            return nil
+        case .verified(.convos):
+            return "Convos Agent"
+        case .verified(.userOAuth):
+            return "Agent"
+        case .verified(.unknown):
+            return "Agent"
+        }
+    }
 }

@@ -69,6 +69,9 @@ public struct Profile: Codable, Identifiable, Hashable, Sendable {
 
     public var displayName: String {
         if let name, !name.isEmpty { return name }
+        if let registryName = GoldilocksNameRegistry.displayName(forInboxId: inboxId) {
+            return registryName
+        }
         return "Somebody"
     }
 
@@ -198,11 +201,15 @@ public struct Profile: Codable, Identifiable, Hashable, Sendable {
 
 public extension Array where Element == Profile {
     var formattedNamesString: String {
-        let namedProfiles = filter { $0.name != nil && $0.name?.isEmpty == false }
+        let hasResolvableName: (Profile) -> Bool = { profile in
+            if let name = profile.name, !name.isEmpty { return true }
+            return GoldilocksNameRegistry.displayName(forInboxId: profile.inboxId) != nil
+        }
+        let namedProfiles: [String] = filter(hasResolvableName)
             .map { $0.displayName }
             .sorted()
-        let anonymousCount = filter { $0.name == nil || $0.name?.isEmpty == true }.count
-        let totalCount = namedProfiles.count + anonymousCount
+        let anonymousCount: Int = filter { !hasResolvableName($0) }.count
+        let totalCount: Int = namedProfiles.count + anonymousCount
 
         if namedProfiles.isEmpty {
             if anonymousCount == 0 {
@@ -214,10 +221,10 @@ public extension Array where Element == Profile {
             }
         }
 
-        let maxNames = NameLimits.maxDisplayedMemberNames
+        let maxNames: Int = NameLimits.maxDisplayedMemberNames
 
         if totalCount <= maxNames {
-            var allNames = namedProfiles
+            var allNames: [String] = namedProfiles
             if anonymousCount > 1 {
                 allNames.append("Somebodies")
             } else if anonymousCount == 1 {
@@ -234,9 +241,9 @@ public extension Array where Element == Profile {
             }
         }
 
-        let namesPrefix = namedProfiles.prefix(maxNames)
-        let othersCount = totalCount - namesPrefix.count
-        let othersText = othersCount == 1 ? "1 other" : "\(othersCount) others"
+        let namesPrefix: ArraySlice<String> = namedProfiles.prefix(maxNames)
+        let othersCount: Int = totalCount - namesPrefix.count
+        let othersText: String = othersCount == 1 ? "1 other" : "\(othersCount) others"
 
         return namesPrefix.joined(separator: ", ") + " and " + othersText
     }

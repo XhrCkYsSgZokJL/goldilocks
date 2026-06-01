@@ -134,7 +134,7 @@ actor StreamProcessor: StreamProcessorProtocol {
 
         let creatorInboxId = try await conversation.creatorInboxId()
         if creatorInboxId == params.client.inboxId {
-            // we created the conversation, update permissions, set inviteTag, and generate encryption key
+            try await conversation.updateConsentState(state: .allowed)
             try await conversation.ensureInviteTag()
             do {
                 try await conversation.ensureImageEncryptionKey()
@@ -202,6 +202,17 @@ actor StreamProcessor: StreamProcessorProtocol {
                         return
                     }
 
+                    // Short-circuit row-independent events so a catch-up burst of
+                    // typing indicators or read receipts doesn't re-save the conversation
+                    // row N times for no state change.
+                    if processTypingIndicator(message, conversationId: conversation.id, params: params) {
+                        return
+                    }
+
+                    if await processReadReceipt(message, conversationId: conversation.id, currentInboxId: params.client.inboxId) {
+                        return
+                    }
+
                     let dbConversation = try await conversationWriter.store(
                         conversation: conversation,
                         inboxId: params.client.inboxId
@@ -220,14 +231,6 @@ actor StreamProcessor: StreamProcessorProtocol {
                     guard explodeSettings == nil else { return }
 
                     if await processProfileMessage(message, conversationId: conversation.id) {
-                        return
-                    }
-
-                    if processTypingIndicator(message, conversationId: conversation.id, params: params) {
-                        return
-                    }
-
-                    if await processReadReceipt(message, conversationId: conversation.id, currentInboxId: params.client.inboxId) {
                         return
                     }
 
@@ -310,6 +313,8 @@ actor StreamProcessor: StreamProcessorProtocol {
 
     // MARK: - Profile Messages
 
+    private static let typingIndicatorLiveWindow: TimeInterval = 10
+
     private func processTypingIndicator(
         _ message: DecodedMessage,
         conversationId: String,
@@ -320,6 +325,13 @@ actor StreamProcessor: StreamProcessorProtocol {
         }
 
         guard message.senderInboxId != params.client.inboxId else {
+            return true
+        }
+
+        // Drop stale typing indicators from catch-up replay so the UI doesn't
+        // flash "X is typing" for events that happened minutes ago.
+        let ageSeconds: TimeInterval = Date().timeIntervalSince1970 - (TimeInterval(message.sentAtNs) / 1_000_000_000)
+        guard ageSeconds <= Self.typingIndicatorLiveWindow else {
             return true
         }
 

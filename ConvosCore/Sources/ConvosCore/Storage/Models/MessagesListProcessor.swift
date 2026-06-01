@@ -70,7 +70,8 @@ public final class MessagesListProcessor: Sendable {
         var items: [MessagesListItemType] = []
         items.reserveCapacity(messageCount)
 
-        var currentGroupMessages: [AnyMessage] = []
+        var groupStartIndex: Int = -1
+        var groupEndIndex: Int = -1
         var currentSenderId: String?
         var lastMessageDate: Date?
         var lastCUGroupIdx: Int?
@@ -85,13 +86,13 @@ public final class MessagesListProcessor: Sendable {
             guard content.showsInMessagesList else { continue }
 
             if case .update(let update) = content {
-                if !currentGroupMessages.isEmpty, currentSenderId != nil {
+                if groupStartIndex >= 0, currentSenderId != nil {
                     flush(
-                        &items, currentGroupMessages,
+                        &items, messages, groupStartIndex, groupEndIndex,
                         false, false, &lastCUGroupIdx, trackedMemberCount, &lastOVIdx,
                         voiceMemoTranscripts
                     )
-                    currentGroupMessages.removeAll(keepingCapacity: true)
+                    groupStartIndex = -1
                     currentSenderId = nil
                 }
                 items.append(.update(id: msg.messageId, update: update, origin: msg.origin))
@@ -115,13 +116,13 @@ public final class MessagesListProcessor: Sendable {
                 let age = Date().timeIntervalSince(msg.date)
                 guard age <= status.displayDuration else { continue }
 
-                if !currentGroupMessages.isEmpty, currentSenderId != nil {
+                if groupStartIndex >= 0, currentSenderId != nil {
                     flush(
-                        &items, currentGroupMessages,
+                        &items, messages, groupStartIndex, groupEndIndex,
                         false, false, &lastCUGroupIdx, trackedMemberCount, &lastOVIdx,
                         voiceMemoTranscripts
                     )
-                    currentGroupMessages.removeAll(keepingCapacity: true)
+                    groupStartIndex = -1
                     currentSenderId = nil
                 }
                 let sender = msg.sender
@@ -140,13 +141,13 @@ public final class MessagesListProcessor: Sendable {
             var addedDateSeparator = false
             if let lastDate = lastMessageDate {
                 if messageDate.timeIntervalSince(lastDate) > hourInSeconds {
-                    if !currentGroupMessages.isEmpty, currentSenderId != nil {
+                    if groupStartIndex >= 0, currentSenderId != nil {
                         flush(
-                            &items, currentGroupMessages,
+                            &items, messages, groupStartIndex, groupEndIndex,
                             false, false, &lastCUGroupIdx, trackedMemberCount, &lastOVIdx,
                             voiceMemoTranscripts
                         )
-                        currentGroupMessages.removeAll(keepingCapacity: true)
+                        groupStartIndex = -1
                         currentSenderId = nil
                     }
                     items.append(.date(DateGroup(date: messageDate)))
@@ -162,41 +163,47 @@ public final class MessagesListProcessor: Sendable {
             let senderId = msg.senderId
 
             if addedDateSeparator {
-                currentGroupMessages = [msg]
+                groupStartIndex = index
+                groupEndIndex = index
                 currentSenderId = senderId
             } else if isFullBleedAttachment {
-                if !currentGroupMessages.isEmpty, currentSenderId != nil {
+                if groupStartIndex >= 0, currentSenderId != nil {
                     flush(
-                        &items, currentGroupMessages,
+                        &items, messages, groupStartIndex, groupEndIndex,
                         false, false, &lastCUGroupIdx, trackedMemberCount, &lastOVIdx,
                         voiceMemoTranscripts
                     )
                 }
                 flush(
-                    &items, [msg],
+                    &items, messages, index, index,
                     false, false, &lastCUGroupIdx, trackedMemberCount, &lastOVIdx,
                     voiceMemoTranscripts
                 )
-                currentGroupMessages.removeAll(keepingCapacity: true)
+                groupStartIndex = -1
                 currentSenderId = nil
             } else if let currentId = currentSenderId, currentId != senderId {
                 flush(
-                    &items, currentGroupMessages,
+                    &items, messages, groupStartIndex, groupEndIndex,
                     false, false, &lastCUGroupIdx, trackedMemberCount, &lastOVIdx,
                     voiceMemoTranscripts
                 )
-                currentGroupMessages = [msg]
+                groupStartIndex = index
+                groupEndIndex = index
                 currentSenderId = senderId
             } else if lastWasAttachment, currentSenderId != nil {
                 flush(
-                    &items, currentGroupMessages,
+                    &items, messages, groupStartIndex, groupEndIndex,
                     false, false, &lastCUGroupIdx, trackedMemberCount, &lastOVIdx,
                     voiceMemoTranscripts
                 )
-                currentGroupMessages = [msg]
+                groupStartIndex = index
+                groupEndIndex = index
                 currentSenderId = senderId
             } else {
-                currentGroupMessages.append(msg)
+                if groupStartIndex < 0 {
+                    groupStartIndex = index
+                }
+                groupEndIndex = index
                 currentSenderId = senderId
             }
 
@@ -204,10 +211,10 @@ public final class MessagesListProcessor: Sendable {
             lastWasAttachment = isFullBleedAttachment
         }
 
-        if !currentGroupMessages.isEmpty, currentSenderId != nil {
-            let isCU = currentGroupMessages[0].senderIsCurrentUser
+        if groupStartIndex >= 0, currentSenderId != nil {
+            let isCU = messages[groupStartIndex].senderIsCurrentUser
             flush(
-                &items, currentGroupMessages,
+                &items, messages, groupStartIndex, groupEndIndex,
                 true, isCU, &lastCUGroupIdx, trackedMemberCount, &lastOVIdx,
                 voiceMemoTranscripts
             )
@@ -311,7 +318,9 @@ public final class MessagesListProcessor: Sendable {
     // swiftlint:disable:next function_parameter_count
     private static func flush(
         _ items: inout [MessagesListItemType],
-        _ messages: [AnyMessage],
+        _ allMessages: [AnyMessage],
+        _ start: Int,
+        _ end: Int,
         _ isLastGroup: Bool,
         _ isLastGroupSentByCurrentUser: Bool,
         _ lastCurrentUserIndex: inout Int?,
@@ -319,12 +328,13 @@ public final class MessagesListProcessor: Sendable {
         _ lastOnlyVisibleIndex: inout Int?,
         _ voiceMemoTranscripts: [String: VoiceMemoTranscriptListItem] = [:]
     ) {
-        guard let startMsg = messages.first else { return }
+        let slice: ArraySlice<AnyMessage> = allMessages[start...end]
+        let startMsg = allMessages[start]
         let sender = startMsg.sender
 
         var groupTranscripts: [String: VoiceMemoTranscriptListItem] = [:]
         if !voiceMemoTranscripts.isEmpty {
-            for message in messages {
+            for message in slice {
                 let messageId = message.messageId
                 if let transcript = voiceMemoTranscripts[messageId] {
                     groupTranscripts[messageId] = transcript
@@ -335,7 +345,7 @@ public final class MessagesListProcessor: Sendable {
         var group = MessagesGroup(
             id: "group-" + startMsg.messageId,
             sender: sender,
-            messages: messages,
+            messages: slice,
             isLastGroup: isLastGroup,
             isLastGroupSentByCurrentUser: isLastGroupSentByCurrentUser,
             voiceMemoTranscripts: groupTranscripts

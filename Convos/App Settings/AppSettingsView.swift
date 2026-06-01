@@ -82,20 +82,18 @@ struct AppSettingsView: View {
     }
 
     @ViewBuilder
-    private var membershipSection: some View {
+    private var membershipAndInvoicesSection: some View {
         Section {
             NavigationLink {
                 MembershipView(session: session)
             } label: {
-                HStack {
+                HStack(spacing: DesignConstants.Spacing.step2x) {
                     Image(systemName: "creditcard.fill")
                         .foregroundStyle(.colorTextPrimary)
-
+                        .frame(width: Constant.settingsIconWidth, alignment: .center)
                     Text("Membership")
                         .foregroundStyle(.colorTextPrimary)
-
                     Spacer()
-
                     Text(currentTierLabel)
                         .foregroundStyle(.colorTextSecondary)
                 }
@@ -107,41 +105,52 @@ struct AppSettingsView: View {
     }
 
     @ViewBuilder
-    private var invoicesSection: some View {
-        let emerald: Bool = GoldilocksSession.shared.identity?.emeraldMembershipEnabled ?? false
+    private var myInfoAndContactsSection: some View {
         Section {
-            if emerald {
-                NavigationLink {
-                    InvoicesView()
-                } label: {
-                    HStack {
-                        Image(systemName: "doc.text.fill")
-                            .foregroundStyle(.colorTextPrimary)
-                        Text("Invoices")
-                            .foregroundStyle(.colorTextPrimary)
-                        Spacer()
+            NavigationLink {
+                myInfoDestination
+            } label: {
+                HStack(spacing: DesignConstants.Spacing.step2x) {
+                    Image(systemName: "lanyardcard.fill")
+                        .foregroundStyle(.colorTextPrimary)
+                        .frame(width: Constant.settingsIconWidth, alignment: .center)
+                    Text("My info")
+                        .foregroundStyle(.colorTextPrimary)
+                    Spacer()
+                    if !quicknameViewModel.quicknameSettings.isDefault {
+                        Text(quicknameViewModel.editingDisplayName)
+                            .foregroundStyle(.colorTextSecondary)
+                        ProfileAvatarView(
+                            profile: quicknameViewModel.profile,
+                            profileImage: quicknameViewModel.profileImage,
+                            useSystemPlaceholder: false
+                        )
+                        .frame(width: 16.0, height: 16.0)
                     }
                 }
-                .listRowInsets(.init(top: 0, leading: DesignConstants.Spacing.step4x, bottom: 0, trailing: 10.0))
-            } else {
-                HStack {
-                    Image(systemName: "doc.text.fill")
-                        .foregroundStyle(.colorTextSecondary)
-                    Text("Invoices")
-                        .foregroundStyle(.colorTextSecondary)
+            }
+            .accessibilityIdentifier("my-info-row")
+
+            NavigationLink {
+                let messagingService = session.messagingService()
+                ContactsView(
+                    contactsRepository: messagingService.contactsRepository(),
+                    contactsWriter: messagingService.contactsWriter(),
+                    session: session
+                )
+            } label: {
+                HStack(spacing: DesignConstants.Spacing.step2x) {
+                    Image(systemName: "person.crop.circle")
+                        .foregroundStyle(.colorTextPrimary)
+                        .frame(width: Constant.settingsIconWidth, alignment: .center)
+                    Text("Contacts")
+                        .foregroundStyle(.colorTextPrimary)
                     Spacer()
-                    Text("Reserved")
-                        .foregroundStyle(.colorTextTertiary)
-                    Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.colorTextTertiary)
                 }
-                .listRowInsets(.init(top: 0, leading: DesignConstants.Spacing.step4x, bottom: 0, trailing: 10.0))
             }
+            .accessibilityIdentifier("contacts-row")
         } footer: {
-            if !emerald {
-                Text("Reserved for Emerald tier clients")
-            }
+            Text("Private unless you choose to share")
         }
     }
 
@@ -206,40 +215,9 @@ struct AppSettingsView: View {
                 .listSectionMargins(.top, 0.0)
                 .listSectionSeparator(.hidden)
 
-                membershipSection
+                membershipAndInvoicesSection
 
-                invoicesSection
-
-                Section {
-                    NavigationLink {
-                        myInfoDestination
-                    } label: {
-                        HStack {
-                            Image(systemName: "lanyardcard.fill")
-                                .foregroundStyle(.colorTextPrimary)
-
-                            Text("My info")
-                                .foregroundStyle(.colorTextPrimary)
-
-                            Spacer()
-
-                            if !quicknameViewModel.quicknameSettings.isDefault {
-                                Text(quicknameViewModel.editingDisplayName)
-                                    .foregroundStyle(.colorTextSecondary)
-
-                                ProfileAvatarView(
-                                    profile: quicknameViewModel.profile,
-                                    profileImage: quicknameViewModel.profileImage,
-                                    useSystemPlaceholder: false
-                                )
-                                .frame(width: 16.0, height: 16.0)
-                            }
-                        }
-                    }
-                    .accessibilityIdentifier("my-info-row")
-                } footer: {
-                    Text("Private unless you choose to share")
-                }
+                myInfoAndContactsSection
 
                 connectionsSection
 
@@ -411,6 +389,7 @@ struct AppSettingsView: View {
 
     private enum Constant {
         static let secretUpgradeTapCount: Int = 5
+        static let settingsIconWidth: CGFloat = 24.0
     }
 }
 
@@ -448,8 +427,8 @@ struct MembershipView: View {
     @State private var billingResultMessage: String?
     @State private var showingBillingResult: Bool = false
     @State private var showingCancelConfirm: Bool = false
-    @State private var paymentMethod: GoldilocksPaymentMethod = .card
-    @State private var prepaidDuration: GoldilocksPrepaidDuration = .oneMonth
+    @State private var paymentMethod: GoldilocksPaymentMethod = .apple
+    @State private var prepaidDuration: GoldilocksPrepaidDuration = .threeMonths
     @State private var billingStatus: ConvosAPI.GoldilocksBillingStatusResponse?
     @State private var isStartingCheckout: Bool = false
     @State private var isRefreshingBilling: Bool = false
@@ -477,6 +456,7 @@ struct MembershipView: View {
             .task {
                 await plan.loadFromBackend(session: session)
                 await syncSeats()
+                await GoldilocksStore.shared.loadProducts()
             }
     }
 
@@ -484,7 +464,7 @@ struct MembershipView: View {
         List {
             tierSection
             peopleSection
-            coverageSection
+            accountSection
             paymentSection
             pendingCheckoutSection
         }
@@ -505,7 +485,6 @@ struct MembershipView: View {
                 onSave: { updated in
                     guard let index = plan.members.firstIndex(where: { $0.id == updated.id }) else { return }
                     plan.members[index] = updated
-                    showVerifyResult("Saved changes to \(updated.displayName).")
                 },
                 onRemove: {
                     let label: String = member.displayName
@@ -567,73 +546,70 @@ struct MembershipView: View {
             }
             .listRowBackground(tier.tintColor)
         } header: {
-            Text("Your tier")
+            Text("Tier")
         } footer: {
-            Text(tier.membershipDetail)
+            Text("Add one active member to unlock Silver, or four for Gold. Emerald tier must be enabled by an Admin.")
         }
     }
 
-    /// Visible whenever the client has a prepaid balance — even if they
-    /// have zero billable people right now (rate = 0). That "paused"
-    /// state still shows the row so the client can cancel + refund
-    /// instead of stranding the balance.
-    @ViewBuilder
-    private var coverageSection: some View {
-        if hasCoverageBalance {
-            Section {
+    private var accountSection: some View {
+        Section {
+            HStack {
+                Text("Balance")
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+                let balance: Int = billingStatus?.balanceCents ?? 0
+                Text(balance > 0 ? "$\(balance / 100)" : "$0")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.colorTextPrimary)
+            }
+            HStack {
+                Text("Coverage")
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+                Text(coverageDaysText)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+            if hasCoverageBalance {
                 let tapAction = { showingCancelConfirm = true }
                 Button(action: tapAction) {
-                    HStack(spacing: DesignConstants.Spacing.step2x) {
-                        Text(coverageStatusText)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(.colorTextPrimary)
-                        Spacer()
-                        let balance: Int = billingStatus?.balanceCents ?? 0
-                        if balance > 0 {
-                            Text("$\(balance / 100) left")
-                                .font(.subheadline)
-                                .foregroundStyle(.colorTextSecondary)
-                        }
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.colorTextTertiary)
-                    }
-                    .contentShape(Rectangle())
+                    Text("Request refund")
+                        .foregroundStyle(.red)
                 }
-                .buttonStyle(.plain)
                 .disabled(isCancelling)
-            } header: {
-                Text("Coverage")
-            } footer: {
-                Text("Tap to cancel. The current month is non-refundable; remaining future months are refunded to your card.")
+            }
+        } header: {
+            Text("Account")
+        } footer: {
+            if hasCoverageBalance {
+                Text("Refund cancels coverage. The current month is non-refundable; remaining future months are refunded.")
+            } else {
+                Text("Deposit funds below to activate coverage for the people on your plan.")
             }
         }
     }
 
     private var paymentSection: some View {
-        // Always render the section so its structure stays familiar to
-        // clients who get promoted to Emerald mid-billing-cycle. On
-        // Emerald it's display-only — every control is disabled so the
-        // client can't add more coverage on top of the granted tier,
-        // but any existing prepaid balance is still cancel/refundable
-        // via the separate `coverageSection` above.
         Section {
             paymentMethodPicker
             durationPicker
             billingDetailRow
             checkoutButton
         } header: {
-            Text(isCoverageActive ? "Extend coverage" : "Add coverage")
+            Text("Payment")
         } footer: {
             paymentSectionFooter
         }
-        .disabled(isEmerald)
     }
 
     private var paymentMethodPicker: some View {
         Picker("Payment method", selection: $paymentMethod) {
             ForEach(GoldilocksPaymentMethod.allCases, id: \.self) { method in
-                Text(method.displayName).tag(method)
+                if method == .apple {
+                    Image(systemName: "apple.logo").tag(method)
+                } else {
+                    Text(method.displayName).tag(method)
+                }
             }
         }
         .pickerStyle(.segmented)
@@ -650,7 +626,7 @@ struct MembershipView: View {
 
     private var billingDetailRow: some View {
         HStack {
-            Text("Total today")
+            Text("Total")
                 .foregroundStyle(.colorTextSecondary)
             Spacer()
             Text("$\(chargeTotal)")
@@ -677,11 +653,17 @@ struct MembershipView: View {
     }
 
     private var paymentSectionFooter: some View {
-        let verb: String = isCoverageActive ? "Extends" : "Adds"
-        let refundNote: String = paymentMethod == .crypto
-            ? " Crypto refunds are processed manually."
-            : ""
-        return Text("\(verb) \(prepaidDuration.displayName) of coverage. Editing your membership moves the coverage date.\(refundNote)")
+        let billedThrough: String = {
+            switch paymentMethod {
+            case .apple:
+                return "Billed through Apple."
+            case .card:
+                return "Billed through Stripe."
+            case .crypto:
+                return "Billed through Hopscotch."
+            }
+        }()
+        return Text("Deposits fund your account balance. Coverage runs until the balance is depleted. \(billedThrough)")
     }
 
     @ViewBuilder
@@ -718,16 +700,16 @@ struct MembershipView: View {
         if paymentMethod == .crypto {
             return "Coming Soon"
         }
-        let verb: String = isCoverageActive ? "Extend" : "Add"
-        return "\(verb) \(prepaidDuration.displayName)"
+        return "Deposit \(prepaidDuration.displayName)"
     }
 
     private var canStartCheckout: Bool {
-        paymentMethod == .card && !plan.members.isEmpty
-    }
-
-    private var isCoverageActive: Bool {
-        billingStatus?.activeUntil != nil
+        switch paymentMethod {
+        case .apple, .card:
+            return !plan.members.isEmpty
+        case .crypto:
+            return false
+        }
     }
 
     /// True whenever there's an unused prepaid balance, including the
@@ -739,16 +721,16 @@ struct MembershipView: View {
         (billingStatus?.balanceCents ?? 0) > 0
     }
 
-    private var coverageStatusText: String {
-        guard let status = billingStatus else { return "Checking…" }
-        if let activeUntil = status.activeUntil,
-           let date = Self.dateFormatter.date(from: activeUntil) {
-            return "Active until \(date.formatted(date: .abbreviated, time: .omitted))"
+    private var coverageDaysText: String {
+        if isEmerald { return "Active" }
+        guard let status = billingStatus else { return "Loading…" }
+        guard let activeUntil = status.activeUntil,
+              let date = Self.dateFormatter.date(from: activeUntil) else {
+            return "Inactive"
         }
-        if (status.balanceCents) > 0 {
-            return "Paused"
-        }
-        return "No active coverage"
+        let days: Int = Calendar.current.dateComponents([.day], from: Date(), to: date).day ?? 0
+        if days <= 0 { return "Expires today" }
+        return "\(days) day\(days == 1 ? "" : "s") remaining"
     }
 
     private var cancelConfirmMessage: String {
@@ -772,7 +754,7 @@ struct MembershipView: View {
         } header: {
             Text("People")
         } footer: {
-            Text("\(GoldilocksPlan.priceLabel). Tap a person to edit their name, swipe to remove, or long press a row to reorder.")
+            Text("\(GoldilocksPlan.priceLabel). Adding or removing people adjusts your coverage end date. Tap a person to edit, swipe to remove.")
         }
     }
 
@@ -805,12 +787,12 @@ struct MembershipView: View {
     /// and other contact details are deliberately not shown here so the
     /// list reads as a clean roster of names.
     private func memberRow(_ member: SeatMember) -> some View {
-        let displayName: String = member.displayName
+        let rowLabel: String = member.firstName.isEmpty ? member.displayName : member.firstName
         let tapAction = { editingMember = member }
         return Button(action: tapAction) {
             HStack(spacing: DesignConstants.Spacing.step2x) {
                 VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
-                    Text(displayName)
+                    Text(rowLabel)
                         .font(.body)
                         .foregroundStyle(.colorTextPrimary)
                     if !member.enabled {
@@ -862,11 +844,21 @@ struct MembershipView: View {
         await syncSeats()
     }
 
-    /// Ask the backend for a Stripe Checkout Session and open the hosted
-    /// page in the browser. The webhook credits the balance; the screen
-    /// reconciles via `refreshBillingStatus` once the user returns.
+    /// Start the checkout flow for the selected payment method. Card
+    /// opens a Stripe-hosted session in the browser; Apple triggers a
+    /// native StoreKit2 purchase sheet.
     private func startCheckout() async {
-        guard paymentMethod == .card else { return }
+        switch paymentMethod {
+        case .apple:
+            await startAppleCheckout()
+        case .card:
+            await startStripeCheckout()
+        case .crypto:
+            break
+        }
+    }
+
+    private func startStripeCheckout() async {
         isStartingCheckout = true
         do {
             let response = try await session.createGoldilocksCheckout(
@@ -884,6 +876,24 @@ struct MembershipView: View {
         } catch {
             showBillingResult("Couldn't start checkout: \(error.localizedDescription)")
         }
+        isStartingCheckout = false
+    }
+
+    private func startAppleCheckout() async {
+        isStartingCheckout = true
+        let store: GoldilocksStore = GoldilocksStore.shared
+        let success: Bool = await store.purchase(
+            duration: prepaidDuration,
+            seats: plan.billableSeatCount,
+            session: session
+        )
+        if success {
+            await refreshBillingStatus()
+            showBillingResult("Your coverage is active.")
+        } else if let error = store.lastError {
+            showBillingResult(error)
+        }
+        store.resetState()
         isStartingCheckout = false
     }
 
@@ -974,7 +984,10 @@ private struct PersonEditorSheet: View {
     @State private var address: PersonAddress
     @State private var emails: [EditableEmail]
     @State private var showingRemoveConfirm: Bool = false
-    @FocusState private var focusedCodeID: UUID?
+    @State private var verifyingEmailID: UUID?
+    @State private var verificationCode: String = ""
+    @State private var verificationError: String?
+    @State private var resendCooldown: Int = 0
 
     private let originalMember: SeatMember?
 
@@ -1034,7 +1047,46 @@ private struct PersonEditorSheet: View {
             } message: {
                 Text("They'll stop counting toward your coverage and be unsubscribed from the service.")
             }
+            .alert("Enter verification code", isPresented: showingVerificationAlert) {
+                TextField("000000", text: $verificationCode)
+                    .keyboardType(.numberPad)
+                    .textContentType(.oneTimeCode)
+                    .onChange(of: verificationCode) { _, newValue in
+                        let digits: String = String(newValue.filter { $0.isNumber }.prefix(EmailCodeVerification.codeLength))
+                        verificationCode = digits
+                    }
+                Button("Verify", action: submitVerificationCode)
+                    .disabled(verificationCode.count < EmailCodeVerification.codeLength)
+                if resendCooldown > 0 {
+                    Button("Resend (\(resendCooldown)s)", role: .cancel) {}
+                        .disabled(true)
+                } else {
+                    Button("Resend", action: resendCode)
+                }
+                Button("Cancel", role: .cancel, action: cancelVerification)
+            } message: {
+                if let error = verificationError {
+                    Text(error)
+                } else {
+                    let emailAddress: String = verifyingEmail?.address ?? ""
+                    Text("A 6-digit code was sent to \(emailAddress).")
+                }
+            }
         }
+    }
+
+    private var showingVerificationAlert: Binding<Bool> {
+        Binding(
+            get: { verifyingEmailID != nil },
+            set: { showing in
+                if !showing { cancelVerification() }
+            }
+        )
+    }
+
+    private var verifyingEmail: EditableEmail? {
+        guard let id = verifyingEmailID else { return nil }
+        return emails.first(where: { $0.id == id })
     }
 
     private var title: String {
@@ -1125,23 +1177,18 @@ private struct PersonEditorSheet: View {
     }
 
     private func awaitingRow(email: Binding<EditableEmail>) -> some View {
-        VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+        let tapAction = { openVerificationDialog(for: email.wrappedValue.id) }
+        return Button(action: tapAction) {
             HStack {
                 Text(email.wrappedValue.address)
                     .foregroundStyle(.colorTextPrimary)
                 Spacer()
                 Text("Enter code")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.colorTextSecondary)
+                    .foregroundStyle(.colorFillPrimary)
             }
-            TextField("000000", text: codeBinding(for: email))
-                .keyboardType(.numberPad)
-                .textContentType(.oneTimeCode)
-                .font(.system(.title3, design: .monospaced).weight(.semibold))
-                .multilineTextAlignment(.center)
-                .tracking(8)
-                .focused($focusedCodeID, equals: email.wrappedValue.id)
         }
+        .buttonStyle(.plain)
     }
 
     private func verifiedRow(email: EditableEmail) -> some View {
@@ -1158,24 +1205,23 @@ private struct PersonEditorSheet: View {
     }
 
     private func exhaustedRow(email: Binding<EditableEmail>) -> some View {
-        let resendAction = {
+        let tapAction = {
             email.wrappedValue.status = .awaiting
             email.wrappedValue.code = ""
             email.wrappedValue.attemptsLeft = EmailCodeVerification.maxAttempts
-            focusedCodeID = email.wrappedValue.id
+            openVerificationDialog(for: email.wrappedValue.id)
         }
-        return VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
-            Text(email.wrappedValue.address)
-                .foregroundStyle(.colorTextPrimary)
+        return Button(action: tapAction) {
             HStack {
-                Text("Too many wrong codes.")
-                    .font(.caption)
-                    .foregroundStyle(.red)
+                Text(email.wrappedValue.address)
+                    .foregroundStyle(.colorTextPrimary)
                 Spacer()
-                Button("Resend", action: resendAction)
-                    .font(.caption.weight(.semibold))
+                Text("Resend code")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.red)
             }
         }
+        .buttonStyle(.plain)
     }
 
     private var addEmailButton: some View {
@@ -1306,38 +1352,66 @@ private struct PersonEditorSheet: View {
             if firstSentID == nil { firstSentID = emails[index].id }
         }
         if let first = firstSentID {
-            focusedCodeID = first
+            openVerificationDialog(for: first)
         }
     }
 
-    private func codeBinding(for email: Binding<EditableEmail>) -> Binding<String> {
-        Binding(
-            get: { email.wrappedValue.code },
-            set: { newValue in
-                let digits: String = String(newValue.filter { $0.isNumber }.prefix(EmailCodeVerification.codeLength))
-                email.wrappedValue.code = digits
-                if digits.count == EmailCodeVerification.codeLength {
-                    let emailID: UUID = email.wrappedValue.id
-                    Task { @MainActor in handleCodeEntry(emailID: emailID) }
-                }
-            }
-        )
+    private func openVerificationDialog(for emailID: UUID) {
+        verifyingEmailID = emailID
+        verificationCode = ""
+        verificationError = nil
+        startResendCooldown()
     }
 
-    private func handleCodeEntry(emailID: UUID) {
-        guard let index = emails.firstIndex(where: { $0.id == emailID }) else { return }
-        if EmailCodeVerification.isValid(emails[index].code) {
+    private func submitVerificationCode() {
+        guard let id = verifyingEmailID,
+              let index = emails.firstIndex(where: { $0.id == id }) else { return }
+        if EmailCodeVerification.isValid(verificationCode) {
             emails[index].status = .verified
             emails[index].code = ""
-            // Move focus to the next still-awaiting row, if any.
-            focusedCodeID = emails.first(where: { $0.status == .awaiting })?.id
-            return
+            verifyingEmailID = nil
+            verificationCode = ""
+            verificationError = nil
+            // Auto-open the next awaiting email if any.
+            if let next = emails.first(where: { $0.status == .awaiting }) {
+                openVerificationDialog(for: next.id)
+            }
+        } else {
+            emails[index].attemptsLeft -= 1
+            verificationCode = ""
+            if emails[index].attemptsLeft <= 0 {
+                emails[index].status = .exhausted
+                verifyingEmailID = nil
+                verificationError = nil
+            } else {
+                verificationError = "Wrong code. \(emails[index].attemptsLeft) attempts left."
+            }
         }
-        emails[index].attemptsLeft -= 1
+    }
+
+    private func resendCode() {
+        guard let id = verifyingEmailID,
+              let index = emails.firstIndex(where: { $0.id == id }) else { return }
+        emails[index].attemptsLeft = EmailCodeVerification.maxAttempts
         emails[index].code = ""
-        if emails[index].attemptsLeft <= 0 {
-            emails[index].status = .exhausted
-            focusedCodeID = emails.first(where: { $0.status == .awaiting })?.id
+        verificationCode = ""
+        verificationError = nil
+        startResendCooldown()
+    }
+
+    private func cancelVerification() {
+        verifyingEmailID = nil
+        verificationCode = ""
+        verificationError = nil
+    }
+
+    private func startResendCooldown() {
+        resendCooldown = 60
+        Task { @MainActor in
+            while resendCooldown > 0 {
+                try? await Task.sleep(for: .seconds(1))
+                resendCooldown -= 1
+            }
         }
     }
 

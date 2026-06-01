@@ -32,12 +32,11 @@ import UIKit
 ///
 /// **Debug builds.** Engineers need screenshots for bug reports. We
 /// compile this off behind `DEBUG_DISABLE_SECURE_WINDOW` (set in
-/// `Dev.xcconfig`). Production / TestFlight builds always have it on.
+/// `Local.xcconfig` and `Dev.xcconfig`). Production builds always have it on.
 public enum SecureWindow {
     /// Installs the secure-canvas trick on the first key UIWindow the
     /// app creates. Safe to call multiple times — only the first call
     /// has any effect. Call from `AppDelegate.didFinishLaunching`.
-    @MainActor
     public static func installWhenWindowAppears() {
         #if DEBUG_DISABLE_SECURE_WINDOW
         return
@@ -53,6 +52,7 @@ public enum SecureWindow {
         static let shared: Coordinator = Coordinator()
         private var observer: NSObjectProtocol?
         private var installedOnWindow: ObjectIdentifier?
+        private var secureField: UITextField?
 
         func start() {
             guard observer == nil, installedOnWindow == nil else { return }
@@ -76,16 +76,8 @@ public enum SecureWindow {
             let field = UITextField()
             field.isSecureTextEntry = true
             field.isUserInteractionEnabled = false
-            field.translatesAutoresizingMaskIntoConstraints = false
             window.addSubview(field)
-            NSLayoutConstraint.activate([
-                field.centerXAnchor.constraint(equalTo: window.centerXAnchor),
-                field.centerYAnchor.constraint(equalTo: window.centerYAnchor),
-            ])
 
-            // Re-parent the window's layer under the text field's secure
-            // canvas. The secure canvas is the first sublayer iOS adds
-            // to a UITextField when `isSecureTextEntry` is on.
             guard let secureCanvas = field.layer.sublayers?.first,
                   let parentLayer = window.layer.superlayer else {
                 SecurityLog.event(
@@ -97,8 +89,17 @@ public enum SecureWindow {
                 installedOnWindow = nil
                 return
             }
+
             parentLayer.addSublayer(field.layer)
             secureCanvas.addSublayer(window.layer)
+
+            // Remove the text field from the window's view hierarchy now
+            // that the layers are reparented. Keeping field as a subview
+            // of window creates a view/layer ancestry cycle that iOS 26's
+            // _recursiveEagerlyUpdateSafeAreaInsetsUntilViewController
+            // walks infinitely, causing a stack overflow.
+            field.removeFromSuperview()
+            secureField = field
 
             if let observer {
                 NotificationCenter.default.removeObserver(observer)

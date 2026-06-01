@@ -49,10 +49,12 @@ func conversationContextMenuContent(
         .accessibilityIdentifier("context-menu-explode")
     }
 
-    Button(role: .destructive, action: onDelete) {
-        Text("Delete")
-        Text("For me")
-        Image(systemName: "trash")
+    if !conversation.isPinnedGoldilocksGroup {
+        Button(role: .destructive, action: onDelete) {
+            Text("Delete")
+            Text("For me")
+            Image(systemName: "trash")
+        }
+        .accessibilityIdentifier("context-menu-delete")
     }
-    .accessibilityIdentifier("context-menu-delete")
 }

@@ -240,6 +240,14 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
         )
     }
 
+    func contactsRepository() -> any ContactsRepositoryProtocol {
+        ContactsRepository(databaseReader: databaseReader)
+    }
+
+    func contactsWriter() -> any ContactsWriterProtocol {
+        ContactsWriter(databaseWriter: databaseWriter)
+    }
+
     func uploadImage(data: Data, filename: String) async throws -> String {
         let result = try await sessionStateManager.waitForInboxReadyResult()
         return try await result.apiClient.uploadAttachment(

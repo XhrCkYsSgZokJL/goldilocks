@@ -271,7 +271,9 @@ struct MessagesGroupItemView: View {
     private func attachmentView(for attachment: HydratedAttachment) -> some View {
         let isBlurred = attachment.isHiddenByOwner || (!message.sender.isCurrentUser && shouldBlurPhotos && !attachment.isRevealed)
 
-        if attachment.mediaType == .audio {
+        if attachment.isHTMLFile {
+            htmlAttachmentTile(for: attachment)
+        } else if attachment.mediaType == .audio {
             let playAction: () -> Void = {
                 NotificationCenter.default.post(
                     name: .voiceMemoPlaybackRequested,
@@ -335,6 +337,28 @@ struct MessagesGroupItemView: View {
             )
             .id(message.messageId)
         }
+    }
+
+    @ViewBuilder
+    private func htmlAttachmentTile(for attachment: HydratedAttachment) -> some View {
+        let tapAction: () -> Void = { onOpenFile?(attachment) }
+        HTMLAttachmentBubble(
+            attachment: attachment,
+            profile: message.sender.profile
+        )
+        .messageGesture(
+            message: message,
+            bubbleStyle: .normal,
+            onSingleTap: tapAction,
+            onReply: onReply,
+            onToggleReaction: onToggleReaction
+        )
+        .frame(
+            maxWidth: .infinity,
+            alignment: message.sender.isCurrentUser ? .trailing : .leading
+        )
+        .padding(.trailing, message.sender.isCurrentUser ? trailingPadding : 0)
+        .id(message.messageId)
     }
 }
 

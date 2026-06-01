@@ -98,11 +98,12 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse
     func recoverGoldilocksChannels() async throws
 
-    // Goldilocks billing (Stripe prepaid balance).
+    // Goldilocks billing (Stripe prepaid balance + Apple IAP).
     func createGoldilocksCheckout(_ request: ConvosAPI.GoldilocksCheckoutRequest) async throws -> ConvosAPI.GoldilocksCheckoutResponse
     func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse
     func syncGoldilocksSeats(_ request: ConvosAPI.GoldilocksSeatsRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
     func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse
+    func verifyApplePurchase(_ request: ConvosAPI.GoldilocksApplePurchaseRequest) async throws
 
     // Goldilocks people list (encrypted blob).
     func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse
@@ -136,6 +137,10 @@ extension ConvosAPIClientProtocol {
 
     func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
         ConvosAPI.GoldilocksCancelResponse(refundedCents: 0)
+    }
+
+    func verifyApplePurchase(_ request: ConvosAPI.GoldilocksApplePurchaseRequest) async throws {
+        // No-op for mocks
     }
 
     func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse {
@@ -950,6 +955,13 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode([String: String]())
         return try await performRequest(request)
+    }
+
+    func verifyApplePurchase(_ purchase: ConvosAPI.GoldilocksApplePurchaseRequest) async throws {
+        var request = try authenticatedRequest(for: "v2/billing/apple-purchase", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(purchase)
+        let _: EmptyResponse = try await performRequest(request)
     }
 
     // MARK: - Goldilocks people list

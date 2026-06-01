@@ -45,6 +45,6 @@ enum GoldilocksPeopleAudit {
     }
 
     private static func displayName(for member: SeatMember) -> String {
-        member.displayName
+        member.firstName.isEmpty ? member.displayName : member.firstName
     }
 }

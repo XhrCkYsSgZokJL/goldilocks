@@ -262,14 +262,21 @@ if $CLEAN || [[ "$app_installed" == "false" ]]; then
   # Wipe agent XMTP keys so agent creates fresh identities.
   rm -rf "$DEV_BACKEND/.agent-data"
 
-  # Clear client records from the DB so the agent doesn't try to
-  # reconcile groups for inboxes that no longer exist.
-  goldilocks_compose exec -T goldilocks-db \
-    psql -U goldilocks -d goldilocks -c \
-    "TRUNCATE clients, client_channels CASCADE;" >/dev/null 2>&1 || true
-
-  # Restart the agent so it picks up the clean state.
+  # Stop all background processes before tearing down Docker.
   stop_background_processes
+
+  # Wipe Docker volumes (XMTP node + Postgres) so the XMTP node's
+  # identity state is in sync with the fresh agent keys. Without this,
+  # the admins-agent hits MissingSequenceId errors because its local DB
+  # is empty but the node still has its old inbox registered.
+  echo "  → docker compose down -v (wiping XMTP node + DB volumes)"
+  ( cd "$DEV_BACKEND" && docker compose down -v ) 2>/dev/null || true
+
+  # Bring infrastructure back up (Docker + migrations).
+  echo "  → restarting infrastructure"
+  ( cd "$DEV_BACKEND" && bash scripts/dev-env.sh up )
+
+  # Restart agent + server with clean state.
   cd "$DEV_BACKEND"
   mkdir -p .dev-run
   clean_old_logs agent

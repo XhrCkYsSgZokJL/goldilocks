@@ -188,19 +188,29 @@ struct AdminChannelsView: View {
         return tier.tintColor
     }
 
+    @ViewBuilder
     private func roleIcon(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
-        let symbol: String
-        switch channel.role {
-        case "advisory": symbol = "lightbulb.fill"
-        case "reports":  symbol = "doc.text.fill"
-        default:         symbol = "bubble.left.and.bubble.right.fill"
-        }
-        return ZStack {
-            Circle()
-                .fill(Color.colorFillPrimary.opacity(0.15))
+        let groupName: String = channel.role == "advisory" ? "Advisory" : channel.role == "reports" ? "Reports" : ""
+        let tier: GoldilocksMembershipTier = GoldilocksMembershipTier(
+            monthlyRateCents: channel.monthlyRateCents,
+            hasActiveCoverage: channel.coverageActive,
+            emeraldEnabled: channel.emeraldMembershipEnabled
+        )
+        if let imageName = GoldilocksConfig.iconImageName(for: groupName, tier: tier) {
+            Image(imageName)
+                .resizable()
+                .scaledToFill()
                 .frame(width: 36, height: 36)
-            Image(systemName: symbol)
-                .foregroundStyle(.colorFillPrimary)
+                .clipShape(Circle())
+        } else {
+            let symbol: String = GoldilocksConfig.iconSymbolName(for: groupName)
+            ZStack {
+                Circle()
+                    .fill(Color.colorFillPrimary.opacity(0.15))
+                    .frame(width: 36, height: 36)
+                Image(systemName: symbol)
+                    .foregroundStyle(.colorFillPrimary)
+            }
         }
     }
 }

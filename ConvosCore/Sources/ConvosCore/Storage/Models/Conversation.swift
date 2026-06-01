@@ -65,6 +65,7 @@ public extension Conversation {
     /// name and members, and `isStaleGoldilocksChannel` already governs them.
     var isEmptyPlaceholderConversation: Bool {
         guard !isGoldilocksManaged else { return false }
+        guard !creator.isCurrentUser else { return false }
         guard kind != .dm else { return false }
         guard name?.isEmpty ?? true else { return false }
         return membersWithoutCurrent.isEmpty

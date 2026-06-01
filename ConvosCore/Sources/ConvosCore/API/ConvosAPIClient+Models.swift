@@ -394,7 +394,7 @@ public enum ConvosAPI {
     /// The seat count is sent rather than an amount so the backend prices
     /// the top-up server-side.
     public struct GoldilocksCheckoutRequest: Codable, Sendable {
-        public let paymentMethod: String   // "card" | "crypto"
+        public let paymentMethod: String   // "apple" | "card" | "crypto"
         public let durationMonths: Int     // 1, 3 or 6
         public let seats: Int
 
@@ -447,6 +447,23 @@ public enum ConvosAPI {
             self.activeUntil = activeUntil
             self.balanceCents = balanceCents
             self.monthlyRateCents = monthlyRateCents
+            self.seats = seats
+        }
+    }
+
+    /// Body for `POST /v2/billing/apple-purchase` — sends the StoreKit2
+    /// transaction to the backend for App Store Server API verification
+    /// and balance crediting.
+    public struct GoldilocksApplePurchaseRequest: Codable, Sendable {
+        public let transactionId: String
+        public let productId: String
+        public let durationMonths: Int
+        public let seats: Int
+
+        public init(transactionId: String, productId: String, durationMonths: Int, seats: Int) {
+            self.transactionId = transactionId
+            self.productId = productId
+            self.durationMonths = durationMonths
             self.seats = seats
         }
     }

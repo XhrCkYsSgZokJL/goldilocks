@@ -15,21 +15,7 @@ struct ConvosApp: App {
     init() {
         FileDescriptorDiagnostics.raiseSoftLimit(to: 512)
 
-        // Goldilocks dual-identity: pin the keychain slot to the active
-        // role's suffix BEFORE anything reads keys. Must be the first
-        // thing in init().
         GoldilocksRolePrefs.applyToKeychain()
-
-        let brand = BrandConfig.shared
-        GoldilocksPlan.configure(
-            monthlyPricePerPersonCents: brand.pricing.monthlyPricePerPersonCents,
-            priceLabel: brand.pricing.priceLabel
-        )
-        GoldilocksMembershipTier.configure(
-            silverThreshold: brand.tiers.thresholds.silver,
-            goldThreshold: brand.tiers.thresholds.gold,
-            descriptions: brand.tiers.descriptions
-        )
 
         ConfigManager.configure(overrides: ConvosSecretOverrides(
             apiBaseURL: Secrets.CONVOS_API_BASE_URL,
@@ -55,12 +41,6 @@ struct ConvosApp: App {
         Log.info("Launch: version=\(appVersion) build=\(appBuild) commit=\(Secrets.GIT_COMMIT_SHA) environment=\(environment.name)")
         QAEvent.emit(.app, "launched", ["environment": environment.name])
 
-        // Firebase App Check is removed from Goldilocks (Path B of security
-        // plan item 7) — the backend doesn't verify the token, so sending
-        // one is dead weight. The unauth `/v2/auth/token` and
-        // `/v2/device/register` surface is defended by per-route rate
-        // limits (item 8) and SIWE signature verification.
-
         let agentKeyset = AgentKeyset(endpointURL: AgentKeyset.endpointURL(for: environment))
         AgentKeysetStore.instance.configure(agentKeyset)
 
@@ -85,12 +65,8 @@ struct ConvosApp: App {
                 viewModel: conversationsViewModel,
                 quicknameViewModel: quicknameViewModel
             )
-            .additionalTopSafeArea(DesignConstants.Spacing.stepX)
+            .safeAreaPadding(.top, DesignConstants.Spacing.stepX)
             .withSafeAreaEnvironment()
-            // Blur the app + show a clear "recording detected" cue
-            // whenever the system reports a screen capture is active.
-            // The compositor-level block sits in SecureWindow; this is
-            // the matching user-visible signal.
             .captureProtected(monitor: appDelegate.captureMonitor)
         }
     }

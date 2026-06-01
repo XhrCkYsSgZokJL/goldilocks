@@ -78,7 +78,7 @@ const ADVISORY_GROUP_DESCRIPTION = 'Goldilocks Digital Concierge';
 // Posted into a client's Advisory the first time it's provisioned, so the
 // group has a greeting waiting when they open it. Recreates don't repeat it.
 const ADVISORY_WELCOME_MESSAGE =
-  'Goldilocks Digital is here to help you secure your digital life. This is a group chat with the Advisory team. Please start by introducing yourself.';
+  'Goldilocks Digital is here to help you secure your digital life. Please start by introducing yourself.';
 // Minimum gap between recreating the same channel. A recreate issues a
 // fresh welcome that takes a moment to reach the client; recreating
 // faster than this just churns dead groups.

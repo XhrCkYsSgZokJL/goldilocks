@@ -86,9 +86,11 @@ struct ConversationInfoView: View {
     @State private var metadataDebugText: String = "Loading…"
     @State private var showingRestoreInviteTagAlert: Bool = false
     @State private var restoreInviteTagText: String = ""
+    @State private var selectedPerson: SeatMember?
+    @State private var emeraldChannel: ConvosAPI.GoldilocksAdminChannel?
     private let maxMembersToShow: Int = 6
     private var displayedMembers: [ConversationMember] {
-        let sortedMembers = viewModel.conversation.members.sortedByRole()
+        let sortedMembers = viewModel.conversation.members.sortedByRole(creatorInboxId: viewModel.conversation.creator.profile.inboxId)
         return Array(sortedMembers.prefix(maxMembersToShow))
     }
     private var showViewAllMembers: Bool {
@@ -353,9 +355,9 @@ struct ConversationInfoView: View {
 
             membersSection
 
-            PeopleAndCoverageSection(viewModel: viewModel)
+            PeopleAndCoverageSection(viewModel: viewModel, selectedPerson: $selectedPerson)
 
-            AdminEmeraldTierSection(viewModel: viewModel)
+            AdminEmeraldTierSection(viewModel: viewModel, channel: $emeraldChannel)
 
             assistantSection
 
@@ -386,6 +388,43 @@ struct ConversationInfoView: View {
             permissionsSection
 
             debugInfoSection
+        }
+        .sheet(item: $selectedPerson) { member in
+            AdvisoryPersonSheet(
+                member: member,
+                enabled: personEnabledBinding(for: member.id)
+            )
+        }
+    }
+
+    private func personEnabledBinding(for id: UUID) -> Binding<Bool> {
+        let seatPlan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
+        return Binding(
+            get: { seatPlan.members.first(where: { $0.id == id })?.enabled ?? false },
+            set: { newValue in
+                guard let index = seatPlan.members.firstIndex(where: { $0.id == id }) else { return }
+                seatPlan.members[index].enabled = newValue
+                Task { await viewModel.saveGoldilocksPeopleList() }
+            }
+        )
+    }
+
+    private func loadEmeraldChannelIfNeeded() async {
+        guard GoldilocksConfig.role == .admin else {
+            Log.info("[Emerald] skipped: role is not admin (role=\(GoldilocksConfig.role))")
+            return
+        }
+        let name: String = viewModel.conversation.name ?? ""
+        guard name.hasPrefix("Advisory") else {
+            Log.info("[Emerald] skipped: conversation name '\(name)' does not start with Advisory")
+            return
+        }
+        Log.info("[Emerald] parent loading admin channel for conversation \(viewModel.conversation.id)")
+        emeraldChannel = await viewModel.loadAdminChannelForCurrentConversation()
+        if let emeraldChannel {
+            Log.info("[Emerald] loaded channel: clientNumber=\(emeraldChannel.clientNumber) emerald=\(emeraldChannel.emeraldMembershipEnabled)")
+        } else {
+            Log.warning("[Emerald] no matching admin channel found for conversation \(viewModel.conversation.id)")
         }
     }
 
@@ -513,6 +552,7 @@ struct ConversationInfoView: View {
                     if FeatureFlags.shared.isCloudConnectionsEnabled, connectionsViewModel == nil {
                         connectionsViewModel = viewModel.makeConversationConnectionsViewModel()
                     }
+                    await loadEmeraldChannelIfNeeded()
                 }
                 .alert("Restore invite tag", isPresented: $showingRestoreInviteTagAlert) {
                     TextField("Invite tag", text: $restoreInviteTagText)
@@ -840,8 +880,8 @@ private struct AdvisoryPersonSheet: View {
 /// appear and self-refetches after every toggle.
 private struct AdminEmeraldTierSection: View {
     let viewModel: ConversationViewModel
+    @Binding var channel: ConvosAPI.GoldilocksAdminChannel?
 
-    @State private var channel: ConvosAPI.GoldilocksAdminChannel?
     @State private var saving: Bool = false
     @State private var errorMessage: String?
 
@@ -869,18 +909,15 @@ private struct AdminEmeraldTierSection: View {
         .task { await loadChannelIfAdmin() }
     }
 
-    @ViewBuilder
     private func toggleRow(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
         HStack {
             Text("Emerald membership")
                 .foregroundStyle(.colorTextPrimary)
             Spacer()
-            if saving {
-                ProgressView()
-            } else {
-                Toggle("", isOn: binding(for: channel))
-                    .labelsHidden()
-            }
+            Toggle("", isOn: binding(for: channel))
+                .labelsHidden()
+                .disabled(saving)
+                .opacity(saving ? 0.4 : 1.0)
         }
     }
 
@@ -893,14 +930,24 @@ private struct AdminEmeraldTierSection: View {
         )
     }
 
-    /// Pull the admin-channel row matching this conversation's xmtp
-    /// group id. Non-admin viewers and non-Advisory chats bail before
-    /// hitting the network.
     private func loadChannelIfAdmin() async {
-        guard GoldilocksConfig.role == .admin else { return }
+        guard GoldilocksConfig.role == .admin else {
+            Log.info("[Emerald] skipped: role is not admin (role=\(GoldilocksConfig.role))")
+            return
+        }
         let name: String = viewModel.conversation.name ?? ""
-        guard name.hasPrefix("Advisory") else { return }
-        channel = await viewModel.loadAdminChannelForCurrentConversation()
+        guard name.hasPrefix("Advisory") else {
+            Log.info("[Emerald] skipped: conversation name '\(name)' does not start with Advisory")
+            return
+        }
+        Log.info("[Emerald] loading admin channel for conversation \(viewModel.conversation.id)")
+        let loaded: ConvosAPI.GoldilocksAdminChannel? = await viewModel.loadAdminChannelForCurrentConversation()
+        channel = loaded
+        if let loaded {
+            Log.info("[Emerald] loaded channel: clientNumber=\(loaded.clientNumber) emerald=\(loaded.emeraldMembershipEnabled)")
+        } else {
+            Log.warning("[Emerald] no matching admin channel found for conversation \(viewModel.conversation.id)")
+        }
     }
 
     private func setEmerald(
@@ -914,9 +961,8 @@ private struct AdminEmeraldTierSection: View {
             enabled: newValue
         )
         if result != nil {
-            // Refetch so the toggle reflects what actually landed on
-            // the backend (handles the no-op fast path too).
             self.channel = await viewModel.loadAdminChannelForCurrentConversation()
+            await viewModel.refreshGoldilocksIdentity()
         } else {
             errorMessage = "Couldn't update Emerald membership."
         }
@@ -937,12 +983,11 @@ private struct AdminEmeraldTierSection: View {
 /// `AdminChannelsView` → `AdminClientPeopleListView`.
 private struct PeopleAndCoverageSection: View {
     let viewModel: ConversationViewModel
+    @Binding var selectedPerson: SeatMember?
 
     @State private var seatPlan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
     @State private var coverage: ConvosAPI.GoldilocksBillingStatusResponse?
-    @State private var selectedPerson: SeatMember?
 
-    /// Parses the backend's ISO-8601 `activeUntil` timestamp.
     private static let coverageDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -971,12 +1016,6 @@ private struct PeopleAndCoverageSection: View {
                         .font(.caption)
                         .foregroundStyle(.colorTextSecondary)
                 }
-                .sheet(item: $selectedPerson) { member in
-                    AdvisoryPersonSheet(
-                        member: member,
-                        enabled: enabledBinding(for: member.id)
-                    )
-                }
             }
         }
         .task {
@@ -986,11 +1025,6 @@ private struct PeopleAndCoverageSection: View {
         }
     }
 
-    /// True when this conversation is the viewer's own Advisory or
-    /// Reports chat — both carry the same information so the client
-    /// can review it from whichever chat they happen to have open.
-    /// Admin-only because clients manage their own roster from the
-    /// Membership screen instead of inside a chat.
     private var shouldShow: Bool {
         guard GoldilocksConfig.role == .admin else { return false }
         guard viewModel.conversation.goldilocksPinnedSection == .client else { return false }
@@ -1018,12 +1052,8 @@ private struct PeopleAndCoverageSection: View {
         return "Active until \(date.formatted(date: .abbreviated, time: .omitted))"
     }
 
-    /// One row per person. Name on the left, a "Disabled" pill under
-    /// it when off the bill, and a chevron on the right. Tapping
-    /// opens the person sheet — the row deliberately doesn't carry
-    /// the toggle so the primary action is unambiguous.
     private func personRow(_ member: SeatMember) -> some View {
-        let name: String = member.displayName
+        let name: String = member.firstName.isEmpty ? member.displayName : member.firstName
         let tapAction = { selectedPerson = member }
         return Button(action: tapAction) {
             HStack(spacing: DesignConstants.Spacing.step2x) {
@@ -1045,20 +1075,5 @@ private struct PeopleAndCoverageSection: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-
-    /// Binding the AdvisoryPersonSheet's Toggle reads + writes
-    /// through. Looking the member up by id every read keeps the
-    /// toggle in lock-step with the seat plan even if the snapshot
-    /// the sheet was opened with goes stale.
-    private func enabledBinding(for id: UUID) -> Binding<Bool> {
-        Binding(
-            get: { seatPlan.members.first(where: { $0.id == id })?.enabled ?? false },
-            set: { newValue in
-                guard let index = seatPlan.members.firstIndex(where: { $0.id == id }) else { return }
-                seatPlan.members[index].enabled = newValue
-                Task { await viewModel.saveGoldilocksPeopleList() }
-            }
-        )
     }
 }

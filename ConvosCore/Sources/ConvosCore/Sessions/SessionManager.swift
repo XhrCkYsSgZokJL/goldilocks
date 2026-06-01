@@ -548,6 +548,21 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         try await apiClient.cancelGoldilocksBilling()
     }
 
+    public func verifyApplePurchase(
+        transactionId: String,
+        productId: String,
+        durationMonths: Int,
+        seats: Int
+    ) async throws {
+        let request = ConvosAPI.GoldilocksApplePurchaseRequest(
+            transactionId: transactionId,
+            productId: productId,
+            durationMonths: durationMonths,
+            seats: seats
+        )
+        try await apiClient.verifyApplePurchase(request)
+    }
+
     public func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse {
         try await apiClient.fetchGoldilocksPeopleList()
     }
@@ -593,6 +608,11 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
     public func fetchGoldilocksAdminInboxIds() async throws -> [String] {
         let response = try await apiClient.fetchGoldilocksAdmins()
         return response.inboxes.map { $0.inboxId }
+    }
+
+    public func fetchGoldilocksAdminProfiles() async throws -> [ConvosAPI.GoldilocksAdminInbox] {
+        let response = try await apiClient.fetchGoldilocksAdmins()
+        return response.inboxes
     }
 
     public func fetchGoldilocksAgentInboxIds() async throws -> [String] {

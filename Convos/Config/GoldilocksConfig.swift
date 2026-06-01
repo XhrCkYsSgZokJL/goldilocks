@@ -88,6 +88,19 @@ enum GoldilocksConfig {
         return false
     }
 
+    /// Asset catalog image name for a Goldilocks group, if one is configured.
+    /// Advisory groups use tier-specific images when a tier is provided.
+    static func iconImageName(for groupName: String, tier: GoldilocksMembershipTier? = nil) -> String? {
+        if let tier, groupName == "Advisory" || groupName.hasPrefix("Advisory ") {
+            return BrandConfig.shared.advisoryTierImages[tier.rawValue]
+        }
+        let images = BrandConfig.shared.groupImages
+        for (key, name) in images {
+            if groupName == key || groupName.hasPrefix("\(key) ") { return name }
+        }
+        return nil
+    }
+
     /// SF Symbol name to use as the avatar for a given Goldilocks group.
     /// Falls back to a generic chat icon if the name isn't mapped.
     static func iconSymbolName(for groupName: String) -> String {
@@ -146,6 +159,15 @@ extension Conversation {
     /// `isPinned` flag.
     var isPinnedGoldilocksGroup: Bool {
         goldilocksPinnedSection != nil
+    }
+
+    /// True when this is another client's Advisory channel that the
+    /// admin is a member of (but not the admin's own).
+    var isOtherClientAdvisory: Bool {
+        guard GoldilocksConfig.role == .admin else { return false }
+        guard let name else { return false }
+        guard name.hasPrefix("Advisory") else { return false }
+        return goldilocksPinnedSection == nil
     }
 
     /// True if this conversation should be visible in the conversation list

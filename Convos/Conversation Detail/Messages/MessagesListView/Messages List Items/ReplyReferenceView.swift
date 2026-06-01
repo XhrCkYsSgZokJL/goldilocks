@@ -393,7 +393,7 @@ private struct ReplyReferenceInvitePreview: View {
                         .font(.system(size: 52))
                         .frame(maxWidth: .infinity)
                 } else {
-                    Image(BrandConfig.shared.assets.logoImageName)
+                    Image("goldilocksLogo")
                         .resizable()
                         .tint(.colorTextPrimaryInverted)
                         .foregroundStyle(.colorTextPrimaryInverted)

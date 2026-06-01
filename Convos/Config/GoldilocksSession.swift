@@ -62,6 +62,15 @@ final class GoldilocksSession {
 
     private init() {}
 
+    func refreshIdentity(session: any SessionManagerProtocol) async {
+        do {
+            let refreshed = try await session.refreshGoldilocksIdentity()
+            self.identity = refreshed
+        } catch {
+            Log.warning("[Goldilocks] refreshIdentity failed: \(error.localizedDescription)")
+        }
+    }
+
     /// Run the SIWE handshake exactly once per app launch, then fetch the
     /// admin inbox list. Subsequent calls are no-ops while a registration
     /// is in flight or once one has succeeded.
@@ -82,9 +91,17 @@ final class GoldilocksSession {
             self.lastError = nil
             Log.info("[Goldilocks] Registered as client #\(result.clientNumber), isAdmin=\(result.isAdmin)")
         } catch {
-            self.lastError = error.localizedDescription
-            Log.warning("[Goldilocks] Registration failed: \(error.localizedDescription)")
-            return
+            Log.warning("[Goldilocks] Registration failed: \(error.localizedDescription). Trying /v2/me fallback...")
+            do {
+                let fallback = try await session.refreshGoldilocksIdentity()
+                self.identity = fallback
+                self.lastError = nil
+                Log.info("[Goldilocks] Recovered identity via /v2/me: client #\(fallback.clientNumber), isAdmin=\(fallback.isAdmin)")
+            } catch {
+                self.lastError = error.localizedDescription
+                Log.warning("[Goldilocks] /v2/me fallback also failed: \(error.localizedDescription)")
+                return
+            }
         }
 
         await refreshAdminInboxes(session: session)
@@ -104,6 +121,7 @@ final class GoldilocksSession {
         do {
             let inboxes = try await session.fetchGoldilocksAgentInboxIds()
             GoldilocksAgentTrust.setTrustedInboxIds(inboxes)
+            GoldilocksNameRegistry.registerAgents(inboxes, name: "Goldilocks Bot")
             Log.info("[Goldilocks] Loaded \(inboxes.count) trusted agent inbox(es)")
 
             // Trigger a re-discovery so any groups that were dropped during
@@ -319,12 +337,25 @@ final class GoldilocksSession {
     }
 
     /// Re-fetch /v2/admins. Called after registration and after any admin
-    /// state change.
+    /// state change. Syncs the contacts table so clients always see the
+    /// current set of advisors (with names) and removed admins are cleaned up.
+    /// Also populates `GoldilocksNameRegistry` so admin members in group
+    /// chats display their real name instead of "Somebody".
     func refreshAdminInboxes(session: any SessionManagerProtocol) async {
         do {
-            let inboxes = try await session.fetchGoldilocksAdminInboxIds()
-            self.adminInboxIds = inboxes
-            Log.info("[Goldilocks] Loaded \(inboxes.count) admin inbox(es)")
+            let profiles = try await session.fetchGoldilocksAdminProfiles()
+            self.adminInboxIds = profiles.map { $0.inboxId }
+            Log.info("[Goldilocks] Loaded \(profiles.count) admin inbox(es)")
+
+            let admins = profiles.map { (inboxId: $0.inboxId, name: $0.name) }
+            let writer = session.messagingService().contactsWriter()
+            try await writer.syncAdminContacts(admins: admins)
+
+            let namedAdmins: [(inboxId: String, name: String)] = profiles.compactMap { profile in
+                guard let name = profile.name else { return nil }
+                return (inboxId: profile.inboxId, name: name)
+            }
+            GoldilocksNameRegistry.register(namedAdmins)
         } catch {
             Log.warning("[Goldilocks] Couldn't fetch admin inboxes: \(error.localizedDescription)")
         }

@@ -61,6 +61,45 @@ extension SharedDatabaseMigrator {
             )
         }
 
+        migrator.registerMigration("createContactTable") { db in
+            try db.create(table: "contact") { t in
+                t.column("inboxId", .text).notNull().primaryKey()
+                t.column("addedAt", .datetime).notNull()
+                t.column("addedViaConversationId", .text)
+                t.column("displayName", .text)
+                t.column("avatarURL", .text)
+                t.column("avatarSalt", .blob)
+                t.column("avatarNonce", .blob)
+                t.column("avatarKey", .blob)
+                t.column("profileUpdatedAt", .datetime)
+                t.column("blockedAt", .datetime)
+                t.column("agentVerification", .jsonText)
+            }
+
+            try db.create(
+                index: "contact_displayName",
+                on: "contact",
+                columns: ["displayName"]
+            )
+
+            try db.create(
+                index: "contact_blockedAt",
+                on: "contact",
+                columns: ["blockedAt"]
+            )
+
+            try db.create(table: "conversation_contacts_sync") { t in
+                t.column("conversationId", .text).notNull().primaryKey()
+                t.column("contactsSyncedAt", .datetime).notNull()
+            }
+        }
+
+        migrator.registerMigration("addIsAdminContactColumn") { db in
+            try db.alter(table: "contact") { t in
+                t.add(column: "isAdminContact", .boolean).notNull().defaults(to: false)
+            }
+        }
+
         return migrator
     }
 

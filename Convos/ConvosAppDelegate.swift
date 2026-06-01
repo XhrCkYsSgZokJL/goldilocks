@@ -18,9 +18,6 @@ class ConvosAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUser
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         SentryConfiguration.configure()
-        // Block screenshots + recordings app-wide. Off in dev via
-        // DEBUG_DISABLE_SECURE_WINDOW so engineers can capture bug-report
-        // screenshots; always on in TestFlight and production.
         SecureWindow.installWhenWindowAppears()
         captureMonitor.start()
         UNUserNotificationCenter.current().delegate = self

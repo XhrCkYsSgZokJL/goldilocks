@@ -17,6 +17,8 @@ struct BrandConfig: Codable, Sendable {
     let brand: Brand
     let groups: Groups
     let groupIcons: [String: String]
+    let groupImages: [String: String]
+    let advisoryTierImages: [String: String]
     let pricing: Pricing
     let tiers: Tiers
     let assets: Assets

@@ -1,16 +1,28 @@
 import Foundation
 
-/// How the client pays for coverage. Card routes to Stripe; crypto is
-/// reserved until a crypto payment provider is chosen.
+/// How the client pays for coverage. Apple routes to StoreKit IAP;
+/// Card routes to Stripe; Crypto is reserved until a crypto payment
+/// provider is chosen.
 public enum GoldilocksPaymentMethod: String, Codable, Sendable, Equatable, CaseIterable {
+    case apple
     case card
     case crypto
 
     /// Human-facing label.
     public var displayName: String {
         switch self {
+        case .apple: return "Apple"
         case .card: return "Card"
         case .crypto: return "Crypto"
+        }
+    }
+
+    /// SF Symbol name for the payment method icon.
+    public var iconName: String {
+        switch self {
+        case .apple: return "apple.logo"
+        case .card: return "creditcard"
+        case .crypto: return "bitcoinsign.circle"
         }
     }
 }

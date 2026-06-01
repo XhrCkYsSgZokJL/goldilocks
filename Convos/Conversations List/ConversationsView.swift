@@ -400,6 +400,14 @@ private struct ConversationsSheetModifier: ViewModifier {
                     .zoom(sourceID: "composer-transition-source", in: namespace)
                 )
             }
+            .sheet(isPresented: $viewModel.presentingComposeFlow) {
+                ComposeFlowView(
+                    conversationsViewModel: viewModel,
+                    session: viewModel.session,
+                    quicknameViewModel: quicknameViewModel
+                )
+                .presentationSizing(.page)
+            }
             .sheet(item: $viewModel.pendingGrantRequest) { request in
                 let dismissAction = { viewModel.pendingGrantRequest = nil }
                 ConnectionGrantRequestSheet(

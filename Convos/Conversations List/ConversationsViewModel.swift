@@ -94,6 +94,7 @@ final class ConversationsViewModel {
             updateListVisibility()
         }
     }
+    var presentingComposeFlow: Bool = false
     var presentingExplodeInfo: Bool = false
     var presentingPinLimitInfo: Bool = false
 
@@ -119,7 +120,7 @@ final class ConversationsViewModel {
             case .unread:
                 return "No unread convos"
             case .exploding:
-                return "No exploding convos"
+                return "No exploding channels"
             }
         }
     }
@@ -368,13 +369,23 @@ final class ConversationsViewModel {
     }
 
     /// Standard new-conversation flow. Used by the bottom-bar Compose button.
-    /// Opens the contact-picker sheet so the user can choose recipients
-    /// themselves; nothing Goldilocks-specific happens here.
+    /// When the user has contacts, opens the contacts picker first so they can
+    /// select recipients; otherwise goes straight to the new conversation view.
     func onStartConvo() {
-        newConversationViewModel = NewConversationViewModel(
-            session: session,
-            mode: .newConversation
-        )
+        let hasContacts: Bool = {
+            let repo = session.messagingService().contactsRepository()
+            let visible = (try? repo.fetchAll()) ?? []
+            return !ContactsViewModel.visibleContacts(visible).isEmpty
+        }()
+
+        if hasContacts {
+            presentingComposeFlow = true
+        } else {
+            newConversationViewModel = NewConversationViewModel(
+                session: session,
+                mode: .newConversation
+            )
+        }
     }
 
     /// Legacy hook for the empty-state CTA. The button is now a

@@ -138,9 +138,23 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// Stop cover and refund the unused balance (`POST /v2/billing/cancel`).
     func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse
 
+    /// Verify an Apple IAP transaction with the backend and credit the
+    /// prepaid balance. The backend uses the transaction ID to validate
+    /// the receipt with Apple's App Store Server API.
+    func verifyApplePurchase(
+        transactionId: String,
+        productId: String,
+        durationMonths: Int,
+        seats: Int
+    ) async throws
+
     /// Fetch the inbox IDs of all admins (Goldilocks team). Used by the
     /// client app as the recipient list when creating Advisory/Reports.
     func fetchGoldilocksAdminInboxIds() async throws -> [String]
+
+    /// Fetch admin inbox IDs together with their display names. Used to
+    /// pre-populate the contacts list so clients see advisor names immediately.
+    func fetchGoldilocksAdminProfiles() async throws -> [ConvosAPI.GoldilocksAdminInbox]
 
     /// Fetch the inbox IDs of the long-lived server agents (admins-agent,
     /// reports-agent). The iOS layer registers these with
@@ -291,6 +305,15 @@ extension SessionManagerProtocol {
         ConvosAPI.GoldilocksCancelResponse(refundedCents: 0)
     }
 
+    public func verifyApplePurchase(
+        transactionId: String,
+        productId: String,
+        durationMonths: Int,
+        seats: Int
+    ) async throws {
+        // No-op for mocks
+    }
+
     public func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse {
         ConvosAPI.GoldilocksPeopleListResponse(version: 0, ciphertext: nil, salt: nil, nonce: nil)
     }
@@ -319,6 +342,10 @@ extension SessionManagerProtocol {
     }
 
     public func fetchGoldilocksAdminInboxIds() async throws -> [String] {
+        []
+    }
+
+    public func fetchGoldilocksAdminProfiles() async throws -> [ConvosAPI.GoldilocksAdminInbox] {
         []
     }
 

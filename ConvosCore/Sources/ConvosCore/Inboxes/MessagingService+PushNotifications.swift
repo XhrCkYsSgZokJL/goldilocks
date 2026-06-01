@@ -899,7 +899,11 @@ extension MessagingService {
     ) async throws -> String {
         try await databaseReader.read { db in
             let profile = try DBMemberProfile.fetchOne(db, conversationId: conversationId, inboxId: inboxId)
-            return profile?.name ?? "Somebody"
+            if let name = profile?.name, !name.isEmpty { return name }
+            if let registryName = GoldilocksNameRegistry.displayName(forInboxId: inboxId) {
+                return registryName
+            }
+            return "Somebody"
         }
     }
 

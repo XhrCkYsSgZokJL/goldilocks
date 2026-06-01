@@ -155,7 +155,7 @@ struct AdminClientPeopleListView: View {
     }
 
     private func memberRow(_ member: SeatMember) -> some View {
-        let name: String = member.displayName
+        let name: String = member.firstName.isEmpty ? member.displayName : member.firstName
         let isSaving: Bool = savingMemberIds.contains(member.id)
         let isExpanded: Bool = expandedMemberId == member.id
         let rowOpacity: Double = member.enabled ? 1.0 : 0.6

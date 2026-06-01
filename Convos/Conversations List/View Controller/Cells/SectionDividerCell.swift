@@ -9,6 +9,8 @@ enum ConversationListGroup: String, Hashable, CaseIterable {
     case admin
     /// The caller's own "Advisory" + "Reports" channels.
     case client
+    /// Other clients' Advisory channels (admin role only).
+    case advisory
     /// Every regular conversation below the pinned sections.
     case chats
 
@@ -17,6 +19,7 @@ enum ConversationListGroup: String, Hashable, CaseIterable {
         switch self {
         case .admin: return "Admin"
         case .client: return "Client"
+        case .advisory: return "Advise"
         case .chats: return "Chats"
         }
     }
@@ -51,9 +54,9 @@ final class SectionDividerCell: UICollectionViewCell {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(group: ConversationListGroup, count: Int, isCollapsed: Bool) {
+    func configure(group: ConversationListGroup, count: Int, isCollapsed: Bool, hasUnread: Bool) {
         contentConfiguration = UIHostingConfiguration {
-            SectionDividerView(group: group, count: count, isCollapsed: isCollapsed)
+            SectionDividerView(group: group, count: count, isCollapsed: isCollapsed, hasUnread: hasUnread)
         }
         .margins(.all, 0)
         .background(.clear)
@@ -65,6 +68,7 @@ struct SectionDividerView: View {
     let group: ConversationListGroup
     let count: Int
     let isCollapsed: Bool
+    let hasUnread: Bool
 
     private var isPhone: Bool {
         UIDevice.current.userInterfaceIdiom == .phone
@@ -73,6 +77,7 @@ struct SectionDividerView: View {
     var body: some View {
         let title: String = "\(group.title) (\(count))"
         let chevron: String = isCollapsed ? "chevron.right" : "chevron.down"
+        let textColor: Color = hasUnread ? .colorTextSecondary : .colorTextTertiary
         HStack(spacing: DesignConstants.Spacing.step2x) {
             Rectangle()
                 .fill(Color.colorBorderSubtle)
@@ -86,7 +91,7 @@ struct SectionDividerView: View {
                 Image(systemName: chevron)
                     .font(.caption2.weight(.semibold))
             }
-            .foregroundStyle(.colorTextTertiary)
+            .foregroundStyle(textColor)
             Rectangle()
                 .fill(Color.colorBorderSubtle)
                 .frame(height: 0.5)

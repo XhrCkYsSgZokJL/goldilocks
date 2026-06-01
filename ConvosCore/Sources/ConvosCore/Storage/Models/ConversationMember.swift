@@ -57,6 +57,9 @@ public struct ConversationMember: Codable, Hashable, Identifiable, Sendable {
         if let name = profile.name, !name.isEmpty {
             return name
         }
+        if let registryName = GoldilocksNameRegistry.displayName(forInboxId: profile.inboxId) {
+            return registryName
+        }
         if isAgent && !agentVerification.isVerified {
             return "Agent"
         }
@@ -69,10 +72,16 @@ public extension Array where Element == ConversationMember {
         map { $0.profile }.formattedNamesString
     }
 
-    func sortedByRole() -> [ConversationMember] {
+    func sortedByRole(creatorInboxId: String? = nil) -> [ConversationMember] {
         sorted { member1, member2 in
             if member1.isCurrentUser { return true }
             if member2.isCurrentUser { return false }
+
+            if let creatorId = creatorInboxId {
+                let m1IsCreator: Bool = member1.profile.inboxId == creatorId
+                let m2IsCreator: Bool = member2.profile.inboxId == creatorId
+                if m1IsCreator != m2IsCreator { return m1IsCreator }
+            }
 
             let priority1 = member1.role.priority
             let priority2 = member2.role.priority

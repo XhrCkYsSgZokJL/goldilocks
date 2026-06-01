@@ -7,7 +7,7 @@ struct ConversationMembersListView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(viewModel.conversation.members.sortedByRole(), id: \.id) { member in
+                ForEach(viewModel.conversation.members.sortedByRole(creatorInboxId: viewModel.conversation.creator.profile.inboxId), id: \.id) { member in
                     NavigationLink {
                         ConversationMemberView(viewModel: viewModel, member: member)
                     } label: {

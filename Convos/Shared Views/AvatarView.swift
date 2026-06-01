@@ -103,16 +103,34 @@ struct ConversationAvatarView: View {
         .cachedImage(for: conversation, into: $cachedImage)
     }
 
+    private var currentTier: GoldilocksMembershipTier {
+        let plan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
+        let emerald: Bool = GoldilocksSession.shared.identity?.emeraldMembershipEnabled ?? false
+        return GoldilocksMembershipTier(
+            activeMembers: plan.billableSeatCount,
+            hasActiveCoverage: plan.coverageActive,
+            emeraldEnabled: emerald
+        )
+    }
+
+    @ViewBuilder
     private var goldilocksAvatar: some View {
-        let symbol = GoldilocksConfig.iconSymbolName(for: conversation.name ?? "")
-        return ZStack {
-            Circle()
-                .fill(Color.colorFillPrimary)
-            Image(systemName: symbol)
+        let groupName: String = conversation.name ?? ""
+        if let imageName = GoldilocksConfig.iconImageName(for: groupName, tier: currentTier) {
+            Image(imageName)
                 .resizable()
-                .scaledToFit()
-                .foregroundStyle(.white)
-                .padding(12)
+                .scaledToFill()
+        } else {
+            let symbol: String = GoldilocksConfig.iconSymbolName(for: groupName)
+            ZStack {
+                Circle()
+                    .fill(Color.colorFillPrimary)
+                Image(systemName: symbol)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.white)
+                    .padding(12)
+            }
         }
     }
 

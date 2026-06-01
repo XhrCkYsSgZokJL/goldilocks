@@ -361,8 +361,10 @@ final class ConversationsViewController: UIViewController {
             return currentState.unpinnedConversations.filter { $0.goldilocksPinnedSection == .admin }
         case .client:
             return currentState.unpinnedConversations.filter { $0.goldilocksPinnedSection == .client }
+        case .advisory:
+            return currentState.unpinnedConversations.filter { $0.isOtherClientAdvisory }
         case .chats:
-            return currentState.unpinnedConversations.filter { $0.goldilocksPinnedSection == nil }
+            return currentState.unpinnedConversations.filter { $0.goldilocksPinnedSection == nil && !$0.isOtherClientAdvisory }
         }
     }
 
@@ -388,9 +390,11 @@ final class ConversationsViewController: UIViewController {
         // Cell registration for the tappable section dividers.
         let dividerCellRegistration = UICollectionView.CellRegistration<SectionDividerCell, ConversationListGroup> { [weak self] cell, _, group in
             guard let self = self else { return }
-            let count = self.conversations(in: group).count
-            let isCollapsed = self.collapsedGroups.contains(group)
-            cell.configure(group: group, count: count, isCollapsed: isCollapsed)
+            let convos = self.conversations(in: group)
+            let count: Int = convos.count
+            let isCollapsed: Bool = self.collapsedGroups.contains(group)
+            let hasUnread: Bool = convos.contains { $0.isUnread }
+            cell.configure(group: group, count: count, isCollapsed: isCollapsed, hasUnread: hasUnread)
         }
 
         // Cell registration for pinned items
@@ -474,11 +478,14 @@ final class ConversationsViewController: UIViewController {
                 snapshot.appendItems([.emptyCTA], toSection: .list)
             }
 
-            // Each non-empty group is introduced by a tappable divider;
-            // its conversations follow unless the group is collapsed.
+            // Each group is introduced by a tappable divider; its
+            // conversations follow unless the group is collapsed. The
+            // .advisory and .chats dividers are always shown (even when
+            // empty) so the user sees where those conversations belong.
             for group in ConversationListGroup.allCases {
                 let convos = conversations(in: group)
-                guard !convos.isEmpty else { continue }
+                let alwaysShow: Bool = group == .chats || (group == .advisory && GoldilocksConfig.role == .admin)
+                guard !convos.isEmpty || alwaysShow else { continue }
                 snapshot.appendItems([.sectionDivider(group)], toSection: .list)
                 if !collapsedGroups.contains(group) {
                     snapshot.appendItems(convos.map { Item.conversation($0) }, toSection: .list)

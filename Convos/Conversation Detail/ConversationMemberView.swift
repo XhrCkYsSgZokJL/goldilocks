@@ -89,7 +89,7 @@ struct ConversationMemberView: View {
             }
         }
 
-        if !member.isCurrentUser {
+        if canBlockMember {
             Section {
                 let action = { presentingBlockConfirmation = true }
                 Button(action: action) {
@@ -132,22 +132,32 @@ struct ConversationMemberView: View {
                 }
             }
 
-            Section {
-                let action = { presentingBlockConfirmation = true }
-                Button(action: action) {
-                    Text("Block and leave")
-                        .font(.body)
-                        .foregroundStyle(.colorCaution)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+            if canBlockMember {
+                Section {
+                    let action = { presentingBlockConfirmation = true }
+                    Button(action: action) {
+                        Text("Block and leave")
+                            .font(.body)
+                            .foregroundStyle(.colorCaution)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Block \(member.profile.displayName)")
+                    .accessibilityIdentifier("block-member-button")
+                } footer: {
+                    Text("Leave this convo and block \(member.profile.displayName)")
+                        .foregroundStyle(.colorTextSecondary)
                 }
-                .accessibilityLabel("Block \(member.profile.displayName)")
-                .accessibilityIdentifier("block-member-button")
-            } footer: {
-                Text("Leave this convo and block \(member.profile.displayName)")
-                    .foregroundStyle(.colorTextSecondary)
             }
         }
+    }
+
+    private var canBlockMember: Bool {
+        if member.isCurrentUser { return false }
+        if viewModel.conversation.isPinnedGoldilocksGroup { return false }
+        if GoldilocksAgentTrust.contains(inboxId: member.profile.inboxId) { return false }
+        if GoldilocksSession.shared.adminInboxIds.contains(member.profile.inboxId) { return false }
+        return true
     }
 
     private func cardRow(title: String) -> some View {
