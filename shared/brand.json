@@ -71,7 +71,8 @@
     }
   },
   "assets": {
-    "logoImageName": "goldilocksLogo"
+    "logoImageName": "goldilocksLogo",
+    "botImageName": "goldilocksBot"
   },
   "legal": {
     "privacyPolicyUrl": "https://goldilocksdigital.xyz/privacy",

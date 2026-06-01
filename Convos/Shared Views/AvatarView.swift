@@ -63,14 +63,22 @@ struct ProfileAvatarView: View {
     var agentVerification: AgentVerification = .unverified
 
     var body: some View {
-        AvatarView(
-            fallbackName: profile.displayName,
-            cacheableObject: profile,
-            placeholderImage: profileImage,
-            placeholderEmoji: profile.profileEmoji,
-            placeholderImageName: useSystemPlaceholder ? "person.crop.circle.fill" : nil,
-            agentVerification: profile.isAgent ? agentVerification : .unverified
-        )
+        if profile.isAgent, profileImage == nil, let botImage = BrandConfig.shared.assets.botImageName {
+            Image(botImage)
+                .resizable()
+                .scaledToFill()
+                .aspectRatio(1.0, contentMode: .fit)
+                .clipShape(Circle())
+        } else {
+            AvatarView(
+                fallbackName: profile.displayName,
+                cacheableObject: profile,
+                placeholderImage: profileImage,
+                placeholderEmoji: profile.profileEmoji,
+                placeholderImageName: useSystemPlaceholder ? "person.crop.circle.fill" : nil,
+                agentVerification: profile.isAgent ? agentVerification : .unverified
+            )
+        }
     }
 }
 
@@ -140,7 +148,11 @@ struct ConversationAvatarView: View {
         case .customImage:
             MonogramView(name: conversation.computedDisplayName)
         case let .profile(profile, verification):
-            if let emoji = profile.profileEmoji, !emoji.isEmpty {
+            if profile.isAgent, let botImage = BrandConfig.shared.assets.botImageName {
+                Image(botImage)
+                    .resizable()
+                    .scaledToFill()
+            } else if let emoji = profile.profileEmoji, !emoji.isEmpty {
                 EmojiAvatarView(emoji: emoji, agentVerification: verification)
             } else if verification == .unverified {
                 EmojiAvatarView(emoji: conversation.defaultEmoji)
@@ -170,6 +182,10 @@ struct MessageAvatarView: View {
         Group {
             if let image = cachedImage {
                 Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else if profile.isAgent, let botImage = BrandConfig.shared.assets.botImageName {
+                Image(botImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
             } else if let emoji = profile.profileEmoji, !emoji.isEmpty {

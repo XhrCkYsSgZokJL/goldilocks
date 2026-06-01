@@ -68,6 +68,7 @@ struct BrandConfig: Codable, Sendable {
 
     struct Assets: Codable, Sendable {
         let logoImageName: String
+        let botImageName: String?
     }
 
     struct Legal: Codable, Sendable {
