@@ -7,7 +7,7 @@ extension Conversation {
         case .dm:
             return otherMember?.profile.displayName ?? ""
         case .group:
-            return displayName
+            return goldilocksDisplayName ?? displayName
         }
     }
 }

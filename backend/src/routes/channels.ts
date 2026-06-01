@@ -13,7 +13,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { liveBalanceCents } from '../billing/balance.js';
+import { isCoverageActive, liveBalanceCents } from '../billing/balance.js';
 import { monthlyTotalCents } from '../billing/pricing.js';
 import { db } from '../db/client.js';
 import { adminInboxes, clients, clientChannels, devices } from '../db/schema.js';
@@ -303,6 +303,9 @@ export default async function channelRoutes(app: FastifyInstance) {
         billingSeats: clients.billingSeats,
         billingBalanceAsOf: clients.billingBalanceAsOf,
         emeraldMembershipEnabled: clients.emeraldMembershipEnabled,
+        coveredPeople: clients.coveredPeople,
+        lastBalanceTickAt: clients.lastBalanceTickAt,
+        coverageEnabled: clients.coverageEnabled,
         role: clientChannels.role,
         xmtpGroupId: clientChannels.xmtpGroupId,
         status: clientChannels.status,
@@ -318,7 +321,7 @@ export default async function channelRoutes(app: FastifyInstance) {
         clientNumber: r.clientNumber,
         clientInboxId: r.clientInboxId,
         monthlyRateCents: monthlyTotalCents(r.billingSeats),
-        coverageActive: liveBalanceCents(r) > 0,
+        coverageActive: isCoverageActive(r),
         emeraldMembershipEnabled: r.emeraldMembershipEnabled,
         role: r.role,
         xmtpGroupId: r.xmtpGroupId,

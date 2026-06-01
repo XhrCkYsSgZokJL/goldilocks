@@ -71,7 +71,7 @@ import {
 import { config } from '../config.js';
 import { db } from '../db/client.js';
 import { clients, clientChannels, reportJobs } from '../db/schema.js';
-import { liveBalanceCents } from '../billing/balance.js';
+import { isCoverageActive } from '../billing/balance.js';
 import { computeTier, type MembershipTier, tierLabel } from '../billing/tier.js';
 import { AuditLog } from './audit.js';
 import { makeStorageProvider, type StorageProvider } from '../storage/index.js';
@@ -904,6 +904,9 @@ async function resolveRecipients(target: ResolvedTarget): Promise<ReportRecipien
       billingSeats: clients.billingSeats,
       billingBalanceAsOf: clients.billingBalanceAsOf,
       emeraldMembershipEnabled: clients.emeraldMembershipEnabled,
+      coveredPeople: clients.coveredPeople,
+      lastBalanceTickAt: clients.lastBalanceTickAt,
+      coverageEnabled: clients.coverageEnabled,
     })
     .from(clientChannels)
     .innerJoin(clients, eq(clientChannels.clientId, clients.id))
@@ -917,7 +920,7 @@ async function resolveRecipients(target: ResolvedTarget): Promise<ReportRecipien
     .filter((r): r is typeof r & { channelGroupId: string } => r.channelGroupId !== null)
     .filter((r) => {
       if (target.kind === 'all') return true;
-      const hasCoverage: boolean = liveBalanceCents(r) > 0;
+      const hasCoverage: boolean = isCoverageActive(r);
       const tier: MembershipTier = computeTier(r.billingSeats, hasCoverage, r.emeraldMembershipEnabled);
       return tier === target.tier;
     });

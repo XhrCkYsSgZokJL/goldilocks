@@ -24,6 +24,7 @@ import { formatAuditLine } from './audit-format.js';
 import { logger } from '../observability/logger.js';
 import { emitOpsEvent } from '../observability/ops-events.js';
 import { safeId } from '../observability/security-events.js';
+import { runDailyBalanceTick } from '../billing/daily-tick.js';
 
 // All audit posts (watcher echoes + admin actions) flow through this
 // single AuditLog. It's constructed with the admins-agent client
@@ -130,6 +131,25 @@ async function main(): Promise<void> {
   };
   const reconcileInterval = setInterval(() => { void tick(); }, RECONCILE_INTERVAL_MS);
 
+  // Daily balance tick at 00:00 UTC. Schedule the first run for the next
+  // midnight, then repeat every 24h. Also run once on startup to catch up
+  // if the process was down at midnight.
+  void runDailyBalanceTick().catch((err) => {
+    log.warn({ err }, 'startup daily tick failed — will retry at midnight');
+  });
+  const msUntilMidnight = (): number => {
+    const now = new Date();
+    const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+    return next.getTime() - now.getTime();
+  };
+  let dailyTickInterval: ReturnType<typeof setInterval> | null = null;
+  const dailyTickTimeout = setTimeout(() => {
+    void runDailyBalanceTick().catch((err) => log.error({ err }, 'daily tick failed'));
+    dailyTickInterval = setInterval(() => {
+      void runDailyBalanceTick().catch((err) => log.error({ err }, 'daily tick failed'));
+    }, 24 * 60 * 60 * 1000);
+  }, msUntilMidnight());
+
   const stopListener = await startListener({
     onAdminChanged: async (payload) => {
       emitOpsEvent(log, {
@@ -212,6 +232,8 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     emitOpsEvent(log, { event: 'agent.shutdown', context: { signal } });
     clearInterval(reconcileInterval);
+    clearTimeout(dailyTickTimeout);
+    if (dailyTickInterval) clearInterval(dailyTickInterval);
     try { stopReportsWatcher(); } catch {}
     try { await stopAutoResponder(); } catch {}
     try { await stopListener(); } catch {}

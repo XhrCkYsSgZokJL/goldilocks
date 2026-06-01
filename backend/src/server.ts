@@ -15,6 +15,8 @@ import channelRoutes from './routes/channels.js';
 import peopleListRoutes from './routes/people-list.js';
 import billingRoutes from './routes/billing.js';
 import stripeWebhookRoutes from './routes/stripe-webhook.js';
+import appleBillingRoutes from './routes/apple-billing.js';
+import appleWebhookRoutes from './routes/apple-webhook.js';
 import { REDACT_PATHS } from './observability/redact-paths.js';
 
 async function build() {
@@ -83,9 +85,11 @@ async function build() {
       await api.register(notificationRoutes);
       await api.register(attachmentRoutes, { publicBaseUrl });
       await api.register(billingRoutes, { publicBaseUrl });
-      // Registered as its own plugin so its raw-body parser (needed for
-      // Stripe signature verification) stays encapsulated.
+      await api.register(appleBillingRoutes);
+      // Registered as their own plugins so their raw-body parsers (needed
+      // for signature verification) stay encapsulated.
       await api.register(stripeWebhookRoutes);
+      await api.register(appleWebhookRoutes);
 
       // Convos-compatible stubs we explicitly don't implement.
       // Returning 410 Gone makes failures explicit rather than mysteriously hanging.

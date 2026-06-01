@@ -1,0 +1,1 @@
+ALTER TABLE clients ADD COLUMN coverage_enabled BOOLEAN NOT NULL DEFAULT true;

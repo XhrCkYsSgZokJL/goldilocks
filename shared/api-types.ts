@@ -192,9 +192,37 @@ export interface SeatsRequest {
 /** @swift GoldilocksBillingStatusResponse */
 export interface BillingStatusResponse {
   activeUntil: string | null;
+  coverageActive: boolean;
+  /** @swift default(true) */
+  coverageEnabled: boolean;
   balanceCents: number;
   monthlyRateCents: number;
   seats: number;
+  coveredPeople: number;
+  reportDay: string;
+}
+
+/** @swift GoldilocksReportDayRequest */
+export interface ReportDayRequest {
+  reportDay: string;
+}
+
+/** @swift GoldilocksCoverageToggleRequest */
+export interface CoverageToggleRequest {
+  enabled: boolean;
+}
+
+/** @swift GoldilocksPersonToggleRequest */
+export interface PersonToggleRequest {
+  personId: string;
+  displayName: string;
+  enabled: boolean;
+}
+
+/** @swift GoldilocksPersonToggleResponse */
+export interface PersonToggleResponse extends BillingStatusResponse {
+  activated: boolean;
+  deductedCents: number;
 }
 
 /** @swift GoldilocksCancelResponse */

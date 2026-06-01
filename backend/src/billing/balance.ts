@@ -1,56 +1,81 @@
-// Prepaid-balance accounting.
+// Prepaid-balance accounting — monthly model.
 //
-// A client holds a prepaid balance (in cents) that drains at a monthly
-// rate set by their seat mix. `billingBalanceAsOf` is the last time the
-// balance was settled; between settles the live balance is just
-// `balance - rate * elapsed`. Every mutation (top-up, seat change,
-// cancel) settles first so the stored balance is always current as of
-// `billingBalanceAsOf`.
+// A client holds a prepaid balance (in cents). $125 is deducted per
+// person when they are enabled (handled by person-activation.ts), then
+// $125/person is charged on the 1st of every month (handled by
+// monthly-tick.ts). Between charges the balance is static.
 //
-// A "month" here is a fixed 30 days — predictable, and the basis for both
-// the burn rate and the durations the client buys.
+// Emerald clients can go negative — coverage never lapses for them.
+// Non-Emerald clients stop at zero and coverage lapses.
 
 import { monthlyTotalCents } from './pricing.js';
 
-export const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
-
-// The billing fields this module reads off a `clients` row.
 export interface BalanceState {
   billingBalanceCents: number;
   billingSeats: number;
-  billingBalanceAsOf: Date | null;
+  coveredPeople: number;
+  lastBalanceTickAt: Date | null;
+  emeraldMembershipEnabled: boolean;
+  coverageEnabled: boolean;
 }
 
-// Monthly burn rate, in cents, from the seat count.
-export function monthlyRateCents(state: BalanceState): number {
+// Monthly burn rate based on seats (used for top-up cost display).
+export function monthlyRateCents(state: { billingSeats: number }): number {
   return monthlyTotalCents(state.billingSeats);
 }
 
-// The balance remaining at `at`, after draining the rate for the time
-// elapsed since it was last settled. Never negative.
-export function liveBalanceCents(state: BalanceState, at: Date = new Date()): number {
-  if (!state.billingBalanceAsOf) return state.billingBalanceCents;
-  const rate = monthlyRateCents(state);
-  if (rate <= 0) return state.billingBalanceCents;
-  const elapsedMs = at.getTime() - state.billingBalanceAsOf.getTime();
-  if (elapsedMs <= 0) return state.billingBalanceCents;
-  const burned = rate * (elapsedMs / MONTH_MS);
-  return Math.max(0, Math.round(state.billingBalanceCents - burned));
+// The stored balance.
+export function liveBalanceCents(state: { billingBalanceCents: number }): number {
+  return state.billingBalanceCents;
 }
 
-// The instant coverage runs out, or null when there is no active cover
-// (no balance, or no seats so nothing is being charged).
-export function activeUntil(state: BalanceState, at: Date = new Date()): Date | null {
-  const rate = monthlyRateCents(state);
-  if (rate <= 0) return null;
-  const live = liveBalanceCents(state, at);
-  if (live <= 0) return null;
-  return new Date(at.getTime() + (live / rate) * MONTH_MS);
+// Whether the client currently has active coverage.
+export function isCoverageActive(state: BalanceState): boolean {
+  if (!state.coverageEnabled) return false;
+  if (state.emeraldMembershipEnabled) return true;
+  if (state.coveredPeople <= 0) return false;
+  return state.billingBalanceCents >= 0;
 }
 
-// Settle the balance to `at`: the stored balance becomes the live balance
-// and `asOf` moves to `at`. Callers persist the result, then apply their
-// mutation (add a top-up, change seats, or zero it on cancel).
-export function settle(state: BalanceState, at: Date = new Date()): { balanceCents: number; asOf: Date } {
-  return { balanceCents: liveBalanceCents(state, at), asOf: at };
+// Projected date when coverage will run out, or null if coverage is
+// inactive or infinite (Emerald). In the monthly model, coverage
+// extends through the end of the current paid period.
+export function activeUntil(state: BalanceState): Date | null {
+  if (!state.coverageEnabled) return null;
+  if (state.emeraldMembershipEnabled) return null;
+  if (state.coveredPeople <= 0) return null;
+  if (state.billingBalanceCents < 0) return null;
+
+  const monthlyBurn = monthlyTotalCents(state.coveredPeople);
+  if (monthlyBurn <= 0) return null;
+  const monthsRemaining = state.billingBalanceCents / monthlyBurn;
+  const now = new Date();
+  return new Date(now.getTime() + monthsRemaining * 30 * 24 * 60 * 60 * 1000);
+}
+
+// Compute the monthly charge for all covered persons. Returns the new
+// balance after deduction. Emerald clients can go negative; others
+// floor at zero.
+export function computeMonthlyTick(state: BalanceState): { newBalanceCents: number; deductedCents: number; coverageLapsed: boolean } {
+  const deduction = monthlyTotalCents(state.coveredPeople);
+  if (deduction <= 0) {
+    return { newBalanceCents: state.billingBalanceCents, deductedCents: 0, coverageLapsed: false };
+  }
+
+  const newBalance = state.billingBalanceCents - deduction;
+
+  if (state.emeraldMembershipEnabled) {
+    return { newBalanceCents: newBalance, deductedCents: deduction, coverageLapsed: false };
+  }
+
+  if (newBalance < 0) {
+    return { newBalanceCents: 0, deductedCents: state.billingBalanceCents, coverageLapsed: true };
+  }
+
+  return { newBalanceCents: newBalance, deductedCents: deduction, coverageLapsed: false };
+}
+
+// Snapshot the balance at a point in time before applying a mutation.
+export function settle(state: { billingBalanceCents: number }): { balanceCents: number; asOf: Date } {
+  return { balanceCents: state.billingBalanceCents, asOf: new Date() };
 }

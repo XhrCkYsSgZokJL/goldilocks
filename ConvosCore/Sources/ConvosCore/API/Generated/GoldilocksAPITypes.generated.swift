@@ -150,14 +150,56 @@ public struct GoldilocksSeatsRequest: Codable, Sendable {
 
 public struct GoldilocksBillingStatusResponse: Codable, Sendable {
     public let activeUntil: String?
+    public let coverageActive: Bool
+    public let coverageEnabled: Bool
     public let balanceCents: Int
     public let monthlyRateCents: Int
     public let seats: Int
+    public let coveredPeople: Int
+    public let reportDay: String
+
+    public init(
+        activeUntil: String? = nil,
+        coverageActive: Bool,
+        coverageEnabled: Bool = true,
+        balanceCents: Int,
+        monthlyRateCents: Int,
+        seats: Int,
+        coveredPeople: Int,
+        reportDay: String
+    ) {
+        self.activeUntil = activeUntil
+        self.coverageActive = coverageActive
+        self.coverageEnabled = coverageEnabled
+        self.balanceCents = balanceCents
+        self.monthlyRateCents = monthlyRateCents
+        self.seats = seats
+        self.coveredPeople = coveredPeople
+        self.reportDay = reportDay
+    }
+}
+
+public struct GoldilocksReportDayRequest: Codable, Sendable {
+    public let reportDay: String
+}
+
+public struct GoldilocksCoverageToggleRequest: Codable, Sendable {
+    public let enabled: Bool
+}
+
+public struct GoldilocksPersonToggleRequest: Codable, Sendable {
+    public let personId: String
+    public let displayName: String
+    public let enabled: Bool
+}
+
+public struct GoldilocksPersonToggleResponse: Codable, Sendable {
+    public let activated: Bool
+    public let deductedCents: Int
 }
 
 public struct GoldilocksCancelResponse: Codable, Sendable {
     public let refundedCents: Int
-    public let retainedCents: Int
 }
 
 public struct GoldilocksPeopleListResponse: Codable, Sendable {

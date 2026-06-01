@@ -22,7 +22,20 @@
       "Bash(npm test *)",
       "Bash(node --import tsx --test src/observability/redact-paths.test.ts)",
       "Bash(node --import tsx --test src/agent/__tests__/listener.test.ts)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(node --import tsx --test src/observability/redact-paths.test.ts src/crypto/at-rest.test.ts src/crypto/lookup-hash.test.ts src/crypto/encrypted-json.test.ts)",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:3000/health)",
+      "Bash(curl -s http://localhost:3000/api/health)",
+      "Bash(curl -s http://localhost:4000/health)",
+      "Bash(curl -s http://localhost:4000/api/health)",
+      "Bash(curl -s -X POST http://localhost:3000/api/v2/billing/checkout -H \"Content-Type: application/json\" -d '{\"paymentMethod\":\"card\",\"durationMonths\":3,\"seats\":1}')",
+      "Bash(curl -s -X POST http://localhost:3000/v2/billing/checkout -H \"Content-Type: application/json\" -d '{\"paymentMethod\":\"card\",\"durationMonths\":3,\"seats\":1}')",
+      "Bash(curl -s http://localhost:3000/)",
+      "Bash(docker compose *)",
+      "Bash(./dev/status)",
+      "Bash(./dev/stop)",
+      "Bash(./dev/start)"
     ]
   },
   "enableAllProjectMcpServers": true,

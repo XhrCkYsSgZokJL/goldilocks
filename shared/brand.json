@@ -32,9 +32,9 @@
     "emerald": "advisoryEmerald"
   },
   "pricing": {
-    "monthlyPricePerPersonCents": 12500,
+    "monthlyPricePerPersonCents": 10000,
     "currency": "USD",
-    "priceLabel": "$125/mo per person"
+    "priceLabel": "$100/mo per person"
   },
   "tiers": {
     "thresholds": {

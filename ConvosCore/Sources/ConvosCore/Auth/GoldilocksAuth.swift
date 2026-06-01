@@ -127,8 +127,8 @@ public enum GoldilocksAuth {
 /// The Goldilocks Digital plan. Configured at launch from brand.json via
 /// `GoldilocksPlan.configure(cents:label:)`.
 public enum GoldilocksPlan {
-    nonisolated(unsafe) private static var _monthlyPricePerPersonCents: Int = 12500
-    nonisolated(unsafe) private static var _priceLabel: String = "$125/mo per person"
+    nonisolated(unsafe) private static var _monthlyPricePerPersonCents: Int = 10000
+    nonisolated(unsafe) private static var _priceLabel: String = "$100/mo per person"
 
     public static func configure(monthlyPricePerPersonCents cents: Int, priceLabel label: String) {
         _monthlyPricePerPersonCents = cents

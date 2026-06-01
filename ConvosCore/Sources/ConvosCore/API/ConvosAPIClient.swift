@@ -102,6 +102,10 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func createGoldilocksCheckout(_ request: ConvosAPI.GoldilocksCheckoutRequest) async throws -> ConvosAPI.GoldilocksCheckoutResponse
     func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse
     func syncGoldilocksSeats(_ request: ConvosAPI.GoldilocksSeatsRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    func setGoldilocksReportDay(_ request: ConvosAPI.GoldilocksReportDayRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    func toggleGoldilocksCoverage(_ request: ConvosAPI.GoldilocksCoverageToggleRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    func toggleGoldilocksPersonCoverage(_ request: ConvosAPI.GoldilocksPersonToggleRequest) async throws -> ConvosAPI.GoldilocksPersonToggleResponse
     func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse
     func verifyApplePurchase(_ request: ConvosAPI.GoldilocksApplePurchaseRequest) async throws
 
@@ -124,15 +128,27 @@ extension ConvosAPIClientProtocol {
     }
 
     func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
-        ConvosAPI.GoldilocksBillingStatusResponse(
-            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0
-        )
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
     }
 
     func syncGoldilocksSeats(_ request: ConvosAPI.GoldilocksSeatsRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
-        ConvosAPI.GoldilocksBillingStatusResponse(
-            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0
-        )
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    func setGoldilocksReportDay(_ request: ConvosAPI.GoldilocksReportDayRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    func toggleGoldilocksCoverage(_ request: ConvosAPI.GoldilocksCoverageToggleRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    func toggleGoldilocksPersonCoverage(_ request: ConvosAPI.GoldilocksPersonToggleRequest) async throws -> ConvosAPI.GoldilocksPersonToggleResponse {
+        ConvosAPI.GoldilocksPersonToggleResponse()
     }
 
     func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
@@ -947,6 +963,32 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         var request = try authenticatedRequest(for: "v2/billing/seats", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(seats)
+        return try await performRequest(request)
+    }
+
+    func setGoldilocksReportDay(_ reportDay: ConvosAPI.GoldilocksReportDayRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        var request = try authenticatedRequest(for: "v2/billing/report-day", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(reportDay)
+        return try await performRequest(request)
+    }
+
+    func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        let request = try authenticatedRequest(for: "v2/billing/checkout-status/\(sessionId)", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func toggleGoldilocksCoverage(_ toggle: ConvosAPI.GoldilocksCoverageToggleRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        var request = try authenticatedRequest(for: "v2/billing/coverage", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(toggle)
+        return try await performRequest(request)
+    }
+
+    func toggleGoldilocksPersonCoverage(_ toggle: ConvosAPI.GoldilocksPersonToggleRequest) async throws -> ConvosAPI.GoldilocksPersonToggleResponse {
+        var request = try authenticatedRequest(for: "v2/billing/person-toggle", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(toggle)
         return try await performRequest(request)
     }
 

@@ -544,6 +544,33 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         return try await apiClient.syncGoldilocksSeats(request)
     }
 
+    public func setGoldilocksReportDay(reportDay: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        let request = ConvosAPI.GoldilocksReportDayRequest(reportDay: reportDay)
+        return try await apiClient.setGoldilocksReportDay(request)
+    }
+
+    public func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        try await apiClient.reconcileGoldilocksCheckout(sessionId: sessionId)
+    }
+
+    public func toggleGoldilocksCoverage(enabled: Bool) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        let request = ConvosAPI.GoldilocksCoverageToggleRequest(enabled: enabled)
+        return try await apiClient.toggleGoldilocksCoverage(request)
+    }
+
+    public func toggleGoldilocksPersonCoverage(
+        personId: String,
+        displayName: String,
+        enabled: Bool
+    ) async throws -> ConvosAPI.GoldilocksPersonToggleResponse {
+        let request = ConvosAPI.GoldilocksPersonToggleRequest(
+            personId: personId,
+            displayName: displayName,
+            enabled: enabled
+        )
+        return try await apiClient.toggleGoldilocksPersonCoverage(request)
+    }
+
     public func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
         try await apiClient.cancelGoldilocksBilling()
     }

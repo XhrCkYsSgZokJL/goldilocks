@@ -63,11 +63,17 @@ export const REDACT_PATHS = [
   // Apple IAP
   'req.body.receiptData',
   'req.body.transactionId',
+  'req.body.signedPayload',
   'receiptData',
   'appStoreReceipt',
   'originalTransactionId',
+  'signedPayload',
+  'applePrivateKey',
+  'apple_private_key',
   // Hopscotch crypto deposits
   'req.body.walletAddress',
   'walletAddress',
   'depositAddress',
+  'hopscotchApiKey',
+  'hopscotchWebhookSecret',
 ];

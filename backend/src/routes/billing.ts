@@ -21,7 +21,10 @@ import { billingCheckouts, clients, devices } from '../db/schema.js';
 import { requireJwt } from '../middleware/jwt.js';
 import { getStripe, isStripeConfigured } from '../billing/stripe.js';
 import { isAllowedDuration, monthlyTotalCents } from '../billing/pricing.js';
-import { activeUntil, liveBalanceCents, monthlyRateCents, settle } from '../billing/balance.js';
+import { activeUntil, isCoverageActive, liveBalanceCents, monthlyRateCents, settle } from '../billing/balance.js';
+import { reconcileCheckoutSession } from '../billing/reconcile-checkout.js';
+import { togglePersonCoverage } from '../billing/person-activation.js';
+import { queueSampleReport } from '../billing/sample-report.js';
 import { emitBillingEvent } from '../observability/billing-events.js';
 import type Stripe from 'stripe';
 
@@ -213,6 +216,162 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
   });
 
   // ---------------------------------------------------------------------
+  // POST /v2/billing/report-day — set the monthly report delivery date.
+  // body: { reportDay: '1st' | '14th' }
+  // ---------------------------------------------------------------------
+  const ReportDayBody = z.object({
+    reportDay: z.enum(['1st', '14th']),
+  });
+
+  app.post('/v2/billing/report-day', { preHandler: requireJwt }, async (req, reply) => {
+    const parsed = ReportDayBody.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
+    }
+
+    const client = await resolveClient(req.deviceId!);
+    if (!client) {
+      return reply.code(409).send({ error: 'client_missing' });
+    }
+
+    const [updated] = await db
+      .update(clients)
+      .set({ reportDay: parsed.data.reportDay })
+      .where(eq(clients.id, client.id))
+      .returning();
+    if (!updated) {
+      return reply.code(409).send({ error: 'client_missing' });
+    }
+    return reply.code(200).send(billingStatus(updated));
+  });
+
+  // ---------------------------------------------------------------------
+  // POST /v2/billing/coverage — enable or disable coverage.
+  // body: { enabled: boolean }
+  // Disabling is blocked within 3 days of the 1st (day 29, 30, 31, 1).
+  // ---------------------------------------------------------------------
+  const CoverageBody = z.object({ enabled: z.boolean() });
+
+  app.post('/v2/billing/coverage', { preHandler: requireJwt }, async (req, reply) => {
+    const parsed = CoverageBody.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
+    }
+
+    const client = await resolveClient(req.deviceId!);
+    if (!client) {
+      return reply.code(409).send({ error: 'client_missing' });
+    }
+
+    if (!parsed.data.enabled) {
+      const now = new Date();
+      const dayOfMonth: number = now.getUTCDate();
+      const daysInMonth: number = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
+      const daysUntilNextFirst: number = daysInMonth - dayOfMonth + 1;
+      if (daysUntilNextFirst <= 3 && dayOfMonth !== 1) {
+        return reply.code(409).send({
+          error: 'too_close_to_delivery',
+          message: 'Coverage cannot be disabled within 3 days of the 1st.',
+        });
+      }
+    }
+
+    const [updated] = await db
+      .update(clients)
+      .set({ coverageEnabled: parsed.data.enabled })
+      .where(eq(clients.id, client.id))
+      .returning();
+    if (!updated) {
+      return reply.code(409).send({ error: 'client_missing' });
+    }
+
+    emitBillingEvent(req.log, {
+      event: 'billing.coverage.toggled',
+      clientId: client.id,
+      inboxId: client.inboxId,
+      context: { enabled: parsed.data.enabled },
+    });
+
+    return reply.code(200).send(billingStatus(updated));
+  });
+
+  // ---------------------------------------------------------------------
+  // POST /v2/billing/person-toggle — enable or disable a specific person.
+  // body: { personId: string, displayName: string, enabled: boolean }
+  //
+  // Enabling a person deducts the initial monthly fee from the client's
+  // balance and queues a sample report. Disabling removes them from the
+  // active report delivery list.
+  // ---------------------------------------------------------------------
+  const PersonToggleBody = z.object({
+    personId: z.string().uuid(),
+    displayName: z.string(),
+    enabled: z.boolean(),
+  });
+
+  app.post('/v2/billing/person-toggle', { preHandler: requireJwt }, async (req, reply) => {
+    const parsed = PersonToggleBody.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
+    }
+
+    const client = await resolveClient(req.deviceId!);
+    if (!client) {
+      return reply.code(409).send({ error: 'client_missing' });
+    }
+
+    try {
+      const result = await togglePersonCoverage({
+        clientId: client.id,
+        personId: parsed.data.personId,
+        displayName: parsed.data.displayName,
+        enabled: parsed.data.enabled,
+      });
+
+      if (result.needsInitialReport && result.activated) {
+        queueSampleReport(
+          client.id,
+          client.clientNumber,
+          parsed.data.personId,
+          parsed.data.displayName,
+        ).catch((err) => req.log.error({ err }, 'failed to queue sample report'));
+      }
+
+      if (result.deductedCents > 0) {
+        emitBillingEvent(req.log, {
+          event: 'billing.balance.settled',
+          clientId: client.id,
+          inboxId: client.inboxId,
+          context: {
+            reason: 'person_activation',
+            personId: parsed.data.personId,
+            deductedCents: result.deductedCents,
+          },
+        });
+      }
+
+      // Re-fetch client to get the updated balance.
+      const [refreshed] = await db
+        .select()
+        .from(clients)
+        .where(eq(clients.id, client.id))
+        .limit(1);
+
+      return reply.code(200).send({
+        ...billingStatus(refreshed ?? client),
+        activated: result.activated,
+        deductedCents: result.deductedCents,
+      });
+    } catch (err: unknown) {
+      const message: string = err instanceof Error ? err.message : 'unknown_error';
+      if (message === 'insufficient_balance') {
+        return reply.code(402).send({ error: 'insufficient_balance', message: 'Not enough balance to activate this person.' });
+      }
+      throw err;
+    }
+  });
+
+  // ---------------------------------------------------------------------
   // POST /v2/billing/cancel — stop cover and refund unused future months.
   //
   // The current month is treated as an immediate cost — third-party
@@ -313,13 +472,48 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
   // GET /v2/billing/return  — Stripe redirects the browser here on success.
   // GET /v2/billing/cancel  — …and here when the user backs out.
   // ---------------------------------------------------------------------
-  app.get('/v2/billing/return', async (_req, reply) => {
-    return reply.type('text/html').send(landingPage('Payment received', 'Your cover is being added. You can close this page and return to Goldilocks.'));
+  // The browser lands here after Stripe checkout. Reconcile the payment
+  // immediately so the balance is credited even if the webhook hasn't
+  // arrived yet (common in local dev, and a reliable fallback in prod).
+  app.get('/v2/billing/return', async (req, reply) => {
+    const sessionId = (req.query as Record<string, string>).session_id;
+    if (sessionId && isStripeConfigured()) {
+      try {
+        await reconcileCheckoutSession(sessionId, req.log);
+      } catch (err) {
+        req.log.warn({ err }, 'return-page reconcile failed — webhook will retry');
+      }
+    }
+    return reply.type('text/html').send(landingPage('Payment received', 'Your coverage is being added. You can close this page and return to Goldilocks.'));
   });
 
   app.get('/v2/billing/cancel', async (_req, reply) => {
     return reply.type('text/html').send(landingPage('Checkout cancelled', 'No charge was made. You can close this page and return to Goldilocks.'));
   });
+
+  // Authenticated endpoint for iOS to poll after checkout. Reconciles the
+  // session with Stripe (idempotent), then returns the updated billing
+  // status so the app can update in one call.
+  app.get<{ Params: { sessionId: string } }>(
+    '/v2/billing/checkout-status/:sessionId',
+    { preHandler: requireJwt },
+    async (req, reply) => {
+      const client = await resolveClient(req.deviceId!);
+      if (!client) {
+        return reply.code(409).send({ error: 'client_missing' });
+      }
+      if (!isStripeConfigured()) {
+        return reply.code(503).send({ error: 'billing_unavailable' });
+      }
+      try {
+        await reconcileCheckoutSession(req.params.sessionId, req.log);
+      } catch (err) {
+        req.log.warn({ err }, 'checkout-status reconcile failed');
+      }
+      const updated = await resolveClient(req.deviceId!);
+      return reply.code(200).send(billingStatus(updated ?? client));
+    },
+  );
 }
 
 type ClientRow = typeof clients.$inferSelect;
@@ -331,19 +525,26 @@ async function resolveClient(deviceId: string): Promise<ClientRow | null> {
   return client ?? null;
 }
 
-// The /v2/billing/status response body, computed from a client row.
 function billingStatus(client: ClientRow): {
   activeUntil: string | null;
+  coverageActive: boolean;
+  coverageEnabled: boolean;
   balanceCents: number;
   monthlyRateCents: number;
   seats: number;
+  coveredPeople: number;
+  reportDay: string;
 } {
   const until = activeUntil(client);
   return {
     activeUntil: until ? until.toISOString() : null,
+    coverageActive: isCoverageActive(client),
+    coverageEnabled: client.coverageEnabled,
     balanceCents: liveBalanceCents(client),
     monthlyRateCents: monthlyRateCents(client),
     seats: client.billingSeats,
+    coveredPeople: client.coveredPeople,
+    reportDay: client.reportDay,
   };
 }
 

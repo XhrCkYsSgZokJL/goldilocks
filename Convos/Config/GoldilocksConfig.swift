@@ -131,6 +131,18 @@ extension Conversation {
         return GoldilocksConfig.isGoldilocksGroupName(name)
     }
 
+    /// Client-facing display name for Goldilocks channels. Strips the
+    /// " #N" client number suffix so clients see "Advisory" and "Reports"
+    /// instead of "Advisory #1" and "Reports #1". Admins see the full name.
+    var goldilocksDisplayName: String? {
+        guard let name else { return nil }
+        guard GoldilocksConfig.role == .client, isGoldilocksGroup else { return nil }
+        for prefix in BrandConfig.shared.groups.all where name.hasPrefix(prefix) {
+            return prefix
+        }
+        return nil
+    }
+
     /// Which labelled section this group belongs to in the block pinned to
     /// the top of the conversations list, or nil if it isn't one of the
     /// current role's pinned Goldilocks groups. Role-aware:

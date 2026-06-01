@@ -33,6 +33,52 @@ start_process() {
   echo "  ✓ $name started (log: $log)"
 }
 
+# Stripe CLI webhook forwarder — forwards checkout.session.completed
+# events to the local server so balance crediting works in dev.
+# The signing secret is captured and written to .env.dev so the server
+# can verify webhook signatures. Stripe CLI must be installed and
+# logged in (`stripe login`).
+if command -v stripe >/dev/null 2>&1 && grep -q "STRIPE_SECRET_KEY=sk_" .env.dev 2>/dev/null; then
+  if [ -f ".dev-run/stripe.pid" ] && kill -0 "$(cat ".dev-run/stripe.pid" 2>/dev/null)" 2>/dev/null; then
+    echo "  stripe listener already running"
+  else
+    clean_old_logs stripe
+    local_log=".dev-run/stripe-$(date +%Y%m%d-%H%M%S).log"
+
+    # Start stripe listen in background and capture the webhook secret
+    # from its initial output (line: "whsec_...").
+    nohup stripe listen \
+      --forward-to "localhost:${PORT:-4000}/api/v2/stripe/webhook" \
+      > "$local_log" 2>&1 &
+    echo $! > ".dev-run/stripe.pid"
+
+    # Wait up to 10s for the signing secret to appear in the log.
+    whsec=""
+    for i in $(seq 1 20); do
+      sleep 0.5
+      whsec=$(grep -o 'whsec_[A-Za-z0-9]*' "$local_log" 2>/dev/null | head -1) || true
+      if [ -n "$whsec" ]; then break; fi
+    done
+
+    if [ -n "$whsec" ]; then
+      # Write the secret to .env.dev so the server verifies signatures.
+      if grep -q "^STRIPE_WEBHOOK_SECRET=" .env.dev 2>/dev/null; then
+        sed -i '' "s|^STRIPE_WEBHOOK_SECRET=.*|STRIPE_WEBHOOK_SECRET=${whsec}|" .env.dev
+      else
+        echo "STRIPE_WEBHOOK_SECRET=${whsec}" >> .env.dev
+      fi
+      echo "  ✓ stripe listener started (secret: ${whsec:0:12}…)"
+    else
+      echo "  ⚠ stripe listener started but couldn't capture webhook secret"
+      echo "    check: tail -f $local_log"
+    fi
+  fi
+else
+  if ! command -v stripe >/dev/null 2>&1; then
+    echo "  ⚠ stripe CLI not installed — webhook forwarding disabled (brew install stripe/stripe-cli/stripe)"
+  fi
+fi
+
 start_process server npm run server:dev
 start_process agent npm run agents:dev
 
@@ -57,8 +103,9 @@ fi
 
 echo ""
 echo "✅  Dev environment is running."
-echo "    Server logs: tail -f $DEV_BACKEND/.dev-run/server-*.log"
-echo "    Agent logs:  tail -f $DEV_BACKEND/.dev-run/agent-*.log"
-echo "    Status:      ./dev/status"
-echo "    Stop:        ./dev/stop"
-echo "    Reset:       ./dev/reset"
+echo "    Server logs:  tail -f $DEV_BACKEND/.dev-run/server-*.log"
+echo "    Agent logs:   tail -f $DEV_BACKEND/.dev-run/agent-*.log"
+echo "    Stripe logs:  tail -f $DEV_BACKEND/.dev-run/stripe-*.log"
+echo "    Status:       ./dev/status"
+echo "    Stop:         ./dev/stop"
+echo "    Reset:        ./dev/reset"

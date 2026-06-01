@@ -428,33 +428,30 @@ struct MembershipView: View {
     @State private var showingBillingResult: Bool = false
     @State private var showingCancelConfirm: Bool = false
     @State private var paymentMethod: GoldilocksPaymentMethod = .apple
-    @State private var prepaidDuration: GoldilocksPrepaidDuration = .threeMonths
     @State private var billingStatus: ConvosAPI.GoldilocksBillingStatusResponse?
     @State private var isStartingCheckout: Bool = false
-    @State private var isRefreshingBilling: Bool = false
     @State private var isCancelling: Bool = false
-    @State private var checkoutInitiated: Bool = false
-    @State private var balanceBeforeCheckout: Int = 0
-
-    /// Parses the backend's ISO-8601 `activeUntil` (JavaScript
-    /// `toISOString()` always includes fractional seconds).
-    private static let dateFormatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
+    @State private var checkoutSessionId: String?
+    @State private var reconcileTask: Task<Void, Never>?
+    @State private var depositAmount: Int = 100
+    @State private var pendingActivation: SeatMember?
+    @State private var showingActivationConfirm: Bool = false
+    @State private var showingBillingInfo: Bool = false
+    @State private var showingReactivationConfirm: Bool = false
+    @State private var activatedPersonIds: Set<UUID> = []
 
     var body: some View {
         listContent
             .onChange(of: scenePhase) { _, newPhase in
-                guard newPhase == .active, checkoutInitiated else { return }
-                Task { await refreshBillingStatus() }
+                guard newPhase == .active, checkoutSessionId != nil else { return }
+                Task { await reconcileCheckout() }
             }
             .onChange(of: plan.members) { _, _ in
                 Task { await savePeopleList() }
             }
             .task {
                 await plan.loadFromBackend(session: session)
+                activatedPersonIds = Set(plan.members.filter { $0.enabled }.map(\.id))
                 await syncSeats()
                 await GoldilocksStore.shared.loadProducts()
             }
@@ -462,11 +459,9 @@ struct MembershipView: View {
 
     private var listContent: some View {
         List {
-            tierSection
             peopleSection
-            accountSection
+            balanceSection
             paymentSection
-            pendingCheckoutSection
         }
         .scrollContentBackground(.hidden)
         .background(.colorBackgroundRaisedSecondary)
@@ -512,12 +507,37 @@ struct MembershipView: View {
         } message: {
             Text(billingResultMessage ?? "")
         }
-        .alert("Cancel coverage?", isPresented: $showingCancelConfirm) {
-            Button("Keep coverage", role: .cancel) {}
+        .alert("Activate coverage?", isPresented: $showingActivationConfirm) {
+            let confirmAction: () -> Void = {
+                guard let member = pendingActivation else { return }
+                Task { await confirmActivation(member) }
+            }
+            Button("Activate", action: confirmAction)
+            Button("Cancel", role: .cancel) { pendingActivation = nil }
+        } message: {
+            Text("$\(GoldilocksPlan.monthlyPricePerPerson)/mo will be deducted from your balance.")
+        }
+        .alert("Re-activate coverage?", isPresented: $showingReactivationConfirm) {
+            let confirmAction: () -> Void = {
+                guard let member = pendingActivation else { return }
+                Task { await confirmActivation(member) }
+            }
+            Button("Re-activate", action: confirmAction)
+            Button("Cancel", role: .cancel) { pendingActivation = nil }
+        } message: {
+            Text("This person will be re-added to your membership.")
+        }
+        .alert("Request refund?", isPresented: $showingCancelConfirm) {
+            Button("Keep balance", role: .cancel) {}
             let confirmAction: () -> Void = { Task { await cancelCoverage() } }
-            Button("Cancel & refund", role: .destructive, action: confirmAction)
+            Button("Refund balance", role: .destructive, action: confirmAction)
         } message: {
             Text(cancelConfirmMessage)
+        }
+        .alert("Billing", isPresented: $showingBillingInfo) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(billingInfoMessage)
         }
     }
 
@@ -529,76 +549,126 @@ struct MembershipView: View {
         GoldilocksSession.shared.identity?.emeraldMembershipEnabled ?? false
     }
 
-    private var tierSection: some View {
+    private var tierRow: some View {
         let tier: GoldilocksMembershipTier = GoldilocksMembershipTier(
             activeMembers: plan.billableSeatCount,
             hasActiveCoverage: plan.coverageActive,
             emeraldEnabled: isEmerald
         )
-        return Section {
-            HStack(spacing: DesignConstants.Spacing.step2x) {
-                Image(systemName: tier.iconName)
-                    .foregroundStyle(tier.accentColor)
-                Text("\(tier.displayName) member")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.colorTextPrimary)
-                Spacer()
-            }
-            .listRowBackground(tier.tintColor)
-        } header: {
-            Text("Tier")
-        } footer: {
-            Text("Add one active member to unlock Silver, or four for Gold. Emerald tier must be enabled by an Admin.")
+        return HStack(spacing: DesignConstants.Spacing.step2x) {
+            Image(systemName: tier.iconName)
+                .foregroundStyle(tier.accentColor)
+            Text("\(tier.displayName) member")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.colorTextPrimary)
+            Spacer()
         }
+        .listRowBackground(tier.tintColor)
     }
 
-    private var accountSection: some View {
+    private var balanceSection: some View {
         Section {
-            HStack {
-                Text("Balance")
-                    .foregroundStyle(.colorTextPrimary)
-                Spacer()
-                let balance: Int = billingStatus?.balanceCents ?? 0
-                Text(balance > 0 ? "$\(balance / 100)" : "$0")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.colorTextPrimary)
-            }
-            HStack {
-                Text("Coverage")
-                    .foregroundStyle(.colorTextPrimary)
-                Spacer()
-                Text(coverageDaysText)
-                    .foregroundStyle(.colorTextSecondary)
-            }
-            if hasCoverageBalance {
-                let tapAction = { showingCancelConfirm = true }
-                Button(action: tapAction) {
-                    Text("Request refund")
-                        .foregroundStyle(.red)
-                }
-                .disabled(isCancelling)
-            }
+            balanceRow
+            nextChargeRow
         } header: {
             Text("Account")
-        } footer: {
-            if hasCoverageBalance {
-                Text("Refund cancels coverage. The current month is non-refundable; remaining future months are refunded.")
-            } else {
-                Text("Deposit funds below to activate coverage for the people on your plan.")
-            }
         }
     }
 
     private var paymentSection: some View {
         Section {
             paymentMethodPicker
-            durationPicker
-            billingDetailRow
+            depositAmountRow
             checkoutButton
         } header: {
-            Text("Payment")
-        } footer: {
-            paymentSectionFooter
+            Text("Payments")
+        }
+    }
+
+    private var balanceRow: some View {
+        let balance: Int = billingStatus?.balanceCents ?? 0
+        let balanceLabel: String = {
+            if balance > 0 { return "$\(balance / 100)" }
+            if balance < 0 { return "-$\(abs(balance) / 100)" }
+            return "$0"
+        }()
+        let tapAction = { showingCancelConfirm = true }
+        return Button(action: tapAction) {
+            HStack {
+                Text("Balance")
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+                Text(balanceLabel)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.colorTextPrimary)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.colorTextTertiary)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var nextChargeRow: some View {
+        let tapAction = { showingBillingInfo = true }
+        return Button(action: tapAction) {
+            HStack {
+                Text("Billing")
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+                Text(nextChargeLabel)
+                    .foregroundStyle(.colorTextSecondary)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.colorTextTertiary)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var nextChargeLabel: String {
+        let chargeDollars: Int = plan.billableSeatCount * GoldilocksPlan.monthlyPricePerPerson
+        let now = Date()
+        let calendar = Calendar.current
+        let nextMonth: Date = calendar.date(byAdding: .month, value: 1, to: now) ?? now
+        let components: DateComponents = calendar.dateComponents([.year, .month], from: nextMonth)
+        guard let firstOfNextMonth = calendar.date(from: components) else {
+            return "$\(chargeDollars)"
+        }
+        guard let chargeDate = calendar.date(byAdding: .day, value: -3, to: firstOfNextMonth) else {
+            return "$\(chargeDollars)"
+        }
+        let displayDate: Date = chargeDate <= now
+            ? calendar.date(byAdding: .month, value: 1, to: chargeDate) ?? chargeDate
+            : chargeDate
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        let dateString: String = formatter.string(from: displayDate)
+        return "\(dateString) · $\(chargeDollars)"
+    }
+
+    private var peoplePicker: some View {
+        HStack {
+            Text("People")
+                .foregroundStyle(.colorTextPrimary)
+            Spacer()
+            let minusAction = { if checkoutPeople > 1 { checkoutPeople -= 1 } }
+            Button(action: minusAction) {
+                Image(systemName: "minus.circle.fill")
+                    .foregroundStyle(checkoutPeople > 1 ? .colorFillPrimary : .colorTextTertiary)
+            }
+            .buttonStyle(.plain)
+            .disabled(checkoutPeople <= 1)
+            Text("\(checkoutPeople)")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.colorTextPrimary)
+                .frame(minWidth: 28)
+            let plusAction = { checkoutPeople += 1 }
+            Button(action: plusAction) {
+                Image(systemName: "plus.circle.fill")
+                    .foregroundStyle(.colorFillPrimary)
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -624,17 +694,6 @@ struct MembershipView: View {
         .pickerStyle(.menu)
     }
 
-    private var billingDetailRow: some View {
-        HStack {
-            Text("Total")
-                .foregroundStyle(.colorTextSecondary)
-            Spacer()
-            Text("$\(chargeTotal)")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.colorTextPrimary)
-        }
-    }
-
     private var checkoutButton: some View {
         let action: () -> Void = { Task { await startCheckout() } }
         return Button(action: action) {
@@ -652,94 +711,52 @@ struct MembershipView: View {
         .disabled(!canStartCheckout || isStartingCheckout)
     }
 
-    private var paymentSectionFooter: some View {
-        let billedThrough: String = {
-            switch paymentMethod {
-            case .apple:
-                return "Billed through Apple."
-            case .card:
-                return "Billed through Stripe."
-            case .crypto:
-                return "Billed through Hopscotch."
-            }
-        }()
-        return Text("Deposits fund your account balance. Coverage runs until the balance is depleted. \(billedThrough)")
-    }
-
-    @ViewBuilder
-    private var pendingCheckoutSection: some View {
-        if checkoutInitiated {
-            Section {
-                let refreshAction: () -> Void = { Task { await refreshBillingStatus() } }
-                Button(action: refreshAction) {
-                    HStack {
-                        Spacer()
-                        if isRefreshingBilling {
-                            ProgressView()
-                        } else {
-                            Text("Refresh Payment Status")
-                                .font(.body.weight(.semibold))
-                        }
-                        Spacer()
-                    }
-                }
-                .disabled(isRefreshingBilling)
-            } header: {
-                Text("Pending payment")
-            } footer: {
-                Text("Finish checkout in your browser, then return here. Status also refreshes automatically when you reopen the app.")
-            }
-        }
-    }
-
     private var chargeTotal: Int {
-        plan.monthlyTotal * prepaidDuration.months
+        checkoutPeople * GoldilocksPlan.monthlyPricePerPerson * prepaidDuration.months
     }
 
     private var checkoutButtonLabel: String {
         if paymentMethod == .crypto {
             return "Coming Soon"
         }
-        return "Deposit \(prepaidDuration.displayName)"
+        return "Deposit $\(chargeTotal)"
     }
 
     private var canStartCheckout: Bool {
         switch paymentMethod {
         case .apple, .card:
-            return !plan.members.isEmpty
+            return checkoutPeople > 0
         case .crypto:
             return false
         }
     }
 
-    /// True whenever there's an unused prepaid balance, including the
-    /// "paused" case where the client added cover, then removed every
-    /// billable person (so the rate dropped to zero and the balance
-    /// stopped burning). The Coverage section uses this so the client
-    /// can still cancel + refund instead of stranding the credit.
-    private var hasCoverageBalance: Bool {
-        (billingStatus?.balanceCents ?? 0) > 0
-    }
-
-    private var coverageDaysText: String {
-        if isEmerald { return "Active" }
-        guard let status = billingStatus else { return "Loading…" }
-        guard let activeUntil = status.activeUntil,
-              let date = Self.dateFormatter.date(from: activeUntil) else {
-            return "Inactive"
+    private var billingInfoMessage: String {
+        let now = Date()
+        let calendar = Calendar.current
+        let nextMonth: Date = calendar.date(byAdding: .month, value: 1, to: now) ?? now
+        let components: DateComponents = calendar.dateComponents([.year, .month], from: nextMonth)
+        guard let firstOfNextMonth = calendar.date(from: components),
+              let cutoff = calendar.date(byAdding: .day, value: -3, to: firstOfNextMonth) else {
+            return "Disable people in your membership before the billing date to avoid being charged."
         }
-        let days: Int = Calendar.current.dateComponents([.day], from: Date(), to: date).day ?? 0
-        if days <= 0 { return "Expires today" }
-        return "\(days) day\(days == 1 ? "" : "s") remaining"
+        let displayDate: Date = cutoff <= now
+            ? calendar.date(byAdding: .month, value: 1, to: cutoff) ?? cutoff
+            : cutoff
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM d"
+        let dateString: String = formatter.string(from: displayDate)
+        return "Disable people in your membership before \(dateString) to not be charged."
     }
 
     private var cancelConfirmMessage: String {
-        "Coverage ends now. The current month is non-refundable. Any remaining future months are refunded."
+        "Coverage will not be renewed and your balance will be returned to your payment method."
     }
 
     @ViewBuilder
     private var peopleSection: some View {
         Section {
+            tierRow
             if plan.members.isEmpty {
                 Text("No people on your plan yet.")
                     .foregroundStyle(.colorTextSecondary)
@@ -754,7 +771,7 @@ struct MembershipView: View {
         } header: {
             Text("People")
         } footer: {
-            Text("\(GoldilocksPlan.priceLabel). Adding or removing people adjusts your coverage end date. Tap a person to edit, swipe to remove.")
+            Text("\(GoldilocksPlan.priceLabel). Toggle a person on to start coverage. Tap to edit, swipe to remove.")
         }
     }
 
@@ -783,32 +800,81 @@ struct MembershipView: View {
         .buttonStyle(.plain)
     }
 
-    /// One row per person. Tap opens a sheet to edit their info. Emails
-    /// and other contact details are deliberately not shown here so the
-    /// list reads as a clean roster of names.
     private func memberRow(_ member: SeatMember) -> some View {
         let rowLabel: String = member.firstName.isEmpty ? member.displayName : member.firstName
         let tapAction = { editingMember = member }
-        return Button(action: tapAction) {
-            HStack(spacing: DesignConstants.Spacing.step2x) {
-                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
-                    Text(rowLabel)
-                        .font(.body)
-                        .foregroundStyle(.colorTextPrimary)
-                    if !member.enabled {
-                        Text("Disabled")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.colorTextTertiary)
+        return HStack(spacing: DesignConstants.Spacing.step2x) {
+            Button(action: tapAction) {
+                HStack(spacing: DesignConstants.Spacing.step2x) {
+                    VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                        Text(rowLabel)
+                            .font(.body)
+                            .foregroundStyle(.colorTextPrimary)
                     }
+                    Spacer()
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.colorTextTertiary)
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            memberToggle(for: member)
         }
-        .buttonStyle(.plain)
+    }
+
+    private func memberToggle(for member: SeatMember) -> some View {
+        let binding = Binding<Bool>(
+            get: { member.enabled },
+            set: { newValue in
+                if newValue {
+                    pendingActivation = member
+                    if activatedPersonIds.contains(member.id) {
+                        showingReactivationConfirm = true
+                    } else {
+                        showingActivationConfirm = true
+                    }
+                } else {
+                    Task { await togglePerson(member, enabled: false) }
+                }
+            }
+        )
+        return Toggle("", isOn: binding)
+            .labelsHidden()
+    }
+
+    private func confirmActivation(_ member: SeatMember) async {
+        pendingActivation = nil
+        await togglePerson(member, enabled: true)
+    }
+
+    private func togglePerson(_ member: SeatMember, enabled: Bool) async {
+        do {
+            let response = try await session.toggleGoldilocksPersonCoverage(
+                personId: member.id.uuidString,
+                displayName: member.displayName,
+                enabled: enabled
+            )
+            guard let index = plan.members.firstIndex(where: { $0.id == member.id }) else { return }
+            plan.members[index].enabled = enabled
+            if enabled { activatedPersonIds.insert(member.id) }
+            billingStatus = ConvosAPI.GoldilocksBillingStatusResponse(
+                activeUntil: response.activeUntil,
+                coverageActive: response.coverageActive,
+                coverageEnabled: response.coverageEnabled,
+                balanceCents: response.balanceCents,
+                monthlyRateCents: response.monthlyRateCents,
+                seats: response.seats,
+                coveredPeople: response.coveredPeople,
+                reportDay: response.reportDay
+            )
+            cacheCoverageActive()
+            if response.activated, response.deductedCents > 0 {
+                let dollars: Int = response.deductedCents / 100
+                showBillingResult("Coverage activated for \(member.displayName). $\(dollars) deducted.")
+            }
+        } catch let apiError as APIError {
+            showBillingResult("Not enough balance to activate.")
+        } catch {
+            showBillingResult(error.localizedDescription)
+        }
     }
 
     private func showVerifyResult(_ message: String) {
@@ -830,11 +896,8 @@ struct MembershipView: View {
         }
     }
 
-    /// Cache "has active coverage" onto the seat plan so the membership
-    /// tier shown on other screens — the conversations-list chip and the
-    /// App Settings row — reflects whether coverage is actually active.
     private func cacheCoverageActive() {
-        plan.coverageActive = (billingStatus?.balanceCents ?? 0) > 0
+        plan.coverageActive = billingStatus?.coverageActive ?? false
     }
 
     /// Persist a people-list edit — push the encrypted list to the backend,
@@ -864,12 +927,12 @@ struct MembershipView: View {
             let response = try await session.createGoldilocksCheckout(
                 paymentMethod: paymentMethod,
                 durationMonths: prepaidDuration.months,
-                seats: plan.billableSeatCount
+                seats: checkoutPeople
             )
             if let url = URL(string: response.checkoutUrl) {
-                balanceBeforeCheckout = billingStatus?.balanceCents ?? 0
-                checkoutInitiated = true
+                checkoutSessionId = response.sessionId
                 openURL(url)
+                startReconcilePolling(sessionId: response.sessionId)
             } else {
                 showBillingResult("Couldn't open the checkout page.")
             }
@@ -884,11 +947,11 @@ struct MembershipView: View {
         let store: GoldilocksStore = GoldilocksStore.shared
         let success: Bool = await store.purchase(
             duration: prepaidDuration,
-            seats: plan.billableSeatCount,
+            seats: checkoutPeople,
             session: session
         )
         if success {
-            await refreshBillingStatus()
+            await syncSeats()
             showBillingResult("Your coverage is active.")
         } else if let error = store.lastError {
             showBillingResult(error)
@@ -897,24 +960,34 @@ struct MembershipView: View {
         isStartingCheckout = false
     }
 
-    /// Re-check billing state after a checkout. A balance higher than it
-    /// was before the checkout means the top-up has landed.
-    private func refreshBillingStatus() async {
-        isRefreshingBilling = true
+    private func reconcileCheckout() async {
+        guard let sessionId = checkoutSessionId else { return }
         do {
-            let status = try await session.fetchGoldilocksBillingStatus()
+            let status = try await session.reconcileGoldilocksCheckout(sessionId: sessionId)
             billingStatus = status
             cacheCoverageActive()
-            if checkoutInitiated, status.balanceCents > balanceBeforeCheckout {
-                checkoutInitiated = false
+            if status.balanceCents > 0 {
+                checkoutSessionId = nil
+                reconcileTask?.cancel()
+                reconcileTask = nil
                 showBillingResult("Your coverage is active.")
             }
         } catch {
-            // Transient failures are expected while a payment settles; the
-            // user can retry, so don't surface an alert here.
-            Log.warning("[Goldilocks] Billing status refresh failed: \(error.localizedDescription)")
+            Log.warning("[Goldilocks] Checkout reconcile failed: \(error.localizedDescription)")
         }
-        isRefreshingBilling = false
+    }
+
+    private func startReconcilePolling(sessionId: String) {
+        reconcileTask?.cancel()
+        reconcileTask = Task {
+            for attempt in 0..<10 {
+                let delay: UInt64 = attempt < 3 ? 3_000_000_000 : 5_000_000_000
+                try? await Task.sleep(nanoseconds: delay)
+                guard !Task.isCancelled, checkoutSessionId != nil else { return }
+                await reconcileCheckout()
+                if checkoutSessionId == nil { return }
+            }
+        }
     }
 
     /// Stop coverage and refund the unused balance to the card.
@@ -928,7 +1001,7 @@ struct MembershipView: View {
             if refundDollars > 0 {
                 showBillingResult("Coverage cancelled. $\(refundDollars) refunded to your card.")
             } else {
-                showBillingResult("Coverage cancelled. No refund — the current month is non-refundable.")
+                showBillingResult("Coverage cancelled. No refund, the current month is non-refundable.")
             }
         } catch {
             showBillingResult("Couldn't cancel coverage: \(error.localizedDescription)")

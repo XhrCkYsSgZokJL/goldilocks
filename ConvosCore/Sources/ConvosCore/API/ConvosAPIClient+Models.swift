@@ -427,27 +427,111 @@ public enum ConvosAPI {
         }
     }
 
-    /// The client's prepaid-balance state, from `/v2/billing/status` and
-    /// `/v2/billing/seats`.
     public struct GoldilocksBillingStatusResponse: Codable, Sendable {
-        /// ISO-8601 instant coverage runs out; nil when there's no cover.
         public let activeUntil: String?
-        /// Live prepaid balance in cents.
+        public let coverageActive: Bool
+        public let coverageEnabled: Bool
         public let balanceCents: Int
-        /// Current monthly burn rate in cents (from the seat count).
         public let monthlyRateCents: Int
         public let seats: Int
+        public let coveredPeople: Int
+        public let reportDay: String
 
         public init(
             activeUntil: String?,
+            coverageActive: Bool = false,
+            coverageEnabled: Bool = true,
             balanceCents: Int,
             monthlyRateCents: Int,
-            seats: Int
+            seats: Int,
+            coveredPeople: Int = 0,
+            reportDay: String = "1st"
         ) {
             self.activeUntil = activeUntil
+            self.coverageActive = coverageActive
+            self.coverageEnabled = coverageEnabled
             self.balanceCents = balanceCents
             self.monthlyRateCents = monthlyRateCents
             self.seats = seats
+            self.coveredPeople = coveredPeople
+            self.reportDay = reportDay
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            activeUntil = try container.decodeIfPresent(String.self, forKey: .activeUntil)
+            coverageActive = try container.decodeIfPresent(Bool.self, forKey: .coverageActive) ?? false
+            coverageEnabled = try container.decodeIfPresent(Bool.self, forKey: .coverageEnabled) ?? true
+            balanceCents = try container.decode(Int.self, forKey: .balanceCents)
+            monthlyRateCents = try container.decode(Int.self, forKey: .monthlyRateCents)
+            seats = try container.decode(Int.self, forKey: .seats)
+            coveredPeople = try container.decodeIfPresent(Int.self, forKey: .coveredPeople) ?? 0
+            reportDay = try container.decodeIfPresent(String.self, forKey: .reportDay) ?? "1st"
+        }
+    }
+
+    public struct GoldilocksReportDayRequest: Codable, Sendable {
+        public let reportDay: String
+
+        public init(reportDay: String) {
+            self.reportDay = reportDay
+        }
+    }
+
+    public struct GoldilocksCoverageToggleRequest: Codable, Sendable {
+        public let enabled: Bool
+
+        public init(enabled: Bool) {
+            self.enabled = enabled
+        }
+    }
+
+    public struct GoldilocksPersonToggleRequest: Codable, Sendable {
+        public let personId: String
+        public let displayName: String
+        public let enabled: Bool
+
+        public init(personId: String, displayName: String, enabled: Bool) {
+            self.personId = personId
+            self.displayName = displayName
+            self.enabled = enabled
+        }
+    }
+
+    public struct GoldilocksPersonToggleResponse: Codable, Sendable {
+        public let activeUntil: String?
+        public let coverageActive: Bool
+        public let coverageEnabled: Bool
+        public let balanceCents: Int
+        public let monthlyRateCents: Int
+        public let seats: Int
+        public let coveredPeople: Int
+        public let reportDay: String
+        public let activated: Bool
+        public let deductedCents: Int
+
+        public init(
+            activeUntil: String? = nil,
+            coverageActive: Bool = false,
+            coverageEnabled: Bool = true,
+            balanceCents: Int = 0,
+            monthlyRateCents: Int = 0,
+            seats: Int = 0,
+            coveredPeople: Int = 0,
+            reportDay: String = "1st",
+            activated: Bool = false,
+            deductedCents: Int = 0
+        ) {
+            self.activeUntil = activeUntil
+            self.coverageActive = coverageActive
+            self.coverageEnabled = coverageEnabled
+            self.balanceCents = balanceCents
+            self.monthlyRateCents = monthlyRateCents
+            self.seats = seats
+            self.coveredPeople = coveredPeople
+            self.reportDay = reportDay
+            self.activated = activated
+            self.deductedCents = deductedCents
         }
     }
 

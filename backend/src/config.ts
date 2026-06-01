@@ -103,19 +103,35 @@ const schema = z.object({
   // in production — anyone with a JWT could grant themselves admin.
   GOLDILOCKS_ALLOW_SELF_PROMOTE: z.coerce.boolean().default(false),
 
-  // Stripe billing. All optional so the server still boots without them;
-  // the /v2/billing/* routes return 503 until a secret key is configured.
-  //   STRIPE_SECRET_KEY     — sk_test_… in dev, sk_live_… in production.
-  //   STRIPE_WEBHOOK_SECRET — whsec_… signing secret for /v2/stripe/webhook.
-  //                           In local dev this comes from `stripe listen`.
-  //   STRIPE_SUCCESS_URL /  — where Stripe redirects the browser after a
-  //   STRIPE_CANCEL_URL       checkout. Left blank, they default to the
-  //                           backend's own /v2/billing/return + /cancel
-  //                           landing pages derived from PUBLIC_BASE_URL.
+  // --- Payments ---
+  //
+  // All payment provider vars are optional so the server boots without
+  // them. Routes for each provider return 503 until configured.
+
+  // Stripe (card payments).
   STRIPE_SECRET_KEY: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
   STRIPE_WEBHOOK_SECRET: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
   STRIPE_SUCCESS_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
   STRIPE_CANCEL_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
+
+  // Apple In-App Purchase (StoreKit 2 / App Store Server API v2).
+  //   APPLE_BUNDLE_ID          — your app's bundle ID (e.g. com.hopscotch.goldilocks)
+  //   APPLE_TEAM_ID            — 10-char team ID from developer.apple.com
+  //   APPLE_KEY_ID             — Key ID for the App Store Connect API key (.p8)
+  //   APPLE_ISSUER_ID          — Issuer ID from App Store Connect → Keys
+  //   APPLE_PRIVATE_KEY        — contents of the .p8 file (newlines as \n)
+  //   APPLE_ENVIRONMENT        — 'sandbox' for dev/TestFlight, 'production' for live
+  APPLE_BUNDLE_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  APPLE_TEAM_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().length(10).optional()),
+  APPLE_KEY_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  APPLE_ISSUER_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().uuid().optional()),
+  APPLE_PRIVATE_KEY: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  APPLE_ENVIRONMENT: z.enum(['sandbox', 'production']).default('sandbox'),
+
+  // Hopscotch (crypto deposits). Reserved — not yet wired.
+  HOPSCOTCH_API_KEY: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  HOPSCOTCH_WEBHOOK_SECRET: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  HOPSCOTCH_ENVIRONMENT: z.enum(['sandbox', 'production']).default('sandbox'),
 });
 
 const parsed = schema.safeParse(process.env);

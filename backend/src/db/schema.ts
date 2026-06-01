@@ -161,6 +161,16 @@ export const clients = pgTable('clients', {
   // overrides the auto-computed tier from seats + coverage — see
   // `computeTier` in src/billing/tier.ts.
   emeraldMembershipEnabled: boolean('emerald_membership_enabled').notNull().default(false),
+  // Report delivery day: '1st' or '14th' of each month (migration 021).
+  reportDay: text('report_day').notNull().default('1st'),
+  // Client-controlled coverage toggle (migration 022). When false, the
+  // monthly tick skips this client and reports are not delivered.
+  coverageEnabled: boolean('coverage_enabled').notNull().default(true),
+  // How many people currently have active coverage (report delivered,
+  // live events running). The monthly tick charges $125 * this.
+  coveredPeople: integer('covered_people').notNull().default(0),
+  // When the monthly balance tick last ran for this client.
+  lastBalanceTickAt: timestamp('last_balance_tick_at', { withTimezone: true }),
 });
 
 // Audit trail for Stripe Checkout Sessions — one row per top-up. Inserted
@@ -300,6 +310,23 @@ export const reportJobs = pgTable('report_jobs', {
   status: reportJobStatusEnum('status').notNull().default('pending'),
   postedAt: timestamp('posted_at', { withTimezone: true }),
   error: text('error'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Covered persons — clear-text tracking of individuals on a client's
+// plan. Used by the reports-watcher to know who needs a monthly report
+// and by billing to deduct the initial activation fee. The encrypted
+// people-list blob is the client's source of truth for PII; this table
+// only stores the person_id (SeatMember UUID) and display name for
+// operational purposes.
+export const coveredPersons = pgTable('covered_persons', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  clientId: uuid('client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }),
+  personId: uuid('person_id').notNull(),
+  displayName: text('display_name').notNull().default(''),
+  enabled: boolean('enabled').notNull().default(true),
+  activatedAt: timestamp('activated_at', { withTimezone: true }).notNull().defaultNow(),
+  initialReportSentAt: timestamp('initial_report_sent_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

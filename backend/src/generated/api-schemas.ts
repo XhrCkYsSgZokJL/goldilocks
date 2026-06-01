@@ -186,12 +186,43 @@ export type SeatsRequest = z.infer<typeof seatsRequestSchema>;
 
 export const billingStatusResponseSchema = z.object({
   activeUntil: z.string().nullable(),
+  coverageActive: z.boolean(),
+  coverageEnabled: z.boolean(),
   balanceCents: z.number(),
   monthlyRateCents: z.number(),
   seats: z.number(),
+  coveredPeople: z.number(),
+  reportDay: z.string(),
 });
 
 export type BillingStatusResponse = z.infer<typeof billingStatusResponseSchema>;
+
+export const reportDayRequestSchema = z.object({
+  reportDay: z.string(),
+});
+
+export type ReportDayRequest = z.infer<typeof reportDayRequestSchema>;
+
+export const coverageToggleRequestSchema = z.object({
+  enabled: z.boolean(),
+});
+
+export type CoverageToggleRequest = z.infer<typeof coverageToggleRequestSchema>;
+
+export const personToggleRequestSchema = z.object({
+  personId: z.string(),
+  displayName: z.string(),
+  enabled: z.boolean(),
+});
+
+export type PersonToggleRequest = z.infer<typeof personToggleRequestSchema>;
+
+export const personToggleResponseSchema = z.object({
+  activated: z.boolean(),
+  deductedCents: z.number(),
+});
+
+export type PersonToggleResponse = z.infer<typeof personToggleResponseSchema>;
 
 export const cancelResponseSchema = z.object({
   refundedCents: z.number(),

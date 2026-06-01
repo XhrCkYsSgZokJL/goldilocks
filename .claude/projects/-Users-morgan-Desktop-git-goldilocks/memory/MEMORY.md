@@ -1,0 +1,1 @@
+- [Billing model v2](project_billing_model.md) — $65/mo per person, $2/day burn, report day 1st or 14th, Emerald allows negative balance

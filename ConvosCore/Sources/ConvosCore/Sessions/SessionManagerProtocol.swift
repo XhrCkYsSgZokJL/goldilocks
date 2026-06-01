@@ -135,6 +135,24 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// and moves the coverage date (`POST /v2/billing/seats`).
     func syncGoldilocksSeats(seats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
 
+    /// Set the monthly report delivery day (`POST /v2/billing/report-day`).
+    func setGoldilocksReportDay(reportDay: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+
+    /// Reconcile a checkout session with Stripe and return updated billing
+    /// status (`GET /v2/billing/checkout-status/:sessionId`).
+    func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+
+    /// Enable or disable coverage (`POST /v2/billing/coverage`).
+    func toggleGoldilocksCoverage(enabled: Bool) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+
+    /// Enable or disable a specific person on the plan. Enabling deducts
+    /// the initial monthly fee and queues a sample report.
+    func toggleGoldilocksPersonCoverage(
+        personId: String,
+        displayName: String,
+        enabled: Bool
+    ) async throws -> ConvosAPI.GoldilocksPersonToggleResponse
+
     /// Stop cover and refund the unused balance (`POST /v2/billing/cancel`).
     func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse
 
@@ -290,15 +308,31 @@ extension SessionManagerProtocol {
     }
 
     public func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
-        ConvosAPI.GoldilocksBillingStatusResponse(
-            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0
-        )
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
     }
 
     public func syncGoldilocksSeats(seats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
-        ConvosAPI.GoldilocksBillingStatusResponse(
-            activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0
-        )
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    public func setGoldilocksReportDay(reportDay: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    public func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    public func toggleGoldilocksCoverage(enabled: Bool) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    public func toggleGoldilocksPersonCoverage(
+        personId: String,
+        displayName: String,
+        enabled: Bool
+    ) async throws -> ConvosAPI.GoldilocksPersonToggleResponse {
+        ConvosAPI.GoldilocksPersonToggleResponse()
     }
 
     public func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {

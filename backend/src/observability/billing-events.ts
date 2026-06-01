@@ -41,7 +41,9 @@ export type BillingEventKind =
   | 'billing.balance.settled'
   | 'billing.balance.zeroed'
   // --- seats ---
-  | 'billing.seats.updated';
+  | 'billing.seats.updated'
+  // --- coverage toggle ---
+  | 'billing.coverage.toggled';
 
 export interface BillingEventInput {
   event: BillingEventKind;
