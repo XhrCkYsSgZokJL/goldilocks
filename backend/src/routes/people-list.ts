@@ -23,6 +23,7 @@ import { db } from '../db/client.js';
 import { adminInboxes, clients, clientPeopleList, devices } from '../db/schema.js';
 import { requireJwt } from '../middleware/jwt.js';
 import { adminNumberForInbox, emitAuditEvent } from '../audit-events.js';
+import { emitOpsEvent } from '../observability/ops-events.js';
 
 const PutBody = z.object({
   ciphertext: z.string().min(1).max(1_000_000),
@@ -193,8 +194,18 @@ export default async function peopleListRoutes(app: FastifyInstance) {
     }
     const result = await writeBlob(clientId, parsed.data);
     if (!result.ok) {
+      emitOpsEvent(req.log, {
+        event: 'people_list.version_conflict',
+        clientId,
+        context: { baseVersion: parsed.data.baseVersion, currentVersion: result.currentVersion },
+      });
       return reply.code(409).send({ error: 'version_conflict', currentVersion: result.currentVersion });
     }
+    emitOpsEvent(req.log, {
+      event: 'people_list.updated',
+      clientId,
+      context: { version: result.version },
+    });
     return reply.code(200).send({ version: result.version });
   });
 

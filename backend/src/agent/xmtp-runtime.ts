@@ -15,6 +15,10 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { config } from '../config.js';
 import type { AgentIdentity } from './store.js';
 import { recordInboxId } from './store.js';
+import { logger } from '../observability/logger.js';
+import { safeId } from '../observability/security-events.js';
+
+const log = logger.child({ module: 'agent.xmtp-runtime' });
 
 /**
  * Boot an XMTP client for a server agent. On first boot (no inbox_id
@@ -76,12 +80,12 @@ export async function bootAgentClient(identity: AgentIdentity): Promise<Client> 
     const before = await client.preferences.fetchInboxState();
     const staleCount = (before.installations?.length ?? 1) - 1;
     if (staleCount > 0) {
-      console.log(`[agent] ${identity.kind}: revoking ${staleCount} stale installation(s) (keeping ${client.installationId.slice(0, 8)}…)`);
+      log.info({ agent: identity.kind, staleCount, keepingInstallation: safeId(client.installationId) }, 'revoking stale installations');
       await client.revokeAllOtherInstallations();
-      console.log(`[agent] ${identity.kind}: stale installations revoked`);
+      log.info({ agent: identity.kind }, 'stale installations revoked');
     }
   } catch (err) {
-    console.warn(`[agent] ${identity.kind}: revokeAllOtherInstallations failed (non-fatal): ${(err as Error).message}`);
+    log.warn({ agent: identity.kind, err }, 'revokeAllOtherInstallations failed (non-fatal)');
   }
 
   return client;
@@ -96,7 +100,7 @@ function decodeEncryptionKey(input: string): Uint8Array {
   let hex = input.trim();
   if (!hex) {
     // Predictable dev fallback. Loud enough that ops will notice in logs.
-    console.warn('[agent] AGENT_DB_ENCRYPTION_KEY unset — using dev fallback. Do not use in production.');
+    log.warn('AGENT_DB_ENCRYPTION_KEY unset — using dev fallback, not safe for production');
     hex = 'a'.repeat(64);
   }
   if (hex.startsWith('0x') || hex.startsWith('0X')) hex = hex.slice(2);

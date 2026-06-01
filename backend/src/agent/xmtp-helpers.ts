@@ -5,6 +5,7 @@
 // sync with the current @xmtp/node-sdk v6 API surface.
 
 import { Client, Group } from '@xmtp/node-sdk';
+import { logger } from '../observability/logger.js';
 
 /**
  * Fetch the latest inbox states for the given inbox IDs from the XMTP
@@ -16,7 +17,7 @@ export async function refreshInboxStates(client: Client, inboxIds: string[]): Pr
   try {
     await client.preferences.fetchInboxStates(inboxIds);
   } catch (err) {
-    console.warn(`[agent] refreshInboxStates failed (non-fatal): ${(err as Error).message}`);
+    agentLog.warn({ err }, 'refreshInboxStates failed (non-fatal)');
   }
 }
 
@@ -33,7 +34,7 @@ export async function refreshGroupInstallations(group: Group, label: string): Pr
   try {
     await group.sync();
   } catch (err) {
-    console.warn(`${label} refreshGroupInstallations failed (non-fatal): ${(err as Error).message}`);
+    agentLog.warn({ label, err }, 'refreshGroupInstallations failed (non-fatal)');
   }
 }
 
@@ -107,6 +108,8 @@ export async function safe(fn: () => Promise<unknown>, label: string): Promise<v
   }
 }
 
+const agentLog = logger.child({ module: 'agent.xmtp' });
+
 export function log(msg: string): void {
-  console.log(`${new Date().toISOString()} ${msg}`);
+  agentLog.info(msg);
 }

@@ -19,6 +19,7 @@ import { billingCheckouts, clients } from '../db/schema.js';
 import { getStripe, isStripeConfigured } from '../billing/stripe.js';
 import { settle } from '../billing/balance.js';
 import { emitSecurityEvent } from '../observability/security-events.js';
+import { emitBillingEvent } from '../observability/billing-events.js';
 
 export default async function stripeWebhookRoutes(app: FastifyInstance) {
   // Stripe signs the exact raw request bytes, so we must verify against
@@ -98,7 +99,11 @@ async function onCheckoutCompleted(session: Stripe.Checkout.Session, log: Fastif
     .limit(1);
 
   if (!checkout) {
-    log.warn({ sessionId: session.id }, 'checkout.session.completed for an unknown session');
+    emitBillingEvent(log, {
+      event: 'billing.checkout.completed',
+      severity: 'warn',
+      context: { reason: 'unknown_session' },
+    });
     return;
   }
   if (checkout.status === 'completed') {
@@ -116,7 +121,12 @@ async function onCheckoutCompleted(session: Stripe.Checkout.Session, log: Fastif
 
   const [client] = await db.select().from(clients).where(eq(clients.id, checkout.clientId)).limit(1);
   if (!client) {
-    log.warn({ clientId: checkout.clientId }, 'completed checkout for an unknown client');
+    emitBillingEvent(log, {
+      event: 'billing.checkout.completed',
+      severity: 'warn',
+      clientId: checkout.clientId,
+      context: { reason: 'unknown_client' },
+    });
     return;
   }
 
@@ -135,7 +145,23 @@ async function onCheckoutCompleted(session: Stripe.Checkout.Session, log: Fastif
     })
     .where(eq(clients.id, client.id));
 
-  log.info({ clientId: client.id, amountCents: checkout.amountCents }, 'billing top-up credited');
+  emitBillingEvent(log, {
+    event: 'billing.checkout.completed',
+    clientId: client.id,
+    inboxId: client.inboxId,
+    context: { amountCents: checkout.amountCents, durationMonths: checkout.durationMonths, seats: checkout.seats },
+  });
+
+  emitBillingEvent(log, {
+    event: 'billing.balance.credited',
+    clientId: client.id,
+    inboxId: client.inboxId,
+    context: {
+      creditedCents: checkout.amountCents,
+      previousBalanceCents: settled.balanceCents,
+      newBalanceCents: settled.balanceCents + checkout.amountCents,
+    },
+  });
 }
 
 // A Stripe field that can be an id string, an expanded object, or null.

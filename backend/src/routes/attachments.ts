@@ -9,6 +9,7 @@ import { requireJwt } from '../middleware/jwt.js';
 import { makeStorageProvider } from '../storage/index.js';
 import { LighthouseStorageProvider } from '../storage/lighthouse.js';
 import { LocalStorageProvider } from '../storage/local.js';
+import { emitOpsEvent } from '../observability/ops-events.js';
 
 const Query = z.object({
   contentType: z.string().min(1),
@@ -57,6 +58,12 @@ export default async function attachmentRoutes(app: FastifyInstance, opts: { pub
       { contentType, filename, uploadedBy: req.deviceId },
       attachmentBaseUrl(req),
     );
+
+    emitOpsEvent(req.log, {
+      event: 'attachment.presigned',
+      deviceId: req.deviceId,
+      context: { contentType },
+    });
 
     return reply.code(200).send({
       objectKey: result.objectKey,
@@ -128,8 +135,12 @@ export default async function attachmentRoutes(app: FastifyInstance, opts: { pub
       })
       .onConflictDoNothing();
 
-    // Keep `cid` in the response — existing iOS callers read that name;
-    // it's just the lighthouse CID by another name.
+    emitOpsEvent(req.log, {
+      event: 'attachment.uploaded',
+      deviceId: ticket.uploadedBy,
+      context: { contentType: ticket.contentType, sizeBytes: buf.length, provider: 'lighthouse' },
+    });
+
     return reply.code(200).send({ cid: objectKey, assetUrl });
   });
 
@@ -168,6 +179,12 @@ export default async function attachmentRoutes(app: FastifyInstance, opts: { pub
         assetUrl,
       })
       .onConflictDoNothing();
+
+    emitOpsEvent(req.log, {
+      event: 'attachment.uploaded',
+      deviceId: ticket.uploadedBy,
+      context: { contentType: ticket.contentType, sizeBytes: buf.length, provider: 'local' },
+    });
 
     return reply.code(200).send({ cid: ticket.objectKey, objectKey: ticket.objectKey, assetUrl });
   });

@@ -16,7 +16,13 @@
       "Bash(./.claude/scripts/convos-task --help)",
       "Bash(./.claude/scripts/convos-task new *)",
       "Bash(claude --version)",
-      "Bash(git worktree *)"
+      "Bash(git worktree *)",
+      "Bash(npx tsc *)",
+      "Bash(npx vitest *)",
+      "Bash(npm test *)",
+      "Bash(node --import tsx --test src/observability/redact-paths.test.ts)",
+      "Bash(node --import tsx --test src/agent/__tests__/listener.test.ts)",
+      "Bash(git stash *)"
     ]
   },
   "enableAllProjectMcpServers": true,

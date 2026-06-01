@@ -60,4 +60,14 @@ export const REDACT_PATHS = [
   'webhook_secret',
   'sealedKey',
   'agePrivateKey',
+  // Apple IAP
+  'req.body.receiptData',
+  'req.body.transactionId',
+  'receiptData',
+  'appStoreReceipt',
+  'originalTransactionId',
+  // Hopscotch crypto deposits
+  'req.body.walletAddress',
+  'walletAddress',
+  'depositAddress',
 ];

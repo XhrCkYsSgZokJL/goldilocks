@@ -21,6 +21,9 @@ import { startListener } from './listener.js';
 import { startReportsWatcher } from './reports-watcher.js';
 import { AuditLog } from './audit.js';
 import { formatAuditLine } from './audit-format.js';
+import { logger } from '../observability/logger.js';
+import { emitOpsEvent } from '../observability/ops-events.js';
+import { safeId } from '../observability/security-events.js';
 
 // All audit posts (watcher echoes + admin actions) flow through this
 // single AuditLog. It's constructed with the admins-agent client
@@ -39,6 +42,8 @@ import { formatAuditLine } from './audit-format.js';
  * container boot is absorbed silently; only give up if the database is
  * genuinely unreachable.
  */
+const log = logger.child({ module: 'agent' });
+
 async function waitForDatabase(): Promise<void> {
   const maxAttempts = 30;
   const retryDelayMs = 2_000;
@@ -46,7 +51,7 @@ async function waitForDatabase(): Promise<void> {
     try {
       await db.execute(sql`select 1`);
       if (attempt > 1) {
-        console.log(`[agent] database ready (after ${attempt} attempts)`);
+        log.info({ attempts: attempt }, 'database ready');
       }
       return;
     } catch (err) {
@@ -55,31 +60,28 @@ async function waitForDatabase(): Promise<void> {
           `database unreachable after ${maxAttempts} attempts: ${(err as Error).message}`,
         );
       }
-      console.log(
-        `[agent] database not ready, retrying in ${retryDelayMs / 1000}s ` +
-          `(attempt ${attempt}/${maxAttempts})…`,
-      );
+      log.warn({ attempt, maxAttempts }, 'database not ready, retrying');
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
   }
 }
 
 async function main(): Promise<void> {
-  console.log('[agent] starting goldilocks-agent…');
+  emitOpsEvent(log, { event: 'agent.started' });
 
   await waitForDatabase();
 
   const adminsIdentity = await getOrCreateAgentIdentity('admins');
   const reportsIdentity = await getOrCreateAgentIdentity('reports');
 
-  console.log(`[agent] admins-agent eth=${adminsIdentity.ethAddress}`);
-  console.log(`[agent] reports-agent eth=${reportsIdentity.ethAddress}`);
+  log.info({ agent: 'admins', ethAddress: safeId(adminsIdentity.ethAddress, 10) }, 'identity loaded');
+  log.info({ agent: 'reports', ethAddress: safeId(reportsIdentity.ethAddress, 10) }, 'identity loaded');
 
   const adminsClient = await bootAgentClient(adminsIdentity);
   const reportsClient = await bootAgentClient(reportsIdentity);
 
-  console.log(`[agent] admins-agent inbox=${adminsClient.inboxId.slice(0, 8)}… installation=${adminsClient.installationId.slice(0, 8)}…`);
-  console.log(`[agent] reports-agent inbox=${reportsClient.inboxId.slice(0, 8)}… installation=${reportsClient.installationId.slice(0, 8)}…`);
+  log.info({ agent: 'admins', inboxId: safeId(adminsClient.inboxId), installationId: safeId(adminsClient.installationId) }, 'xmtp client booted');
+  log.info({ agent: 'reports', inboxId: safeId(reportsClient.inboxId), installationId: safeId(reportsClient.installationId) }, 'xmtp client booted');
 
   const adminsAgent = new AdminsAgent(adminsClient, adminsIdentity);
   const reportsAgent = new ReportsAgent(reportsClient, reportsIdentity);
@@ -95,10 +97,10 @@ async function main(): Promise<void> {
   // crash the entire process before the listener + watcher come up.
   // The periodic tick below retries them on a 60s cadence.
   try { await adminsAgent.reconcile(); } catch (err) {
-    console.warn('[agent] initial admins reconcile failed (will retry):', (err as Error).message);
+    emitOpsEvent(log, { event: 'agent.reconcile.failed', severity: 'warn', context: { agent: 'admins', error: (err as Error).message } });
   }
   try { await reportsAgent.reconcile(); } catch (err) {
-    console.warn('[agent] initial reports reconcile failed (will retry):', (err as Error).message);
+    emitOpsEvent(log, { event: 'agent.reconcile.failed', severity: 'warn', context: { agent: 'reports', error: (err as Error).message } });
   }
 
   // Periodic reconcile tick. Runs every 60s as a self-healing safety
@@ -111,7 +113,7 @@ async function main(): Promise<void> {
   let reconcileInFlight = false;
   const tick = async (): Promise<void> => {
     if (reconcileInFlight) {
-      console.log('[agent] periodic reconcile skipped (previous tick still running)');
+      log.debug('periodic reconcile skipped (previous tick still running)');
       return;
     }
     reconcileInFlight = true;
@@ -121,7 +123,7 @@ async function main(): Promise<void> {
         reportsAgent.reconcile(),
       ]);
     } catch (err) {
-      console.warn('[agent] periodic reconcile error:', (err as Error).message);
+      emitOpsEvent(log, { event: 'agent.reconcile.failed', severity: 'warn', context: { trigger: 'periodic', error: (err as Error).message } });
     } finally {
       reconcileInFlight = false;
     }
@@ -130,39 +132,48 @@ async function main(): Promise<void> {
 
   const stopListener = await startListener({
     onAdminChanged: async (payload) => {
-      const who = payload.inbox_id ? `${payload.inbox_id.slice(0, 8)}…` : (payload.name ?? 'unclaimed');
-      console.log(`[agent] admin_changed op=${payload.op} ${who}`);
+      emitOpsEvent(log, {
+        event: 'agent.event.dispatched',
+        inboxId: payload.inbox_id,
+        context: { channel: 'admin_changed', op: payload.op },
+      });
       await adminsAgent.reconcile();
     },
     onClientRegistered: async (payload) => {
-      // pg_notify payload is snake_case; the agents take camelCase.
       const event = {
         clientId: payload.client_id,
         clientNumber: payload.client_number,
         inboxId: payload.inbox_id,
       };
-      console.log(`[agent] client_registered #${event.clientNumber} inbox=${event.inboxId.slice(0, 8)}…`);
+      emitOpsEvent(log, {
+        event: 'agent.event.dispatched',
+        clientId: event.clientId,
+        inboxId: event.inboxId,
+        context: { channel: 'client_registered', clientNumber: event.clientNumber },
+      });
       await Promise.all([
         adminsAgent.onClientRegistered(event),
         reportsAgent.onClientRegistered(event),
       ]);
     },
     onUserActive: async (payload) => {
-      // iOS just hit GET /v2/me — likely a relaunch. Re-run reconcile on
-      // both agents so any newly-rotated MLS installation gets folded
-      // into the user's existing groups via updateInstallations(). Cheap
-      // for dev; in prod we'd narrow this to "groups containing inbox X".
-      console.log(`[agent] user_active inbox=${payload.inbox_id.slice(0, 8)}… isAdmin=${payload.is_admin}`);
+      emitOpsEvent(log, {
+        event: 'agent.event.dispatched',
+        inboxId: payload.inbox_id,
+        context: { channel: 'user_active', isAdmin: payload.is_admin },
+      });
       await Promise.all([
         adminsAgent.reconcile(),
         reportsAgent.reconcile(),
       ]);
     },
     onChannelsRecover: async (payload) => {
-      // iOS noticed it has fewer Goldilocks-managed conversations than
-      // /v2/me/channels reports. Force a fresh welcome on each role by
-      // removing + re-adding the client to their MLS groups.
-      console.log(`[agent] channels_recover inbox=${payload.inbox_id.slice(0, 8)}…`);
+      emitOpsEvent(log, {
+        event: 'agent.event.dispatched',
+        clientId: payload.client_id,
+        inboxId: payload.inbox_id,
+        context: { channel: 'channels_recover' },
+      });
       const event = { clientId: payload.client_id, inboxId: payload.inbox_id };
       await Promise.all([
         adminsAgent.recoverChannelsFor(event),
@@ -170,17 +181,18 @@ async function main(): Promise<void> {
       ]);
     },
     onPeopleListChanged: async (payload) => {
-      // A client's encrypted people list changed. Once the third-party
-      // service is defined, the agent will read the blob, decrypt it
-      // with the client's Advisory group key, diff the per-member
-      // `enabled` flags against what has been onboarded, and subscribe
-      // or unsubscribe each changed member. That integration is
-      // intentionally not built yet — only the trigger is wired.
-      console.log(`[agent] people_list_changed client=${payload.client_id.slice(0, 8)}… — third-party onboarding re-evaluation not yet wired (service undefined)`);
+      emitOpsEvent(log, {
+        event: 'agent.event.dispatched',
+        clientId: payload.client_id,
+        context: { channel: 'people_list_changed' },
+      });
     },
     onAuditEvent: async (payload) => {
       const line: string = formatAuditLine(payload);
-      console.log(`[agent] audit_event ${payload.kind} admin=#${payload.admin_number} client=#${payload.client_number}`);
+      emitOpsEvent(log, {
+        event: 'agent.event.dispatched',
+        context: { channel: 'audit_event', kind: payload.kind, adminNumber: payload.admin_number, clientNumber: payload.client_number },
+      });
       await auditLog.postText(line);
     },
   });
@@ -198,7 +210,7 @@ async function main(): Promise<void> {
   // XMTP clients hold a SQLCipher connection that node-sdk releases on
   // process exit.
   const shutdown = async (signal: string) => {
-    console.log(`[agent] received ${signal}, shutting down`);
+    emitOpsEvent(log, { event: 'agent.shutdown', context: { signal } });
     clearInterval(reconcileInterval);
     try { stopReportsWatcher(); } catch {}
     try { await stopAutoResponder(); } catch {}
@@ -208,10 +220,10 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-  console.log('[agent] ready.');
+  emitOpsEvent(log, { event: 'agent.ready' });
 }
 
 main().catch((err) => {
-  console.error('[agent] fatal:', err);
+  log.fatal({ err }, 'agent process crashed');
   process.exit(1);
 });

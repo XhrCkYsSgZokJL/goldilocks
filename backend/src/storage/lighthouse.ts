@@ -1,5 +1,6 @@
 import type { DirectUpload, PresignedUpload, RenewResult, StorageProvider } from './provider.js';
 import { config } from '../config.js';
+import { logger } from '../observability/logger.js';
 
 // Lighthouse-backed storage.
 //
@@ -32,9 +33,7 @@ export class LighthouseStorageProvider implements StorageProvider {
     if (!apiKey) {
       // Lighthouse SDK supports wallet-based payment via LIGHTHOUSE_WALLET_PRIVATE_KEY,
       // which we'll wire in once you fund a wallet. Until then surface a clear hint.
-      console.warn(
-        '[lighthouse] LIGHTHOUSE_API_KEY not set. Uploads will fail until you set one or wire wallet auth.',
-      );
+      logger.warn('LIGHTHOUSE_API_KEY not set — uploads will fail until configured');
     }
   }
 

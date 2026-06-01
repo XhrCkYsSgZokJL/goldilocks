@@ -75,6 +75,7 @@ import { liveBalanceCents } from '../billing/balance.js';
 import { computeTier, type MembershipTier, tierLabel } from '../billing/tier.js';
 import { AuditLog } from './audit.js';
 import { makeStorageProvider, type StorageProvider } from '../storage/index.js';
+import { logger } from '../observability/logger.js';
 
 const POLL_INTERVAL_MS = 60_000;
 // fs.watch fires multiple events for one write on some filesystems
@@ -933,6 +934,8 @@ function timestampPrefix(): string {
   return new Date().toISOString().replace(/[:.]/g, '-');
 }
 
+const watcherLog = logger.child({ module: 'agent.reports-watcher' });
+
 function log(msg: string): void {
-  console.log(`${new Date().toISOString()} ${msg}`);
+  watcherLog.info(msg);
 }

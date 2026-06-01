@@ -22,6 +22,7 @@ import { requireJwt } from '../middleware/jwt.js';
 import { getStripe, isStripeConfigured } from '../billing/stripe.js';
 import { isAllowedDuration, monthlyTotalCents } from '../billing/pricing.js';
 import { activeUntil, liveBalanceCents, monthlyRateCents, settle } from '../billing/balance.js';
+import { emitBillingEvent } from '../observability/billing-events.js';
 import type Stripe from 'stripe';
 
 const CheckoutBody = z.object({
@@ -85,6 +86,11 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
       });
       customerId = customer.id;
       await db.update(clients).set({ stripeCustomerId: customerId }).where(eq(clients.id, client.id));
+      emitBillingEvent(req.log, {
+        event: 'billing.customer.created',
+        clientId: client.id,
+        inboxId: client.inboxId,
+      });
     }
 
     const metadata: Record<string, string> = {
@@ -119,7 +125,13 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
         payment_intent_data: { metadata },
       });
     } catch (err) {
-      req.log.error({ err }, 'stripe checkout session create failed');
+      emitBillingEvent(req.log, {
+        event: 'billing.checkout.initiated',
+        severity: 'error',
+        clientId: client.id,
+        inboxId: client.inboxId,
+        context: { error: (err as Error).message, paymentMethod, durationMonths, seats },
+      });
       return reply.code(502).send({ error: 'stripe_error', message: 'Could not start checkout. Please try again.' });
     }
 
@@ -136,6 +148,13 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
       amountCents,
       currency: 'usd',
       status: 'pending',
+    });
+
+    emitBillingEvent(req.log, {
+      event: 'billing.checkout.initiated',
+      clientId: client.id,
+      inboxId: client.inboxId,
+      context: { paymentMethod, durationMonths, seats, amountCents },
     });
 
     return reply.code(200).send({ checkoutUrl: session.url, sessionId: session.id });
@@ -184,6 +203,12 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
     if (!updated) {
       return reply.code(409).send({ error: 'client_missing' });
     }
+    emitBillingEvent(req.log, {
+      event: 'billing.seats.updated',
+      clientId: client.id,
+      inboxId: client.inboxId,
+      context: { previousSeats: client.billingSeats, newSeats: seats },
+    });
     return reply.code(200).send(billingStatus(updated));
   });
 
@@ -242,8 +267,20 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
             payment_intent: checkout.stripePaymentIntentId as string,
             amount,
           });
+          emitBillingEvent(req.log, {
+            event: 'billing.refund.completed',
+            clientId: client.id,
+            inboxId: client.inboxId,
+            context: { amountCents: amount },
+          });
         } catch (err) {
-          req.log.error({ err, checkoutId: checkout.id }, 'stripe refund failed');
+          emitBillingEvent(req.log, {
+            event: 'billing.refund.failed',
+            severity: 'error',
+            clientId: client.id,
+            inboxId: client.inboxId,
+            context: { amountCents: amount, error: (err as Error).message },
+          });
           continue;
         }
         await db
@@ -261,6 +298,13 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
       .update(clients)
       .set({ billingBalanceCents: 0, billingBalanceAsOf: settled.asOf })
       .where(eq(clients.id, client.id));
+
+    emitBillingEvent(req.log, {
+      event: 'billing.balance.zeroed',
+      clientId: client.id,
+      inboxId: client.inboxId,
+      context: { refundedCents: refundedTotal, retainedCents, previousBalanceCents: settled.balanceCents },
+    });
 
     return reply.code(200).send({ refundedCents: refundedTotal, retainedCents });
   });

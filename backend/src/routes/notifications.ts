@@ -5,6 +5,7 @@ import { db } from '../db/client.js';
 import { devices, installations, subscriptions } from '../db/schema.js';
 import { requireJwt } from '../middleware/jwt.js';
 import { sql } from 'drizzle-orm';
+import { emitOpsEvent } from '../observability/ops-events.js';
 
 const HmacKey = z.object({
   thirtyDayPeriodsSinceEpoch: z.number().int(),
@@ -59,6 +60,12 @@ export default async function notificationRoutes(app: FastifyInstance) {
         });
     }
 
+    emitOpsEvent(req.log, {
+      event: 'notification.subscribed',
+      deviceId,
+      context: { topicCount: topics.length },
+    });
+
     return reply.code(200).send({});
   });
 
@@ -78,6 +85,11 @@ export default async function notificationRoutes(app: FastifyInstance) {
       .delete(subscriptions)
       .where(and(eq(subscriptions.clientId, clientId), inArray(subscriptions.topic, topics)));
 
+    emitOpsEvent(req.log, {
+      event: 'notification.unsubscribed',
+      context: { topicCount: topics.length },
+    });
+
     return reply.code(200).send({});
   });
 
@@ -91,6 +103,10 @@ export default async function notificationRoutes(app: FastifyInstance) {
       }
       // Cascading FK removes subscriptions automatically.
       await db.delete(installations).where(eq(installations.clientId, clientId));
+      emitOpsEvent(req.log, {
+        event: 'notification.unregistered',
+        clientId,
+      });
       return reply.code(200).send({});
     },
   );

@@ -10,8 +10,11 @@
 
 import pg from 'pg';
 import { config } from '../config.js';
+import { logger } from '../observability/logger.js';
+import { emitOpsEvent } from '../observability/ops-events.js';
 
 const { Client: PgClient } = pg;
+const log = logger.child({ module: 'agent.listener' });
 
 export interface AdminChangedPayload {
   op: 'INSERT' | 'UPDATE' | 'DELETE';
@@ -73,7 +76,7 @@ export async function startListener(handlers: ListenerHandlers): Promise<() => P
   });
 
   pgc.on('error', (err) => {
-    console.error('[agent] pg listener error:', err);
+    emitOpsEvent(log, { event: 'agent.listener.error', severity: 'error', context: { error: (err as Error).message } });
   });
 
   await pgc.query('LISTEN admin_changed');
@@ -82,7 +85,7 @@ export async function startListener(handlers: ListenerHandlers): Promise<() => P
   await pgc.query('LISTEN channels_recover');
   await pgc.query('LISTEN people_list_changed');
   await pgc.query('LISTEN audit_event');
-  console.log('[agent] LISTENing on admin_changed + client_registered + user_active + channels_recover + people_list_changed + audit_event');
+  emitOpsEvent(log, { event: 'agent.listener.connected', context: { channels: 'admin_changed,client_registered,user_active,channels_recover,people_list_changed,audit_event' } });
 
   return async () => {
     try { await pgc.query('UNLISTEN *'); } catch {}
@@ -97,7 +100,7 @@ export async function dispatch(channel: string, payload: string, handlers: Liste
   try {
     parsed = JSON.parse(payload);
   } catch {
-    console.error(`[agent] notify: malformed payload on ${channel}: ${payload}`);
+    log.error({ channel }, 'malformed notify payload');
     return;
   }
 
@@ -115,9 +118,9 @@ export async function dispatch(channel: string, payload: string, handlers: Liste
     } else if (channel === 'audit_event') {
       await handlers.onAuditEvent(parsed as AuditEventPayload);
     } else {
-      console.warn(`[agent] notify: unknown channel ${channel}`);
+      log.warn({ channel }, 'unknown notify channel');
     }
   } catch (err) {
-    console.error(`[agent] handler for ${channel} threw:`, err);
+    emitOpsEvent(log, { event: 'agent.event.handler_error', severity: 'error', context: { channel, error: (err as Error).message } });
   }
 }

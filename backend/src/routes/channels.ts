@@ -19,6 +19,7 @@ import { db } from '../db/client.js';
 import { adminInboxes, clients, clientChannels, devices } from '../db/schema.js';
 import { requireJwt } from '../middleware/jwt.js';
 import { adminNumberForInbox, emitAuditEvent } from '../audit-events.js';
+import { emitOpsEvent } from '../observability/ops-events.js';
 
 const ROLE = z.enum(['advisory', 'reports']);
 
@@ -113,6 +114,13 @@ export default async function channelRoutes(app: FastifyInstance) {
         },
       });
 
+    emitOpsEvent(req.log, {
+      event: 'channel.registered',
+      clientId: caller.clientId,
+      inboxId: caller.inboxId,
+      context: { role },
+    });
+
     return reply.code(200).send({
       role,
       xmtpGroupId,
@@ -180,6 +188,12 @@ export default async function channelRoutes(app: FastifyInstance) {
     if (result.length === 0) {
       return reply.code(404).send({ error: 'channel_not_found' });
     }
+    emitOpsEvent(req.log, {
+      event: 'channel.exploded',
+      clientId: caller.clientId,
+      inboxId: caller.inboxId,
+      context: { role: parsedRole.data },
+    });
     return reply.code(200).send({ ok: true });
   });
 
@@ -219,6 +233,12 @@ export default async function channelRoutes(app: FastifyInstance) {
     if (result.length === 0) {
       return reply.code(404).send({ error: 'channel_not_found' });
     }
+    emitOpsEvent(req.log, {
+      event: 'channel.recreated',
+      clientId: caller.clientId,
+      inboxId: caller.inboxId,
+      context: { role: parsedRole.data },
+    });
     return reply.code(200).send({
       role: parsedRole.data,
       xmtpGroupId: parsedBody.data.xmtpGroupId,
@@ -249,6 +269,12 @@ export default async function channelRoutes(app: FastifyInstance) {
     // pg_notify takes (channel_name, payload). drizzle's sql tag handles
     // both arguments cleanly here.
     await db.execute(sql`SELECT pg_notify('channels_recover', ${payload})`);
+
+    emitOpsEvent(req.log, {
+      event: 'channel.recover_requested',
+      clientId: caller.clientId,
+      inboxId: caller.inboxId,
+    });
 
     return reply.code(202).send({ accepted: true });
   });

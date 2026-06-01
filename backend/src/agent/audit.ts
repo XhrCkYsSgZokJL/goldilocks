@@ -27,6 +27,7 @@ import type { Client, Group, RemoteAttachment } from '@xmtp/node-sdk';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { serverGroups } from '../db/schema.js';
+import { logger } from '../observability/logger.js';
 
 const ALERTS_GROUP_KIND = 'alerts';
 
@@ -89,6 +90,8 @@ export class AuditLog {
   }
 }
 
+const auditLogger = logger.child({ module: 'agent.audit' });
+
 function auditLog(msg: string): void {
-  console.log(`${new Date().toISOString()} [audit] ${msg}`);
+  auditLogger.info(msg);
 }
