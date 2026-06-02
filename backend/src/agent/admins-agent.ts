@@ -282,6 +282,30 @@ export class AdminsAgent {
     await this.createAdvisoryFor(payload, adminInboxIds, true);
   }
 
+  async sendAdvisoryMessage(payload: { clientId: string; message: string }): Promise<void> {
+    return this.enqueue(`advisory-msg ${payload.clientId.slice(0, 8)}`, async () => {
+      const [row] = await db
+        .select({ xmtpGroupId: clientChannels.xmtpGroupId })
+        .from(clientChannels)
+        .where(and(eq(clientChannels.clientId, payload.clientId), eq(clientChannels.role, 'advisory')))
+        .limit(1);
+
+      if (!row?.xmtpGroupId) {
+        log(`[admins] advisory-msg: no Advisory group for client ${payload.clientId.slice(0, 8)}…, skipping`);
+        return;
+      }
+
+      const group = await this.tryLoadGroup(row.xmtpGroupId);
+      if (!group) {
+        log(`[admins] advisory-msg: group ${row.xmtpGroupId.slice(0, 8)}… not found locally, skipping`);
+        return;
+      }
+
+      await safe(() => group.sendText(payload.message), `[admins] advisory-msg to ${payload.clientId.slice(0, 8)}…`);
+      log(`[admins] advisory-msg: posted to client ${payload.clientId.slice(0, 8)}…`);
+    });
+  }
+
   // ---- private helpers -------------------------------------------------
 
   private async reconcileAdminsGroup(adminInboxIds: string[]): Promise<void> {

@@ -17,7 +17,8 @@ import { logger } from '../observability/logger.js';
 const log = logger.child({ module: 'referral' });
 
 function generateCode(): string {
-  return randomBytes(4).toString('base64url');
+  const n = randomBytes(4).readUInt32BE() % 1_000_000;
+  return String(n).padStart(6, '0');
 }
 
 function referralDomain(publicBaseUrl: string): string {

@@ -907,6 +907,7 @@ async function resolveRecipients(target: ResolvedTarget): Promise<ReportRecipien
       coveredPeople: clients.coveredPeople,
       lastBalanceTickAt: clients.lastBalanceTickAt,
       coverageEnabled: clients.coverageEnabled,
+      referralCreditCents: clients.referralCreditCents,
     })
     .from(clientChannels)
     .innerJoin(clients, eq(clientChannels.clientId, clients.id))

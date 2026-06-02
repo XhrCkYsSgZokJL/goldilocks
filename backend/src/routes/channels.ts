@@ -306,6 +306,7 @@ export default async function channelRoutes(app: FastifyInstance) {
         coveredPeople: clients.coveredPeople,
         lastBalanceTickAt: clients.lastBalanceTickAt,
         coverageEnabled: clients.coverageEnabled,
+        referralCreditCents: clients.referralCreditCents,
         role: clientChannels.role,
         xmtpGroupId: clientChannels.xmtpGroupId,
         status: clientChannels.status,

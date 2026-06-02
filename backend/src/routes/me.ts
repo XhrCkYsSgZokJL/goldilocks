@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { and, eq, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db } from '../db/client.js';
-import { adminInboxes, authChallenges, clients, devices, serverAgents, serverGroups } from '../db/schema.js';
+import { adminInboxes, authChallenges, clients, devices, referrals, serverAgents, serverGroups } from '../db/schema.js';
 import { requireJwt } from '../middleware/jwt.js';
 import { deviceKeyGenerator } from '../middleware/rate-limit-keys.js';
 import { buildSiweMessage, verifyChallenge } from '../auth/siwe.js';
@@ -175,9 +175,21 @@ export default async function meRoutes(app: FastifyInstance) {
 
     let referralCode: string = client.referralCode ?? '';
     if (!referralCode) {
-      referralCode = randomBytes(4).toString('base64url');
+      const n = randomBytes(4).readUInt32BE() % 1_000_000;
+      referralCode = String(n).padStart(6, '0');
       await db.update(clients).set({ referralCode }).where(eq(clients.id, client.id));
     }
+
+    const [referralCount] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(referrals)
+      .where(and(eq(referrals.referrerClientId, client.id), isNotNull(referrals.referrerCreditAppliedAt)));
+
+    const [appliedReferral] = await db
+      .select({ id: referrals.id })
+      .from(referrals)
+      .where(eq(referrals.referredClientId, client.id))
+      .limit(1);
 
     return reply.code(200).send({
       clientNumber: client.clientNumber,
@@ -185,6 +197,9 @@ export default async function meRoutes(app: FastifyInstance) {
       inboxId: client.inboxId,
       emeraldMembershipEnabled: client.emeraldMembershipEnabled,
       referralCode,
+      referralCreditCents: client.referralCreditCents,
+      payingReferralCount: referralCount?.count ?? 0,
+      hasAppliedReferralCode: !!appliedReferral,
     });
   });
 

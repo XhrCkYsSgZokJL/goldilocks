@@ -43,7 +43,10 @@ export type BillingEventKind =
   // --- seats ---
   | 'billing.seats.updated'
   // --- coverage toggle ---
-  | 'billing.coverage.toggled';
+  | 'billing.coverage.toggled'
+  // --- referrals ---
+  | 'billing.referral.credit'
+  | 'billing.referral.discount';
 
 export interface BillingEventInput {
   event: BillingEventKind;

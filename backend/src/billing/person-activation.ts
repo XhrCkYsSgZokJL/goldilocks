@@ -87,18 +87,27 @@ async function activatePerson(
   const isReactivation: boolean = existing != null;
   const chargeAmount: number = isReactivation ? 0 : deductionCents;
 
-  if (chargeAmount > 0 && !isEmerald && client.billingBalanceCents < chargeAmount) {
+  const totalAvailable: number = client.referralCreditCents + client.billingBalanceCents;
+  if (chargeAmount > 0 && !isEmerald && totalAvailable < chargeAmount) {
     throw new Error('insufficient_balance');
   }
 
+  // Draw from referral credit first, then prepaid balance.
+  let remaining: number = chargeAmount;
+  let newReferralCredit: number = client.referralCreditCents;
+  const fromReferral: number = Math.min(newReferralCredit, remaining);
+  newReferralCredit -= fromReferral;
+  remaining -= fromReferral;
+
   const newBalance: number = isEmerald
-    ? client.billingBalanceCents - chargeAmount
-    : Math.max(0, client.billingBalanceCents - chargeAmount);
+    ? client.billingBalanceCents - remaining
+    : Math.max(0, client.billingBalanceCents - remaining);
 
   await db
     .update(clients)
     .set({
       billingBalanceCents: newBalance,
+      referralCreditCents: newReferralCredit,
       coveredPeople: sql`(
         SELECT count(*) FROM covered_persons
         WHERE client_id = ${clientId} AND enabled = true

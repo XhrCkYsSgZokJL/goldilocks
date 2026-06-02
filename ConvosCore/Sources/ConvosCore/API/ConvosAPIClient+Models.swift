@@ -252,23 +252,32 @@ public enum ConvosAPI {
         /// hides the "Add coverage" purchase flow + enables Invoices.
         public let emeraldMembershipEnabled: Bool
         public let referralCode: String?
+        public let referralCreditCents: Int
+        public let payingReferralCount: Int
+        public let hasAppliedReferralCode: Bool
 
         public init(
             clientNumber: Int64,
             isAdmin: Bool,
             inboxId: String,
             emeraldMembershipEnabled: Bool = false,
-            referralCode: String? = nil
+            referralCode: String? = nil,
+            referralCreditCents: Int = 0,
+            payingReferralCount: Int = 0,
+            hasAppliedReferralCode: Bool = false
         ) {
             self.clientNumber = clientNumber
             self.isAdmin = isAdmin
             self.inboxId = inboxId
             self.emeraldMembershipEnabled = emeraldMembershipEnabled
             self.referralCode = referralCode
+            self.referralCreditCents = referralCreditCents
+            self.payingReferralCount = payingReferralCount
+            self.hasAppliedReferralCode = hasAppliedReferralCode
         }
 
         private enum CodingKeys: String, CodingKey {
-            case clientNumber, isAdmin, inboxId, emeraldMembershipEnabled, referralCode
+            case clientNumber, isAdmin, inboxId, emeraldMembershipEnabled, referralCode, referralCreditCents, payingReferralCount, hasAppliedReferralCode
         }
 
         public init(from decoder: any Decoder) throws {
@@ -278,6 +287,9 @@ public enum ConvosAPI {
             self.inboxId = try container.decode(String.self, forKey: .inboxId)
             self.emeraldMembershipEnabled = try container.decodeIfPresent(Bool.self, forKey: .emeraldMembershipEnabled) ?? false
             self.referralCode = try container.decodeIfPresent(String.self, forKey: .referralCode)
+            self.referralCreditCents = try container.decodeIfPresent(Int.self, forKey: .referralCreditCents) ?? 0
+            self.payingReferralCount = try container.decodeIfPresent(Int.self, forKey: .payingReferralCount) ?? 0
+            self.hasAppliedReferralCode = try container.decodeIfPresent(Bool.self, forKey: .hasAppliedReferralCode) ?? false
         }
     }
 

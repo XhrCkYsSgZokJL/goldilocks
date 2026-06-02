@@ -53,6 +53,11 @@ export interface AuditEventPayload {
   client_number: number;
 }
 
+export interface AdvisoryMessagePayload {
+  client_id: string;
+  message: string;
+}
+
 export interface ListenerHandlers {
   onAdminChanged: (payload: AdminChangedPayload) => Promise<void>;
   onClientRegistered: (payload: ClientRegisteredPayload) => Promise<void>;
@@ -60,6 +65,7 @@ export interface ListenerHandlers {
   onChannelsRecover: (payload: ChannelsRecoverPayload) => Promise<void>;
   onPeopleListChanged: (payload: PeopleListChangedPayload) => Promise<void>;
   onAuditEvent: (payload: AuditEventPayload) => Promise<void>;
+  onAdvisoryMessage: (payload: AdvisoryMessagePayload) => Promise<void>;
 }
 
 /**
@@ -85,7 +91,8 @@ export async function startListener(handlers: ListenerHandlers): Promise<() => P
   await pgc.query('LISTEN channels_recover');
   await pgc.query('LISTEN people_list_changed');
   await pgc.query('LISTEN audit_event');
-  emitOpsEvent(log, { event: 'agent.listener.connected', context: { channels: 'admin_changed,client_registered,user_active,channels_recover,people_list_changed,audit_event' } });
+  await pgc.query('LISTEN advisory_message');
+  emitOpsEvent(log, { event: 'agent.listener.connected', context: { channels: 'admin_changed,client_registered,user_active,channels_recover,people_list_changed,audit_event,advisory_message' } });
 
   return async () => {
     try { await pgc.query('UNLISTEN *'); } catch {}
@@ -117,6 +124,8 @@ export async function dispatch(channel: string, payload: string, handlers: Liste
       await handlers.onPeopleListChanged(parsed as PeopleListChangedPayload);
     } else if (channel === 'audit_event') {
       await handlers.onAuditEvent(parsed as AuditEventPayload);
+    } else if (channel === 'advisory_message') {
+      await handlers.onAdvisoryMessage(parsed as AdvisoryMessagePayload);
     } else {
       log.warn({ channel }, 'unknown notify channel');
     }

@@ -11,6 +11,7 @@ const recordingHandlers = (): { handlers: ListenerHandlers; calls: Array<{ chann
     onChannelsRecover: async (p) => { calls.push({ channel: 'channels_recover', payload: p }); },
     onPeopleListChanged: async (p) => { calls.push({ channel: 'people_list_changed', payload: p }); },
     onAuditEvent: async (p) => { calls.push({ channel: 'audit_event', payload: p }); },
+    onAdvisoryMessage: async (p) => { calls.push({ channel: 'advisory_message', payload: p }); },
   };
   return { handlers, calls };
 };
@@ -72,6 +73,7 @@ describe('listener.dispatch', () => {
       onChannelsRecover: async () => {},
       onPeopleListChanged: async () => {},
       onAuditEvent: async () => {},
+      onAdvisoryMessage: async () => {},
     };
 
     // Should not throw — dispatch swallows handler errors and logs them.

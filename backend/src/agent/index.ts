@@ -215,6 +215,14 @@ async function main(): Promise<void> {
       });
       await auditLog.postText(line);
     },
+    onAdvisoryMessage: async (payload) => {
+      emitOpsEvent(log, {
+        event: 'agent.event.dispatched',
+        clientId: payload.client_id,
+        context: { channel: 'advisory_message' },
+      });
+      await adminsAgent.sendAdvisoryMessage({ clientId: payload.client_id, message: payload.message });
+    },
   });
 
   // Auto-reply to clients who write into their Reports feed — Reports is

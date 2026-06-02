@@ -50,6 +50,12 @@ export interface MeResponse {
   emeraldMembershipEnabled: boolean;
   /** @swift optional */
   referralCode?: string;
+  /** @swift default(0) */
+  referralCreditCents: number;
+  /** @swift default(0) */
+  payingReferralCount: number;
+  /** @swift default(false) */
+  hasAppliedReferralCode: boolean;
 }
 
 // ---------------------------------------------------------------------------

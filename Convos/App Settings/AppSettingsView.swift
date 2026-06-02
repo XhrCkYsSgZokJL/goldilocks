@@ -547,7 +547,7 @@ struct MembershipView: View {
             Button("Re-activate", action: confirmAction)
             Button("Cancel", role: .cancel) { pendingActivation = nil }
         } message: {
-            Text("This person will be re-added to your membership.")
+            Text("This person will be re-added to your membership for no extra charge.")
         }
         .alert(hasBalance ? "Request refund?" : "Balance", isPresented: $showingCancelConfirm) {
             if hasBalance {
@@ -616,20 +616,35 @@ struct MembershipView: View {
         }
     }
 
+    @State private var showingReferralSheet: Bool = false
+
+    private var payingReferralCount: Int {
+        GoldilocksSession.shared.identity?.payingReferralCount ?? 0
+    }
+
     private var referralCreditRow: some View {
-        let code: String = GoldilocksSession.shared.identity?.referralCode ?? "—"
-        return HStack {
-            VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
-                Text("Referral credit")
-                    .foregroundStyle(.colorTextPrimary)
-                Text("For every client you refer that adds a membership, get a free month of coverage.")
-                    .font(.caption)
+        let tapAction = { showingReferralSheet = true }
+        return Button(action: tapAction) {
+            HStack {
+                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                    Text("Referral credit")
+                        .foregroundStyle(.colorTextPrimary)
+                    Text("For every 2 paying clients, get $100 credit.")
+                        .font(.caption)
+                        .foregroundStyle(.colorTextSecondary)
+                }
+                Spacer()
+                Text("\(payingReferralCount)")
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(.colorTextSecondary)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.colorTextTertiary)
             }
-            Spacer()
-            Text(code)
-                .font(.body.monospacedDigit())
-                .foregroundStyle(.colorTextPrimary)
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showingReferralSheet) {
+            ReferralCreditSheet(session: session)
         }
     }
 
@@ -1715,10 +1730,6 @@ private struct AppShareQRSheet: View {
     private var shareURL: URL {
         let domain: String = ConfigManager.shared.currentEnvironment.relyingPartyIdentifier
         let base: String = "https://\(domain)"
-        if let code = GoldilocksSession.shared.identity?.referralCode,
-           let url = URL(string: "\(base)/r/\(code)") {
-            return url
-        }
         guard let url = URL(string: base) else {
             return URL(string: "https://goldilocksdigital.xyz")
                 ?? URL(fileURLWithPath: "/")
@@ -1729,14 +1740,6 @@ private struct AppShareQRSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: DesignConstants.Spacing.step6x) {
-                VStack(spacing: DesignConstants.Spacing.step2x) {
-                    Text("Your Gold code")
-                        .kerning(1.0)
-                    .foregroundStyle(Color.brandIcon)
-                    .textCase(.uppercase)
-                    .font(.caption)
-                }
-
                 QRCodeView(
                     url: shareURL,
                     centerImage: Image(BrandConfig.shared.assets.logoImageName)
@@ -1770,5 +1773,149 @@ private struct AppShareQRSheet: View {
                 }
             }
         }
+    }
+}
+
+private struct ReferralCreditSheet: View {
+    let session: any SessionManagerProtocol
+    @Environment(\.dismiss) private var dismiss: DismissAction
+    @State private var referralInput: String = ""
+    @State private var resultMessage: String?
+    @State private var showingResult: Bool = false
+    @FocusState private var isInputFocused: Bool
+
+    private var myCode: String {
+        GoldilocksSession.shared.identity?.referralCode ?? "------"
+    }
+
+    private var referralCreditCents: Int {
+        GoldilocksSession.shared.identity?.referralCreditCents ?? 0
+    }
+
+    private var referralCreditFormatted: String {
+        let dollars: Int = referralCreditCents / 100
+        return "$\(dollars)"
+    }
+
+    private var hasAppliedReferralCode: Bool {
+        GoldilocksSession.shared.identity?.hasAppliedReferralCode ?? false
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: DesignConstants.Spacing.step8x) {
+                Spacer()
+
+                if !hasAppliedReferralCode {
+                VStack(spacing: DesignConstants.Spacing.step3x) {
+                    Text("Have a referral code?")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.colorTextPrimary)
+
+                    TextField("000000", text: $referralInput)
+                        .keyboardType(.numberPad)
+                        .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                        .multilineTextAlignment(.center)
+                        .padding(DesignConstants.Spacing.step3x)
+                        .background(Color.colorFillMinimal, in: RoundedRectangle(cornerRadius: DesignConstants.CornerRadius.regular))
+                        .focused($isInputFocused)
+                        .onChange(of: referralInput) { _, newValue in
+                            let digits: String = String(newValue.filter(\.isNumber).prefix(6))
+                            if digits != newValue { referralInput = digits }
+                        }
+                        .accessibilityIdentifier("referral-code-input")
+
+                    let applyAction = {
+                        let code: String = referralInput.trimmingCharacters(in: .whitespaces)
+                        guard code.count == 6 else {
+                            resultMessage = "Please enter a 6-digit code."
+                            showingResult = true
+                            return
+                        }
+                        if code == myCode {
+                            resultMessage = "You cannot use your own referral code."
+                            showingResult = true
+                            return
+                        }
+                        Task { await submitReferralCode(code) }
+                    }
+                    Button(action: applyAction) {
+                        Text("Apply code")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.colorTextPrimaryInverted)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, DesignConstants.Spacing.step3x)
+                            .background(Color.colorFillPrimary, in: RoundedRectangle(cornerRadius: DesignConstants.CornerRadius.regular))
+                    }
+                    .disabled(referralInput.count != 6)
+                    .opacity(referralInput.count == 6 ? 1.0 : 0.5)
+                }
+                .padding(.horizontal, DesignConstants.Spacing.step4x)
+                }
+
+                VStack(spacing: DesignConstants.Spacing.step2x) {
+                    Text("Your referral code")
+                        .font(.caption)
+                        .foregroundStyle(.colorTextSecondary)
+                        .textCase(.uppercase)
+                        .kerning(1.0)
+
+                    let copyAction = { UIPasteboard.general.string = myCode }
+                    Button(action: copyAction) {
+                        HStack(spacing: DesignConstants.Spacing.step2x) {
+                            Text(myCode)
+                                .font(.system(size: 36, weight: .bold, design: .monospaced))
+                                .foregroundStyle(.colorTextPrimary)
+                                .kerning(4.0)
+                            Image(systemName: "doc.on.doc")
+                                .font(.body)
+                                .foregroundStyle(.colorTextTertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Copy referral code \(myCode)")
+
+                    Text("For every 2 paying clients, get $100 credit.")
+                        .font(.footnote)
+                        .foregroundStyle(.colorTextSecondary)
+
+                    if referralCreditCents > 0 {
+                        Text("Referral credit: \(referralCreditFormatted)")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Color.brandIcon)
+                    }
+                }
+
+                Spacer()
+            }
+            .padding(DesignConstants.Spacing.step6x)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.colorBackgroundRaisedSecondary)
+            .navigationTitle("Referral")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    let cancelAction = { dismiss() }
+                    Button("Done", action: cancelAction)
+                }
+            }
+            .onAppear { if !hasAppliedReferralCode { isInputFocused = true } }
+            .alert("Referral", isPresented: $showingResult) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(resultMessage ?? "")
+            }
+        }
+    }
+
+    private func submitReferralCode(_ code: String) async {
+        do {
+            try await session.claimGoldilocksReferral(code: code)
+            resultMessage = "Referral applied."
+            referralInput = ""
+        } catch {
+            resultMessage = "Could not apply referral code. It may be invalid or already used."
+        }
+        showingResult = true
     }
 }

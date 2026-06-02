@@ -173,6 +173,7 @@ export const clients = pgTable('clients', {
   lastBalanceTickAt: timestamp('last_balance_tick_at', { withTimezone: true }),
   // Unique referral code for shareable Gold code URL (migration 024).
   referralCode: text('referral_code').unique(),
+  referralCreditCents: integer('referral_credit_cents').notNull().default(0),
 });
 
 // Referral tracking (migration 024). One row per referred client.
@@ -181,6 +182,8 @@ export const referrals = pgTable('referrals', {
   referrerClientId: uuid('referrer_client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }),
   referredClientId: uuid('referred_client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }).unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  referrerCreditAppliedAt: timestamp('referrer_credit_applied_at', { withTimezone: true }),
+  referredDiscountAppliedAt: timestamp('referred_discount_applied_at', { withTimezone: true }),
 });
 
 // Audit trail for Stripe Checkout Sessions — one row per top-up. Inserted

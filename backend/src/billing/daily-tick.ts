@@ -63,6 +63,7 @@ export async function runDailyBalanceTick(): Promise<TickResult> {
       .update(clients)
       .set({
         billingBalanceCents: tick.newBalanceCents,
+        referralCreditCents: tick.newReferralCreditCents,
         lastBalanceTickAt: now,
       })
       .where(eq(clients.id, client.id));

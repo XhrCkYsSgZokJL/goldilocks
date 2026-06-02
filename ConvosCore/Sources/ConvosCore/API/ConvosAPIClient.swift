@@ -104,6 +104,7 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func syncGoldilocksSeats(_ request: ConvosAPI.GoldilocksSeatsRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
     func setGoldilocksReportDay(_ request: ConvosAPI.GoldilocksReportDayRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
     func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    func claimGoldilocksReferral(code: String) async throws
     func toggleGoldilocksCoverage(_ request: ConvosAPI.GoldilocksCoverageToggleRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
     func toggleGoldilocksPersonCoverage(_ request: ConvosAPI.GoldilocksPersonToggleRequest) async throws -> ConvosAPI.GoldilocksPersonToggleResponse
     func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse
@@ -142,6 +143,8 @@ extension ConvosAPIClientProtocol {
     func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
         ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
     }
+
+    func claimGoldilocksReferral(code: String) async throws {}
 
     func toggleGoldilocksCoverage(_ request: ConvosAPI.GoldilocksCoverageToggleRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
         ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
@@ -976,6 +979,14 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
     func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
         let request = try authenticatedRequest(for: "v2/billing/checkout-status/\(sessionId)", method: "GET")
         return try await performRequest(request)
+    }
+
+    func claimGoldilocksReferral(code: String) async throws {
+        struct Body: Encodable { let referralCode: String }
+        var request = try authenticatedRequest(for: "v2/me/referral", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(Body(referralCode: code))
+        let _: EmptyResponse = try await performRequest(request)
     }
 
     func toggleGoldilocksCoverage(_ toggle: ConvosAPI.GoldilocksCoverageToggleRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {

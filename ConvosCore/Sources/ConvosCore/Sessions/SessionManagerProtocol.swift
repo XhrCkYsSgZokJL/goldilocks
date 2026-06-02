@@ -140,6 +140,8 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// status (`GET /v2/billing/checkout-status/:sessionId`).
     func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
 
+    func claimGoldilocksReferral(code: String) async throws
+
     /// Enable or disable coverage (`POST /v2/billing/coverage`).
     func toggleGoldilocksCoverage(enabled: Bool) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
 
@@ -318,6 +320,8 @@ extension SessionManagerProtocol {
     public func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
         ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
     }
+
+    public func claimGoldilocksReferral(code: String) async throws {}
 
     public func toggleGoldilocksCoverage(enabled: Bool) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
         ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)

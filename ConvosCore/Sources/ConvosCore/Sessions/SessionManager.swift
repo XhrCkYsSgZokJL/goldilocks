@@ -551,6 +551,10 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         try await apiClient.reconcileGoldilocksCheckout(sessionId: sessionId)
     }
 
+    public func claimGoldilocksReferral(code: String) async throws {
+        try await apiClient.claimGoldilocksReferral(code: code)
+    }
+
     public func toggleGoldilocksCoverage(enabled: Bool) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
         let request = ConvosAPI.GoldilocksCoverageToggleRequest(enabled: enabled)
         return try await apiClient.toggleGoldilocksCoverage(request)

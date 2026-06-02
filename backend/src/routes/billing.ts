@@ -521,6 +521,7 @@ function billingStatus(client: ClientRow): {
   coverageActive: boolean;
   coverageEnabled: boolean;
   balanceCents: number;
+  referralCreditCents: number;
   monthlyRateCents: number;
   seats: number;
   coveredPeople: number;
@@ -532,6 +533,7 @@ function billingStatus(client: ClientRow): {
     coverageActive: isCoverageActive(client),
     coverageEnabled: client.coverageEnabled,
     balanceCents: liveBalanceCents(client),
+    referralCreditCents: client.referralCreditCents,
     monthlyRateCents: monthlyRateCents(client),
     seats: client.billingSeats,
     coveredPeople: client.coveredPeople,
