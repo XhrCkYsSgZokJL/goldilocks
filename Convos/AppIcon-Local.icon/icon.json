@@ -25,6 +25,30 @@
       ],
       "layers" : [
         {
+          "image-name" : "Gemini_Generated_Image_x1h295x1h295x1h2 (2).png",
+          "name" : "Gemini_Generated_Image_x1h295x1h295x1h2 (2)",
+          "position" : {
+            "scale" : 0.6,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "hidden" : true,
+          "image-name" : "Gemini_Generated_Image_x1h295x1h295x1h2 (1).png",
+          "name" : "Gemini_Generated_Image_x1h295x1h295x1h2 (1)",
+          "position" : {
+            "scale" : 0.6,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "hidden" : true,
           "image-name" : "Gemini_Generated_Image_tcmaqmtcmaqmtcma (2).png",
           "name" : "Gemini_Generated_Image_tcmaqmtcmaqmtcma (2)",
           "position" : {

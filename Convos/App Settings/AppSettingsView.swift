@@ -610,8 +610,26 @@ struct MembershipView: View {
         Section {
             balanceRow
             nextChargeRow
+            referralCreditRow
         } header: {
             Text("Account")
+        }
+    }
+
+    private var referralCreditRow: some View {
+        let code: String = GoldilocksSession.shared.identity?.referralCode ?? "—"
+        return HStack {
+            VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                Text("Referral credit")
+                    .foregroundStyle(.colorTextPrimary)
+                Text("For every client you refer that adds a membership, get a free month of coverage.")
+                    .font(.caption)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+            Spacer()
+            Text(code)
+                .font(.body.monospacedDigit())
+                .foregroundStyle(.colorTextPrimary)
         }
     }
 
@@ -1712,15 +1730,8 @@ private struct AppShareQRSheet: View {
         NavigationStack {
             VStack(spacing: DesignConstants.Spacing.step6x) {
                 VStack(spacing: DesignConstants.Spacing.step2x) {
-                    HStack(alignment: .center, spacing: DesignConstants.Spacing.stepX) {
-                        Image(BrandConfig.shared.assets.logoImageName)
-                            .renderingMode(.original)
-                            .resizable()
-                            .frame(width: 14.0, height: 14.0)
-
-                        Text("Your Gold code")
-                            .kerning(1.0)
-                    }
+                    Text("Your Gold code")
+                        .kerning(1.0)
                     .foregroundStyle(Color.brandIcon)
                     .textCase(.uppercase)
                     .font(.caption)
