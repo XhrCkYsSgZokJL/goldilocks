@@ -825,7 +825,7 @@ struct MembershipView: View {
         if hasBalance {
             return "Coverage will not be renewed and your balance will be returned to your payment method."
         }
-        return "You can request a refund on your balance at any time. When you deposit funds, your balance will appear here and can be refunded to your original payment method."
+        return "You can request a refund on your balance at any time."
     }
 
     @ViewBuilder
