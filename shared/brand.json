@@ -64,10 +64,10 @@
       }
     },
     "descriptions": {
-      "bronze": "Bronze is the free plan. One active member unlocks Silver, and four unlock Gold with priority reports.",
-      "silver": "Silver applies with active coverage for one or more members. Reach four members for Gold with priority reports.",
-      "gold": "Gold delivers priority reports for plans with four or more active members.",
-      "emerald": "Emerald is awarded by Goldilocks and supersedes the automatic tier."
+      "bronze": "A free private briefing.",
+      "silver": "One or more memberships.",
+      "gold": "Four or more memberships.",
+      "emerald": "Awarded directly by Goldilocks."
     }
   },
   "assets": {

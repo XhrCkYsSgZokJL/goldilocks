@@ -174,8 +174,7 @@ export interface EmeraldToggleResponse {
 /** @swift GoldilocksCheckoutRequest */
 export interface CheckoutRequest {
   paymentMethod: "card" | "crypto";
-  durationMonths: number;
-  seats: number;
+  amountCents: number;
 }
 
 /** @swift GoldilocksCheckoutResponse */

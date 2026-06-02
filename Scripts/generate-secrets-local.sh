@@ -4,21 +4,31 @@
 set -e
 set -o pipefail
 
-# This script generates the Secrets.swift file for Local development
-# It automatically detects the local IP address and populates the secrets
-# It also ensures the file exists with minimal content if needed
+# This script generates the Secrets.swift file for Local development.
+# By default it uses localhost (works for the iOS Simulator).
+# Pass --device to use the auto-detected LAN IP (needed for physical devices).
 #
 # Configuration Priority (.env values):
-# - Missing/Empty/Commented: Auto-detect local IP (default)
+# - Missing/Empty/Commented: Use localhost (or LAN IP with --device)
 # - "USE_CONFIG": Use value from config.local.json (or empty for XMTP/Gateway)
 # - Custom value: Use that value explicitly
 #
 # Examples:
-#   CONVOS_API_BASE_URL=                    → Auto-detect IP
-#   CONVOS_API_BASE_URL=USE_CONFIG          → Use config.json default
+#   ./generate-secrets-local.sh              → localhost
+#   ./generate-secrets-local.sh --device     → auto-detected LAN IP
+#   CONVOS_API_BASE_URL=USE_CONFIG           → Use config.json default
 #   CONVOS_API_BASE_URL=http://10.0.1.5:4000/api → Use custom URL
 #
-# Usage: ./generate-secrets-local.sh
+# Usage: ./generate-secrets-local.sh [--device]
+
+# Parse flags
+USE_DEVICE_IP=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --device) USE_DEVICE_IP=true; shift ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
+  esac
+done
 
 # Source shared utility functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -141,8 +151,15 @@ get_config_value() {
 CONFIG_FILE="Convos/Config/config.local.json"
 DEFAULT_BACKEND_URL=$(get_config_value "$CONFIG_FILE" "backendUrl")
 
-# Detect the local IP for auto-configuration
-LOCAL_IP=$(get_local_ip)
+# Detect the local IP only when targeting a physical device.
+# For the simulator, localhost works and avoids stale-IP issues
+# when switching Wi-Fi networks.
+if [ "$USE_DEVICE_IP" = true ]; then
+    LOCAL_IP=$(get_local_ip)
+    echo "📱 --device: using LAN IP $LOCAL_IP"
+else
+    LOCAL_IP=""
+fi
 
 # Read .env overrides if they exist
 ENV_BACKEND_URL=""
@@ -178,7 +195,7 @@ if [ -f ".env" ]; then
 fi
 
 # Determine final values for Secrets.swift (Tier 1 of two-tier system)
-# Priority: .env "USE_CONFIG" > .env custom value > auto-detected IP > config.json default
+# Priority: .env "USE_CONFIG" > .env custom value > LAN IP (--device) > localhost > config.json
 # Swift (ConfigManager.swift) provides isEmpty fallback to config.json as Tier 2
 FINAL_BACKEND_URL=""
 FINAL_XMTP_HOST=""
@@ -186,43 +203,32 @@ FINAL_GATEWAY_URL=""
 
 # CONVOS_API_BASE_URL logic
 if [ "$ENV_HAS_BACKEND_URL" = true ] && [ "$ENV_BACKEND_URL" = "USE_CONFIG" ]; then
-    # Explicitly requesting config.json default
     FINAL_BACKEND_URL="$DEFAULT_BACKEND_URL"
     echo "✅ Using CONVOS_API_BASE_URL from config.json (explicit USE_CONFIG): $FINAL_BACKEND_URL"
 elif [ "$ENV_HAS_BACKEND_URL" = true ] && [ -n "$ENV_BACKEND_URL" ]; then
-    # Custom value from .env
     FINAL_BACKEND_URL="$ENV_BACKEND_URL"
     echo "✅ Using CONVOS_API_BASE_URL from .env: $FINAL_BACKEND_URL"
 elif [ -n "$LOCAL_IP" ]; then
-    # Auto-detect (when .env missing, empty, or commented)
     FINAL_BACKEND_URL="http://$LOCAL_IP:4000/api"
-    echo "✅ Auto-detected CONVOS_API_BASE_URL: $FINAL_BACKEND_URL"
-elif [ -n "$DEFAULT_BACKEND_URL" ]; then
-    # Fallback when IP detection fails
-    FINAL_BACKEND_URL="$DEFAULT_BACKEND_URL"
-    echo "✅ Using CONVOS_API_BASE_URL from config.json (fallback): $FINAL_BACKEND_URL"
+    echo "✅ Using CONVOS_API_BASE_URL (--device): $FINAL_BACKEND_URL"
 else
-    FINAL_BACKEND_URL=""
-    echo "⚠️  CONVOS_API_BASE_URL will be empty"
+    FINAL_BACKEND_URL="http://localhost:4000/api"
+    echo "✅ Using CONVOS_API_BASE_URL: $FINAL_BACKEND_URL"
 fi
 
 # XMTP_CUSTOM_HOST logic
 if [ "$ENV_HAS_XMTP_HOST" = true ] && [ "$ENV_XMTP_HOST" = "USE_CONFIG" ]; then
-    # Explicitly requesting no custom host (use default XMTP network)
     FINAL_XMTP_HOST=""
     echo "✅ Using XMTP_CUSTOM_HOST from config (explicit USE_CONFIG): empty (default network)"
 elif [ "$ENV_HAS_XMTP_HOST" = true ] && [ -n "$ENV_XMTP_HOST" ]; then
-    # Custom value from .env
     FINAL_XMTP_HOST="$ENV_XMTP_HOST"
     echo "✅ Using XMTP_CUSTOM_HOST from .env: $FINAL_XMTP_HOST"
 elif [ -n "$LOCAL_IP" ]; then
-    # Auto-detect (when .env missing, empty, or commented)
     FINAL_XMTP_HOST="$LOCAL_IP"
-    echo "✅ Auto-detected XMTP_CUSTOM_HOST: $FINAL_XMTP_HOST"
+    echo "✅ Using XMTP_CUSTOM_HOST (--device): $FINAL_XMTP_HOST"
 else
-    # Fallback when IP detection fails (use default network)
-    FINAL_XMTP_HOST=""
-    echo "✅ XMTP_CUSTOM_HOST will be empty (default network)"
+    FINAL_XMTP_HOST="localhost"
+    echo "✅ Using XMTP_CUSTOM_HOST: localhost"
 fi
 
 # GATEWAY_URL logic (for d14n - decentralized network)

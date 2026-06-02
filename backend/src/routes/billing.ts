@@ -1,6 +1,6 @@
 // Prepaid-balance billing.
 //
-// POST /v2/billing/checkout  — top up: buy 1/3/6 months of cover; returns
+// POST /v2/billing/checkout  — deposit funds (in $100 increments); returns
 //                              a hosted Stripe Checkout URL.
 // GET  /v2/billing/status    — balance, monthly rate, and "active until".
 // POST /v2/billing/seats     — sync the seat mix (the burn rate) when the
@@ -20,7 +20,6 @@ import { db } from '../db/client.js';
 import { billingCheckouts, clients, devices } from '../db/schema.js';
 import { requireJwt } from '../middleware/jwt.js';
 import { getStripe, isStripeConfigured } from '../billing/stripe.js';
-import { isAllowedDuration, monthlyTotalCents } from '../billing/pricing.js';
 import { activeUntil, isCoverageActive, liveBalanceCents, monthlyRateCents, settle } from '../billing/balance.js';
 import { reconcileCheckoutSession } from '../billing/reconcile-checkout.js';
 import { togglePersonCoverage } from '../billing/person-activation.js';
@@ -31,9 +30,8 @@ import type Stripe from 'stripe';
 const CheckoutBody = z.object({
   // 'card' routes to Stripe. 'crypto' is reserved — no provider yet.
   paymentMethod: z.enum(['card', 'crypto']),
-  // Months of cover to buy: 1, 3 or 6.
-  durationMonths: z.number().int(),
-  seats: z.number().int().min(0).max(999),
+  // Deposit amount in cents, must be a positive multiple of $100 (10000 cents).
+  amountCents: z.number().int().min(10000),
 });
 
 const SeatsBody = z.object({
@@ -44,8 +42,8 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
   const { publicBaseUrl } = opts;
 
   // ---------------------------------------------------------------------
-  // POST /v2/billing/checkout — buy a block of cover (a balance top-up).
-  // body: { paymentMethod, durationMonths, seats }
+  // POST /v2/billing/checkout — deposit funds into prepaid balance.
+  // body: { paymentMethod, amountCents }
   // returns: { checkoutUrl, sessionId }
   // ---------------------------------------------------------------------
   app.post('/v2/billing/checkout', { preHandler: requireJwt }, async (req, reply) => {
@@ -57,7 +55,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
     }
-    const { paymentMethod, durationMonths, seats } = parsed.data;
+    const { paymentMethod, amountCents } = parsed.data;
 
     if (paymentMethod === 'crypto') {
       return reply.code(501).send({
@@ -65,11 +63,8 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
         message: 'Crypto payments are coming soon. Please pay by card for now.',
       });
     }
-    if (!isAllowedDuration(durationMonths)) {
-      return reply.code(400).send({ error: 'invalid_duration', message: 'durationMonths must be 1, 3 or 6.' });
-    }
-    if (seats < 1) {
-      return reply.code(400).send({ error: 'no_seats', message: 'Add at least one person before buying cover.' });
+    if (amountCents % 10000 !== 0) {
+      return reply.code(400).send({ error: 'invalid_amount', message: 'Amount must be a multiple of $100.' });
     }
 
     const client = await resolveClient(req.deviceId!);
@@ -78,7 +73,6 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
     }
 
     const stripe = getStripe();
-    const amountCents = monthlyTotalCents(seats) * durationMonths;
 
     // Find-or-create the Stripe customer so a client's top-ups group
     // under one customer record.
@@ -100,8 +94,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
       clientId: client.id,
       inboxId: client.inboxId,
       paymentMethod,
-      durationMonths: String(durationMonths),
-      seats: String(seats),
+      amountCents: String(amountCents),
     };
 
     let session: Stripe.Checkout.Session;
@@ -117,7 +110,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
               currency: 'usd',
               unit_amount: amountCents,
               product_data: {
-                name: `Goldilocks cover — ${durationMonths} month${durationMonths === 1 ? '' : 's'}`,
+                name: `Goldilocks deposit — $${amountCents / 100}`,
               },
             },
           },
@@ -133,7 +126,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
         severity: 'error',
         clientId: client.id,
         inboxId: client.inboxId,
-        context: { error: (err as Error).message, paymentMethod, durationMonths, seats },
+        context: { error: (err as Error).message, paymentMethod, amountCents },
       });
       return reply.code(502).send({ error: 'stripe_error', message: 'Could not start checkout. Please try again.' });
     }
@@ -146,8 +139,6 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
       clientId: client.id,
       stripeSessionId: session.id,
       paymentMethod,
-      durationMonths,
-      seats,
       amountCents,
       currency: 'usd',
       status: 'pending',
@@ -157,7 +148,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
       event: 'billing.checkout.initiated',
       clientId: client.id,
       inboxId: client.inboxId,
-      context: { paymentMethod, durationMonths, seats, amountCents },
+      context: { paymentMethod, amountCents },
     });
 
     return reply.code(200).send({ checkoutUrl: session.url, sessionId: session.id });

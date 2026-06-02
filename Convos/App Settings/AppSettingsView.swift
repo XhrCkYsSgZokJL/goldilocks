@@ -433,12 +433,14 @@ struct MembershipView: View {
     @State private var isCancelling: Bool = false
     @State private var checkoutSessionId: String?
     @State private var reconcileTask: Task<Void, Never>?
-    @State private var depositAmount: Int = 100
+    @State private var checkoutPeople: Int = 1
+    @State private var prepaidDuration: GoldilocksPrepaidDuration = .oneMonth
     @State private var pendingActivation: SeatMember?
     @State private var showingActivationConfirm: Bool = false
     @State private var showingBillingInfo: Bool = false
     @State private var showingReactivationConfirm: Bool = false
     @State private var activatedPersonIds: Set<UUID> = []
+    @State private var showingTierInfo: Bool = false
 
     var body: some View {
         listContent
@@ -539,6 +541,9 @@ struct MembershipView: View {
         } message: {
             Text(billingInfoMessage)
         }
+        .sheet(isPresented: $showingTierInfo) {
+            TierInfoSheet(currentTier: currentTier)
+        }
     }
 
     /// True when the admin has flipped this client's Emerald flag on.
@@ -549,20 +554,31 @@ struct MembershipView: View {
         GoldilocksSession.shared.identity?.emeraldMembershipEnabled ?? false
     }
 
-    private var tierRow: some View {
-        let tier: GoldilocksMembershipTier = GoldilocksMembershipTier(
+    private var currentTier: GoldilocksMembershipTier {
+        GoldilocksMembershipTier(
             activeMembers: plan.billableSeatCount,
             hasActiveCoverage: plan.coverageActive,
             emeraldEnabled: isEmerald
         )
-        return HStack(spacing: DesignConstants.Spacing.step2x) {
-            Image(systemName: tier.iconName)
-                .foregroundStyle(tier.accentColor)
-            Text("\(tier.displayName) member")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.colorTextPrimary)
-            Spacer()
+    }
+
+    private var tierRow: some View {
+        let tier: GoldilocksMembershipTier = currentTier
+        let tapAction = { showingTierInfo = true }
+        return Button(action: tapAction) {
+            HStack(spacing: DesignConstants.Spacing.step2x) {
+                Image(systemName: tier.iconName)
+                    .foregroundStyle(tier.accentColor)
+                Text("\(tier.displayName) member")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.colorTextTertiary)
+            }
         }
+        .buttonStyle(.plain)
         .listRowBackground(tier.tintColor)
     }
 
@@ -578,7 +594,8 @@ struct MembershipView: View {
     private var paymentSection: some View {
         Section {
             paymentMethodPicker
-            depositAmountRow
+            peoplePicker
+            durationPicker
             checkoutButton
         } header: {
             Text("Payments")
@@ -613,7 +630,7 @@ struct MembershipView: View {
         let tapAction = { showingBillingInfo = true }
         return Button(action: tapAction) {
             HStack {
-                Text("Billing")
+                Text("Billing cycle")
                     .foregroundStyle(.colorTextPrimary)
                 Spacer()
                 Text(nextChargeLabel)
@@ -648,28 +665,39 @@ struct MembershipView: View {
     }
 
     private var peoplePicker: some View {
-        HStack {
+        let minusDisabled: Bool = checkoutPeople <= 1
+        let minusStyle: Color = minusDisabled ? .colorTextTertiary : .colorFillPrimary
+        let minusAction = { if checkoutPeople > 1 { checkoutPeople -= 1 } }
+        let plusAction = { checkoutPeople += 1 }
+        return HStack {
             Text("People")
                 .foregroundStyle(.colorTextPrimary)
             Spacer()
-            let minusAction = { if checkoutPeople > 1 { checkoutPeople -= 1 } }
             Button(action: minusAction) {
                 Image(systemName: "minus.circle.fill")
-                    .foregroundStyle(checkoutPeople > 1 ? .colorFillPrimary : .colorTextTertiary)
+                    .foregroundStyle(minusStyle)
             }
             .buttonStyle(.plain)
-            .disabled(checkoutPeople <= 1)
+            .disabled(minusDisabled)
             Text("\(checkoutPeople)")
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.colorTextPrimary)
                 .frame(minWidth: 28)
-            let plusAction = { checkoutPeople += 1 }
             Button(action: plusAction) {
                 Image(systemName: "plus.circle.fill")
                     .foregroundStyle(.colorFillPrimary)
             }
             .buttonStyle(.plain)
         }
+    }
+
+    private var durationPicker: some View {
+        Picker("Duration", selection: $prepaidDuration) {
+            ForEach(GoldilocksPrepaidDuration.allCases, id: \.self) { duration in
+                Text(duration.displayName).tag(duration)
+            }
+        }
+        .pickerStyle(.menu)
     }
 
     private var paymentMethodPicker: some View {
@@ -683,15 +711,6 @@ struct MembershipView: View {
             }
         }
         .pickerStyle(.segmented)
-    }
-
-    private var durationPicker: some View {
-        Picker("Duration", selection: $prepaidDuration) {
-            ForEach(GoldilocksPrepaidDuration.allCases, id: \.self) { duration in
-                Text(duration.displayName).tag(duration)
-            }
-        }
-        .pickerStyle(.menu)
     }
 
     private var checkoutButton: some View {
@@ -923,11 +942,11 @@ struct MembershipView: View {
 
     private func startStripeCheckout() async {
         isStartingCheckout = true
+        let amountCents: Int = chargeTotal * 100
         do {
             let response = try await session.createGoldilocksCheckout(
                 paymentMethod: paymentMethod,
-                durationMonths: prepaidDuration.months,
-                seats: checkoutPeople
+                amountCents: amountCents
             )
             if let url = URL(string: response.checkoutUrl) {
                 checkoutSessionId = response.sessionId
@@ -944,15 +963,15 @@ struct MembershipView: View {
 
     private func startAppleCheckout() async {
         isStartingCheckout = true
+        let amountCents: Int = chargeTotal * 100
         let store: GoldilocksStore = GoldilocksStore.shared
         let success: Bool = await store.purchase(
-            duration: prepaidDuration,
-            seats: checkoutPeople,
+            amountCents: amountCents,
             session: session
         )
         if success {
             await syncSeats()
-            showBillingResult("Your coverage is active.")
+            showBillingResult("Your balance has been updated.")
         } else if let error = store.lastError {
             showBillingResult(error)
         }
@@ -1571,6 +1590,59 @@ private enum EmailCodeVerification {
 #Preview {
     NavigationStack {
         MembershipView(session: MockInboxesService())
+    }
+}
+
+private struct TierInfoSheet: View {
+    let currentTier: GoldilocksMembershipTier
+    @Environment(\.dismiss) private var dismiss: DismissAction
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(GoldilocksMembershipTier.allCases, id: \.self) { tier in
+                    tierInfoRow(tier)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(.colorBackgroundRaisedSecondary)
+            .navigationTitle("Membership tiers")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    let cancelAction = { dismiss() }
+                    Button("Done", action: cancelAction)
+                }
+            }
+        }
+    }
+
+    private func tierInfoRow(_ tier: GoldilocksMembershipTier) -> some View {
+        let isCurrent: Bool = tier == currentTier
+        return HStack(spacing: DesignConstants.Spacing.step2x) {
+            Image(systemName: tier.iconName)
+                .foregroundStyle(tier.accentColor)
+                .frame(width: 24, alignment: .center)
+            VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                HStack(spacing: DesignConstants.Spacing.stepX) {
+                    Text(tier.displayName)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.colorTextPrimary)
+                    if isCurrent {
+                        Text("Current")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(tier.accentColor)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(tier.tintColor, in: Capsule())
+                    }
+                }
+                Text(tier.membershipDetail)
+                    .font(.callout)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+        }
+        .listRowBackground(isCurrent ? tier.tintColor : nil)
     }
 }
 

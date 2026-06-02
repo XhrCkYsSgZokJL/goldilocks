@@ -135,8 +135,7 @@ public struct GoldilocksEmeraldToggleResponse: Codable, Sendable {
 
 public struct GoldilocksCheckoutRequest: Codable, Sendable {
     public let paymentMethod: String
-    public let durationMonths: Int
-    public let seats: Int
+    public let amountCents: Int
 }
 
 public struct GoldilocksCheckoutResponse: Codable, Sendable {

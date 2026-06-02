@@ -390,18 +390,15 @@ public enum ConvosAPI {
 
     // MARK: - Goldilocks billing (Stripe prepaid balance)
 
-    /// Body for `POST /v2/billing/checkout` — buy a block of coverage.
-    /// The seat count is sent rather than an amount so the backend prices
-    /// the top-up server-side.
+    /// Body for `POST /v2/billing/checkout` — deposit funds into the
+    /// prepaid balance. The amount is in cents, must be a multiple of $100.
     public struct GoldilocksCheckoutRequest: Codable, Sendable {
-        public let paymentMethod: String   // "apple" | "card" | "crypto"
-        public let durationMonths: Int     // 1, 3 or 6
-        public let seats: Int
+        public let paymentMethod: String   // "card" | "crypto"
+        public let amountCents: Int
 
-        public init(paymentMethod: String, durationMonths: Int, seats: Int) {
+        public init(paymentMethod: String, amountCents: Int) {
             self.paymentMethod = paymentMethod
-            self.durationMonths = durationMonths
-            self.seats = seats
+            self.amountCents = amountCents
         }
     }
 
@@ -541,14 +538,12 @@ public enum ConvosAPI {
     public struct GoldilocksApplePurchaseRequest: Codable, Sendable {
         public let transactionId: String
         public let productId: String
-        public let durationMonths: Int
-        public let seats: Int
+        public let amountCents: Int
 
-        public init(transactionId: String, productId: String, durationMonths: Int, seats: Int) {
+        public init(transactionId: String, productId: String, amountCents: Int) {
             self.transactionId = transactionId
             self.productId = productId
-            self.durationMonths = durationMonths
-            self.seats = seats
+            self.amountCents = amountCents
         }
     }
 

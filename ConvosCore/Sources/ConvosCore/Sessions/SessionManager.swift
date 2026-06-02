@@ -524,13 +524,11 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
 
     public func createGoldilocksCheckout(
         paymentMethod: GoldilocksPaymentMethod,
-        durationMonths: Int,
-        seats: Int
+        amountCents: Int
     ) async throws -> ConvosAPI.GoldilocksCheckoutResponse {
         let request = ConvosAPI.GoldilocksCheckoutRequest(
             paymentMethod: paymentMethod.rawValue,
-            durationMonths: durationMonths,
-            seats: seats
+            amountCents: amountCents
         )
         return try await apiClient.createGoldilocksCheckout(request)
     }
@@ -578,14 +576,12 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
     public func verifyApplePurchase(
         transactionId: String,
         productId: String,
-        durationMonths: Int,
-        seats: Int
+        amountCents: Int
     ) async throws {
         let request = ConvosAPI.GoldilocksApplePurchaseRequest(
             transactionId: transactionId,
             productId: productId,
-            durationMonths: durationMonths,
-            seats: seats
+            amountCents: amountCents
         )
         try await apiClient.verifyApplePurchase(request)
     }

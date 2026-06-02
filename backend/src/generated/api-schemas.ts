@@ -165,8 +165,7 @@ export type EmeraldToggleResponse = z.infer<typeof emeraldToggleResponseSchema>;
 
 export const checkoutRequestSchema = z.object({
   paymentMethod: z.enum(["card", "crypto"]),
-  durationMonths: z.number(),
-  seats: z.number(),
+  amountCents: z.number(),
 });
 
 export type CheckoutRequest = z.infer<typeof checkoutRequestSchema>;

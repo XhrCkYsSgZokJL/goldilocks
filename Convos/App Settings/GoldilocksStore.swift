@@ -2,24 +2,23 @@ import ConvosCore
 import Observation
 import StoreKit
 
-/// Product identifiers for Goldilocks coverage subscriptions. Each ID encodes
-/// the duration so the backend can map verified receipts to the right balance
-/// top-up amount. Product IDs must match App Store Connect configuration.
+/// Product identifiers for Goldilocks deposit tiers. Each ID maps to a
+/// fixed deposit amount. Product IDs must match App Store Connect config.
 enum GoldilocksProductID {
-    static let oneMonth: String = "com.goldilocks.coverage.1mo"
-    static let threeMonths: String = "com.goldilocks.coverage.3mo"
-    static let sixMonths: String = "com.goldilocks.coverage.6mo"
+    static let deposit100: String = "com.goldilocks.deposit.100"
+    static let deposit200: String = "com.goldilocks.deposit.200"
+    static let deposit300: String = "com.goldilocks.deposit.300"
 
-    static func forDuration(_ duration: GoldilocksPrepaidDuration) -> String {
-        switch duration {
-        case .oneMonth: return oneMonth
-        case .threeMonths: return threeMonths
-        case .sixMonths: return sixMonths
+    static func forAmountCents(_ cents: Int) -> String {
+        switch cents {
+        case 20_000: return deposit200
+        case 30_000: return deposit300
+        default: return deposit100
         }
     }
 
     static var all: [String] {
-        [oneMonth, threeMonths, sixMonths]
+        [deposit100, deposit200, deposit300]
     }
 }
 
@@ -68,14 +67,13 @@ final class GoldilocksStore {
         }
     }
 
-    /// Initiate a purchase for the given duration. Returns true on success,
-    /// false on failure or cancellation.
+    /// Initiate a purchase for the given deposit amount. Returns true on
+    /// success, false on failure or cancellation.
     func purchase(
-        duration: GoldilocksPrepaidDuration,
-        seats: Int,
+        amountCents: Int,
         session: any SessionManagerProtocol
     ) async -> Bool {
-        let productId: String = GoldilocksProductID.forDuration(duration)
+        let productId: String = GoldilocksProductID.forAmountCents(amountCents)
         guard let product = products[productId] else {
             lastError = "Product not available. Please try again later."
             purchaseState = .failed
@@ -93,8 +91,7 @@ final class GoldilocksStore {
                 let transaction: Transaction = try checkVerified(verification)
                 let verified: Bool = await verifyWithBackend(
                     transaction: transaction,
-                    duration: duration,
-                    seats: seats,
+                    amountCents: amountCents,
                     session: session
                 )
                 await transaction.finish()
@@ -143,16 +140,14 @@ final class GoldilocksStore {
     /// and balance crediting.
     private func verifyWithBackend(
         transaction: Transaction,
-        duration: GoldilocksPrepaidDuration,
-        seats: Int,
+        amountCents: Int,
         session: any SessionManagerProtocol
     ) async -> Bool {
         do {
             try await session.verifyApplePurchase(
                 transactionId: String(transaction.id),
                 productId: transaction.productID,
-                durationMonths: duration.months,
-                seats: seats
+                amountCents: amountCents
             )
             return true
         } catch {

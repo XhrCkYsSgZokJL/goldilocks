@@ -45,7 +45,7 @@ struct ConversationIndicator<InfoView: View>: View {
                     ConversationToolbarButton(
                         conversation: conversation,
                         conversationImage: $conversationImage,
-                        conversationName: conversationName,
+                        conversationName: conversation.goldilocksDisplayName ?? conversationName,
                         placeholderName: untitledConversationPlaceholder,
                         subtitle: subtitle,
                         scheduledExplosionDate: scheduledExplosionDate,

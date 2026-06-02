@@ -119,13 +119,11 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// the cross-admin groups + every Advisory on the next reconcile.
     func downgradeGoldilocksAdmin() async throws
 
-    /// Create a Stripe Checkout Session to buy `durationMonths` of cover
-    /// and return the hosted URL to open in the browser. The seat count is
-    /// sent so the backend prices the top-up itself.
+    /// Create a Stripe Checkout Session to deposit funds into the prepaid
+    /// balance. The amount is in cents, must be a multiple of $100.
     func createGoldilocksCheckout(
         paymentMethod: GoldilocksPaymentMethod,
-        durationMonths: Int,
-        seats: Int
+        amountCents: Int
     ) async throws -> ConvosAPI.GoldilocksCheckoutResponse
 
     /// Fetch the caller's prepaid-balance state (`GET /v2/billing/status`).
@@ -162,8 +160,7 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     func verifyApplePurchase(
         transactionId: String,
         productId: String,
-        durationMonths: Int,
-        seats: Int
+        amountCents: Int
     ) async throws
 
     /// Fetch the inbox IDs of all admins (Goldilocks team). Used by the
@@ -301,8 +298,7 @@ extension SessionManagerProtocol {
 
     public func createGoldilocksCheckout(
         paymentMethod: GoldilocksPaymentMethod,
-        durationMonths: Int,
-        seats: Int
+        amountCents: Int
     ) async throws -> ConvosAPI.GoldilocksCheckoutResponse {
         throw GoldilocksAuth.AuthError.missingPrivateKey
     }
@@ -342,8 +338,7 @@ extension SessionManagerProtocol {
     public func verifyApplePurchase(
         transactionId: String,
         productId: String,
-        durationMonths: Int,
-        seats: Int
+        amountCents: Int
     ) async throws {
         // No-op for mocks
     }
