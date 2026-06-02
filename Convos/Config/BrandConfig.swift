@@ -21,6 +21,7 @@ struct BrandConfig: Codable, Sendable {
     let advisoryTierImages: [String: String]
     let pricing: Pricing
     let tiers: Tiers
+    let theme: Theme?
     let assets: Assets
     let legal: Legal
 
@@ -69,6 +70,15 @@ struct BrandConfig: Codable, Sendable {
     struct Assets: Codable, Sendable {
         let logoImageName: String
         let botImageName: String?
+    }
+
+    struct Theme: Codable, Sendable {
+        let mode: String?
+        let iconColor: String?
+        let logoTextColor: String?
+        let textColor: String
+        let textColorLight: String
+        let backgroundColor: String
     }
 
     struct Legal: Codable, Sendable {

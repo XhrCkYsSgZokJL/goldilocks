@@ -33,6 +33,7 @@ import {
   refreshGroupInstallations,
   logInboxInstallations,
   clientNoLongerMember,
+  syncMembership,
   safe,
   log,
 } from './xmtp-helpers.js';
@@ -64,7 +65,7 @@ const advisoryName = (clientNumber: number): string => `Advisory #${clientNumber
 // on every reconcile by `lockGroupMetadata` for groups that pre-date
 // this lock.
 const LOCKED_METADATA_POLICY_SET: PermissionPolicySet = {
-  addMemberPolicy: PermissionPolicy.Allow,
+  addMemberPolicy: PermissionPolicy.Admin,
   removeMemberPolicy: PermissionPolicy.Admin,
   addAdminPolicy: PermissionPolicy.SuperAdmin,
   removeAdminPolicy: PermissionPolicy.SuperAdmin,
@@ -347,12 +348,7 @@ export class AdminsAgent {
     // MLS quietly rejects the self-removal but the noisy logs come back
     // every reconcile until something else changes.
     const desired = [...adminInboxIds, this.inboxId];
-    await this.syncMembership(
-      group,
-      desired,
-      /* superAdminAll */ true,
-      /* lockedInboxIds */ new Set([this.inboxId]),
-    );
+    await syncMembership(group, desired, '[admins]', true, new Set([this.inboxId]));
     await refreshGroupInstallations(group, '[admins]');
     await lockGroupMetadata(group, '[admins]');
   }
@@ -414,12 +410,7 @@ export class AdminsAgent {
     }
 
     const desired = [...adminInboxIds, this.inboxId];
-    await this.syncMembership(
-      group,
-      desired,
-      /* superAdminAll */ true,
-      /* lockedInboxIds */ new Set([this.inboxId]),
-    );
+    await syncMembership(group, desired, '[admins]', true, new Set([this.inboxId]));
     await refreshGroupInstallations(group, '[admins]');
     await lockGroupMetadata(group, '[admins]');
   }
@@ -485,7 +476,7 @@ export class AdminsAgent {
       // client, only sync the admin set (everything in the group that's
       // not the client and not us).
       const desired = new Set([row.clientInboxId, ...adminInboxIds, this.inboxId]);
-      await this.syncMembership(group, [...desired], /* superAdminAll */ false, /* lockedInboxIds */ new Set([row.clientInboxId, this.inboxId]));
+      await syncMembership(group, [...desired], '[admins]', false, new Set([row.clientInboxId, this.inboxId]));
       // Promote (or re-promote) admins as super-admin.
       for (const inboxId of adminInboxIds) {
         await safe(() => group.addSuperAdmin(inboxId), `[admins] Advisory #${row.clientNumber} addSuperAdmin(${inboxId.slice(0, 8)}…)`);
@@ -566,42 +557,6 @@ export class AdminsAgent {
         `[admins] Advisory #${payload.clientNumber} welcome message`,
       );
       log(`[admins] Posted welcome message to Advisory #${payload.clientNumber}`);
-    }
-  }
-
-  /**
-   * Sync the group's member list to `desiredInboxIds`. Members not in
-   * the desired set are removed (except those in `lockedInboxIds`, which
-   * we never remove — used to protect the client and the agent itself).
-   */
-  private async syncMembership(
-    group: Group,
-    desiredInboxIds: string[],
-    superAdminAll: boolean,
-    lockedInboxIds: Set<string> = new Set(),
-  ): Promise<void> {
-    await group.sync();
-    const current = await group.members();
-    const currentSet = new Set(current.map((m) => m.inboxId));
-    const desiredSet = new Set(desiredInboxIds);
-
-    const toAdd = desiredInboxIds.filter((id) => !currentSet.has(id));
-    const toRemove = current
-      .map((m) => m.inboxId)
-      .filter((id) => !desiredSet.has(id) && !lockedInboxIds.has(id));
-
-    if (toAdd.length > 0) {
-      log(`[admins]   add ${toAdd.length} member(s) to ${group.id.slice(0, 8)}…`);
-      await safe(() => group.addMembers(toAdd), '[admins] addMembers');
-    }
-    if (toRemove.length > 0) {
-      log(`[admins]   remove ${toRemove.length} member(s) from ${group.id.slice(0, 8)}…`);
-      await safe(() => group.removeMembers(toRemove), '[admins] removeMembers');
-    }
-    if (superAdminAll) {
-      for (const id of desiredInboxIds) {
-        await safe(() => group.addSuperAdmin(id), `[admins] addSuperAdmin(${id.slice(0, 8)}…)`);
-      }
     }
   }
 
@@ -700,6 +655,15 @@ async function lockGroupMetadata(group: Group, agentLabel: string): Promise<void
       log(`${agentLabel}   locked ${label} edits to super-admins for ${group.id.slice(0, 8)}…`);
     } catch (err) {
       log(`${agentLabel}   lockGroupMetadata(${label}) failed: ${(err as Error).message}`);
+    }
+  }
+
+  if (policySet.addMemberPolicy !== PermissionPolicy.Admin) {
+    try {
+      await group.updatePermission(PermissionUpdateType.AddMember, PermissionPolicy.Admin);
+      log(`${agentLabel}   locked addMember to admins for ${group.id.slice(0, 8)}…`);
+    } catch (err) {
+      log(`${agentLabel}   lockGroupMetadata(addMember) failed: ${(err as Error).message}`);
     }
   }
 }

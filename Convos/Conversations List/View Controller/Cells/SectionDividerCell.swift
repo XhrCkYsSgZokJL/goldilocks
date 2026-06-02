@@ -77,10 +77,10 @@ struct SectionDividerView: View {
     var body: some View {
         let title: String = "\(group.title) (\(count))"
         let chevron: String = isCollapsed ? "chevron.right" : "chevron.down"
-        let textColor: Color = hasUnread ? .colorTextSecondary : .colorTextTertiary
+        let textColor: Color = hasUnread ? Color.brandText : Color.brandTextLight
         HStack(spacing: DesignConstants.Spacing.step2x) {
             Rectangle()
-                .fill(Color.colorBorderSubtle)
+                .fill(Color.brandTextLight.opacity(0.3))
                 .frame(height: 0.5)
             HStack(spacing: DesignConstants.Spacing.stepHalf) {
                 Text(title)
@@ -93,7 +93,7 @@ struct SectionDividerView: View {
             }
             .foregroundStyle(textColor)
             Rectangle()
-                .fill(Color.colorBorderSubtle)
+                .fill(Color.brandTextLight.opacity(0.3))
                 .frame(height: 0.5)
         }
         .padding(.horizontal, isPhone ? DesignConstants.Spacing.step4x : DesignConstants.Spacing.step6x)

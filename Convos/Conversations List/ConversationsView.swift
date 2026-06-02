@@ -62,7 +62,7 @@ struct ConversationsView: View {
                 presentingAppSettings = true
             }
             Button(action: openMyInfo) {
-                goldilocksChip(icon: icon, label: label, labelTint: .primary)
+                goldilocksChip(icon: icon, label: label, iconTint: Color.brandIcon, labelTint: .primary)
             }
             .buttonStyle(.plain)
 

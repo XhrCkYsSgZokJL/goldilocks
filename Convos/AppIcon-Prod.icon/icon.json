@@ -4,10 +4,23 @@
       "blur-material" : null,
       "layers" : [
         {
+          "hidden" : true,
           "image-name" : "Gemini_Generated_Image_urtrrnurtrrnurtr (3).png",
           "name" : "Gemini_Generated_Image_urtrrnurtrrnurtr (3)",
           "position" : {
             "scale" : 0.6,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "hidden" : false,
+          "image-name" : "Gemini_Generated_Image_tcmaqmtcmaqmtcma (2).png",
+          "name" : "Gemini_Generated_Image_tcmaqmtcmaqmtcma (2)",
+          "position" : {
+            "scale" : 0.55,
             "translation-in-points" : [
               0,
               0

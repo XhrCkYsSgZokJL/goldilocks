@@ -22,7 +22,7 @@ struct ExplodeInfoRow: View {
             scheduledContent(expiresAt: expiresAt)
                 .listRowBackground(
                     ZStack {
-                        Color(.secondarySystemGroupedBackground)
+                        Color.colorBackgroundRaisedSecondary
                         Color.colorCaution
                             .opacity(isHolding || didFire ? 1.0 : 0.0)
                     }

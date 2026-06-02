@@ -103,6 +103,8 @@ struct AdminChannelsView: View {
                 }
             }
             .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(.colorBackgroundSurfaceless)
         }
     }
 

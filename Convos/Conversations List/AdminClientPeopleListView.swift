@@ -36,6 +36,8 @@ struct AdminClientPeopleListView: View {
     var body: some View {
         NavigationStack {
             content
+                .scrollContentBackground(.hidden)
+                .background(.colorBackgroundRaisedSecondary)
                 .navigationTitle("Advisory #\(channel.clientNumber)")
                 .toolbarTitleDisplayMode(.inline)
                 .toolbar {
@@ -100,7 +102,7 @@ struct AdminClientPeopleListView: View {
         } header: {
             Text("Membership")
         } footer: {
-            Text("Emerald overrides the automatic Bronze/Silver/Gold tier for this client. Any admin can flip it.")
+            Text("Emerald overrides automatic tier selection.")
         }
     }
 

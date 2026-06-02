@@ -15,7 +15,15 @@ echo ""
 
 echo "Processes:"
 for proc in server agent simulator caddy stripe; do
-  if [ -f ".dev-run/${proc}.pid" ]; then
+  if [ "$proc" = "simulator" ]; then
+    booted=$(xcrun simctl list devices booted -j 2>/dev/null \
+      | python3 -c "import sys,json; devs=[d for ds in json.loads(sys.stdin.read())['devices'].values() for d in ds]; print(len(devs))" 2>/dev/null || echo "0")
+    if [ "$booted" -gt 0 ]; then
+      echo "  ● $proc ($booted booted)"
+    else
+      echo "  ○ $proc"
+    fi
+  elif [ -f ".dev-run/${proc}.pid" ]; then
     pid=$(cat ".dev-run/${proc}.pid" 2>/dev/null || true)
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       echo "  ● $proc (pid $pid)"

@@ -173,11 +173,18 @@ export default async function meRoutes(app: FastifyInstance) {
     });
     await db.execute(sql`SELECT pg_notify('user_active', ${payload})`);
 
+    let referralCode: string = client.referralCode ?? '';
+    if (!referralCode) {
+      referralCode = randomBytes(4).toString('base64url');
+      await db.update(clients).set({ referralCode }).where(eq(clients.id, client.id));
+    }
+
     return reply.code(200).send({
       clientNumber: client.clientNumber,
       isAdmin: !!adminRow,
       inboxId: client.inboxId,
       emeraldMembershipEnabled: client.emeraldMembershipEnabled,
+      referralCode,
     });
   });
 

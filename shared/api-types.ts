@@ -48,6 +48,8 @@ export interface MeResponse {
   inboxId: string;
   /** @swift default(false) */
   emeraldMembershipEnabled: boolean;
+  /** @swift optional */
+  referralCode?: string;
 }
 
 // ---------------------------------------------------------------------------

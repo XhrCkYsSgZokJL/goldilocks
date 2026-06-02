@@ -37,17 +37,20 @@ public struct GoldilocksMeResponse: Codable, Sendable {
     public let isAdmin: Bool
     public let inboxId: String
     public let emeraldMembershipEnabled: Bool
+    public let referralCode: String?
 
     public init(
         clientNumber: Int64,
         isAdmin: Bool,
         inboxId: String,
-        emeraldMembershipEnabled: Bool = false
+        emeraldMembershipEnabled: Bool = false,
+        referralCode: String? = nil
     ) {
         self.clientNumber = clientNumber
         self.isAdmin = isAdmin
         self.inboxId = inboxId
         self.emeraldMembershipEnabled = emeraldMembershipEnabled
+        self.referralCode = referralCode
     }
 }
 

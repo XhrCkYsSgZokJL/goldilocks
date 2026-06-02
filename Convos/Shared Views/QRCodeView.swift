@@ -56,9 +56,10 @@ struct QRCodeView: View {
                     if let centerImage {
                         ZStack {
                             Rectangle()
-                                .fill(foregroundColor)
+                                .fill(backgroundColor)
                             centerImage
                                 .resizable()
+                                .renderingMode(.original)
                                 .aspectRatio(contentMode: .fill)
                         }
                         .frame(width: 50.0, height: 50.0)

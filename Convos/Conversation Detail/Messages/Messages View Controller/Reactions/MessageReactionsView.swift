@@ -303,13 +303,13 @@ struct MessageReactionsView: View {
         static let springResponsePop: Double = 0.2
         static let springDampingFractionPop: Double = 0.5
         static let maskRightGradientMultiplier: CGFloat = 0.3
-        static let backgroundColor: Color = Color.gray.opacity(0.1)
+        static let backgroundColor: Color = Color.colorFillSubtle
         static let maskGradientColor: Color = Color.black
         static let maskGradientTransparent: Color = Color.black.opacity(0)
         static let plusIconFontSize: CGFloat = 24.0
         static let faceSmilingFontSize: CGFloat = 28.0
         static let plusIconColor: Color = .colorTextSecondary
-        static let faceSmilingColor: Color = .black
+        static let faceSmilingColor: Color = .colorTextPrimary
         static let maskClear: Color = .clear
     }
 }

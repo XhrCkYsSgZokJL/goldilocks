@@ -108,21 +108,17 @@ struct ConversationShareOverlay: View {
         let cardInternalPadding: CGFloat = qrSize * (Self.cardPadding / Self.maxQRSize)
 
         return VStack(spacing: 0.0) {
-            HStack(alignment: .center) {
-                Text("Gold code")
-                    .kerning(1.0)
-
+            HStack(alignment: .center, spacing: DesignConstants.Spacing.stepX) {
                 Image(BrandConfig.shared.assets.logoImageName)
-                    .renderingMode(.template)
+                    .renderingMode(.original)
                     .resizable()
                     .frame(width: 14.0, height: 14.0)
-                    .foregroundStyle(.colorFillTertiary)
 
-                Text("Scan to join")
+                Text("Your Gold code")
                     .kerning(1.0)
             }
             .offset(y: 5.0)
-            .foregroundStyle(.colorTextSecondary)
+            .foregroundStyle(Color.brandIcon)
             .textCase(.uppercase)
             .font(.caption)
             .frame(height: Self.headerHeight)
@@ -141,9 +137,10 @@ struct ConversationShareOverlay: View {
 
                         ZStack {
                             Rectangle()
-                                .fill(.colorTextPrimary)
+                                .fill(Color.colorBackgroundSurfaceless)
                             conversationImage
                                 .resizable()
+                                .renderingMode(.original)
                                 .aspectRatio(contentMode: .fill)
                         }
                         .frame(width: centerImageSize, height: centerImageSize)

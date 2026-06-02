@@ -28,8 +28,8 @@ struct ListItemView<LeadingContent: View, SubtitleContent: View, AccessoryConten
 
             VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepX) {
                 Text(title)
-                    .font(isUnread ? .body.weight(.medium) : .body)
-                    .foregroundStyle(.colorTextPrimary)
+                    .font(isUnread ? .body.weight(.bold) : .body.weight(.semibold))
+                    .foregroundStyle(Color.brandText)
                     .truncationMode(.tail)
                     .lineLimit(1)
 

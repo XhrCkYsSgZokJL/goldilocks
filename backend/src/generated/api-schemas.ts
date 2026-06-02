@@ -49,6 +49,7 @@ export const meResponseSchema = z.object({
   isAdmin: z.boolean(),
   inboxId: z.string(),
   emeraldMembershipEnabled: z.boolean(),
+  referralCode: z.string().optional(),
 });
 
 export type MeResponse = z.infer<typeof meResponseSchema>;

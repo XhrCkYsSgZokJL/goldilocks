@@ -54,7 +54,7 @@ struct ConversationToolbarButton: View {
             Text(subtitle)
                 .lineLimit(1)
                 .font(.caption)
-                .foregroundStyle(.colorTextSecondary)
+                .foregroundStyle(Color.brandTextLight)
         }
     }
 
@@ -70,9 +70,9 @@ struct ConversationToolbarButton: View {
                 Text(title)
                     .lineLimit(1)
                     .frame(maxWidth: 140.0, alignment: .leading)
-                    .font(.callout.weight(.medium))
+                    .font(.callout.weight(.bold))
                     .truncationMode(.tail)
-                    .foregroundStyle(.colorTextPrimary)
+                    .foregroundStyle(Color.brandText)
                     .fixedSize()
                 subtitleView
             }

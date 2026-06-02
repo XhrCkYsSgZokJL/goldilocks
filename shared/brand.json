@@ -74,6 +74,14 @@
     "logoImageName": "goldilocksLogo",
     "botImageName": "goldilocksBot"
   },
+  "theme": {
+    "mode": "dark",
+    "iconColor": "#4A7ABF",
+    "logoTextColor": "#777777",
+    "textColor": "#8FACC8",
+    "textColorLight": "#999999",
+    "backgroundColor": "#0A0A0A"
+  },
   "legal": {
     "privacyPolicyUrl": "https://goldilocksdigital.xyz/privacy",
     "termsOfServiceUrl": "https://goldilocksdigital.xyz/terms"

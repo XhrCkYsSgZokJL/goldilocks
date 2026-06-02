@@ -68,6 +68,7 @@ struct ConvosApp: App {
             .safeAreaPadding(.top, DesignConstants.Spacing.stepX)
             .withSafeAreaEnvironment()
             .captureProtected(monitor: appDelegate.captureMonitor)
+            .preferredColorScheme(BrandConfig.shared.theme?.mode == "dark" ? .dark : nil)
         }
     }
 }

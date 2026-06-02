@@ -11,7 +11,7 @@ struct WhatIsQuicknameView: View {
             Text("Infinite identities")
                 .font(.caption)
                 .foregroundColor(.colorTextSecondary)
-            Text("You're a new you in every convo")
+            Text("You're a new you in every channel")
                 .font(.system(.largeTitle))
                 .fontWeight(.bold)
             Text("Choose to add a name or pic, or not. You control how you show up.")

@@ -74,14 +74,14 @@ public extension Array where Element == ConversationMember {
 
     func sortedByRole(creatorInboxId: String? = nil) -> [ConversationMember] {
         sorted { member1, member2 in
-            if member1.isCurrentUser { return true }
-            if member2.isCurrentUser { return false }
-
             if let creatorId = creatorInboxId {
                 let m1IsCreator: Bool = member1.profile.inboxId == creatorId
                 let m2IsCreator: Bool = member2.profile.inboxId == creatorId
                 if m1IsCreator != m2IsCreator { return m1IsCreator }
             }
+
+            if member1.isCurrentUser { return true }
+            if member2.isCurrentUser { return false }
 
             let priority1 = member1.role.priority
             let priority2 = member2.role.priority

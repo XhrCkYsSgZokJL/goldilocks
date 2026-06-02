@@ -769,6 +769,8 @@ private struct AdvisoryPersonSheet: View {
                 }
                 enabledSection
             }
+            .scrollContentBackground(.hidden)
+            .background(.colorBackgroundRaisedSecondary)
             .navigationTitle("Person")
             .toolbarTitleDisplayMode(.inline)
             .toolbar {
@@ -900,7 +902,7 @@ private struct AdminEmeraldTierSection: View {
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(.colorTextSecondary)
                 } footer: {
-                    Text("Emerald overrides the automatic Bronze/Silver/Gold tier for Client #\(channel.clientNumber). Any admin can flip it.")
+                    Text("Emerald overrides automatic tier selection.")
                         .font(.caption)
                         .foregroundStyle(.colorTextSecondary)
                 }

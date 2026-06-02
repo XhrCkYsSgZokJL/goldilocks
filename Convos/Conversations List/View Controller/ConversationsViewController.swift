@@ -735,7 +735,7 @@ extension ConversationsViewController: UICollectionViewDelegate {
                         .scaleEffect(1.2)
                         .padding(DesignConstants.Spacing.step8x)
                 )
-                hostingController.view.backgroundColor = .systemBackground
+                hostingController.view.backgroundColor = UIColor(named: "colorBackgroundRaised") ?? .systemBackground
                 let size = hostingController.sizeThatFits(in: CGSize(width: 280, height: 500))
                 hostingController.preferredContentSize = size
                 return hostingController

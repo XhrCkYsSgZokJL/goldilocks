@@ -35,7 +35,17 @@
       "Bash(docker compose *)",
       "Bash(./dev/status)",
       "Bash(./dev/stop)",
-      "Bash(./dev/start)"
+      "Bash(./dev/start)",
+      "Bash(tail -30 /tmp/goldilocks-agent.log 2>/dev/null || echo \"No agent log found\")",
+      "Bash(ls /tmp/goldilocks*.log 2>/dev/null; ls /Users/morgan/Desktop/git/goldilocks/backend/*.log 2>/dev/null; ls /Users/morgan/Desktop/git/goldilocks/dev/*.log 2>/dev/null)",
+      "Bash(PGPASSWORD=postgres psql -h localhost -p 25433 -U postgres -d goldilocks -c \"SELECT id, name, eth_address, created_at FROM clients ORDER BY created_at DESC LIMIT 10;\")",
+      "Bash(awk '{print $2}')",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(f'  {k}: {v}'\\) for k,v in d.get\\('scripts',{}\\).items\\(\\)]\")",
+      "Bash(mkdir -p /Users/morgan/Desktop/git/goldilocks/.claude)",
+      "Bash(echo \"BD18EE70-2B52-42BF-BEE5-2FD9D8D88345\")",
+      "Bash(grep \"PUBLIC_BASE_URL\\\\|STRIPE_SUCCESS_URL\\\\|STRIPE_CANCEL_URL\" /Users/morgan/Desktop/git/goldilocks/.env /Users/morgan/Desktop/git/goldilocks/backend/.env 2>/dev/null)",
+      "Bash(find /Users/morgan/Library/Developer/Xcode/DerivedData -name \"ConvosCore*\" -type d 2>/dev/null | head -5)",
+      "Bash(rm -rf /Users/morgan/Desktop/git/goldilocks/.derivedData && rm -rf ~/Library/org.swift.swiftpm/security/registries/cache 2>/dev/null; echo \"cleaned\")"
     ]
   },
   "enableAllProjectMcpServers": true,

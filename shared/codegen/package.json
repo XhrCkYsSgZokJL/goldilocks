@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "generate": "tsx generate-swift.ts && tsx generate-zod.ts",
+    "generate": "tsx generate-swift.ts && tsx generate-zod.ts && python3 sync-brand-colors.py",
     "generate:swift": "tsx generate-swift.ts",
     "generate:zod": "tsx generate-zod.ts"
   },

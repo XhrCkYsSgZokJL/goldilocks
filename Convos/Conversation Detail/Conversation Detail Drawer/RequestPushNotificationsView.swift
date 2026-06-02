@@ -49,11 +49,11 @@ struct RequestPushNotificationsView: View {
     var buttonBackgroundColor: Color {
         switch permissionState {
         case .request:
-                .colorBackgroundInverted
+                .colorFillPrimary
         case .enabled:
                 .colorFillMinimal
         case .denied:
-                .colorBackgroundInverted
+                .colorFillPrimary
         }
     }
 

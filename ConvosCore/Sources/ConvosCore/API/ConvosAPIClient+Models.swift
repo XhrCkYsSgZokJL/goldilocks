@@ -251,21 +251,24 @@ public enum ConvosAPI {
         /// regardless of seats / coverage, and the Membership screen
         /// hides the "Add coverage" purchase flow + enables Invoices.
         public let emeraldMembershipEnabled: Bool
+        public let referralCode: String?
 
         public init(
             clientNumber: Int64,
             isAdmin: Bool,
             inboxId: String,
-            emeraldMembershipEnabled: Bool = false
+            emeraldMembershipEnabled: Bool = false,
+            referralCode: String? = nil
         ) {
             self.clientNumber = clientNumber
             self.isAdmin = isAdmin
             self.inboxId = inboxId
             self.emeraldMembershipEnabled = emeraldMembershipEnabled
+            self.referralCode = referralCode
         }
 
         private enum CodingKeys: String, CodingKey {
-            case clientNumber, isAdmin, inboxId, emeraldMembershipEnabled
+            case clientNumber, isAdmin, inboxId, emeraldMembershipEnabled, referralCode
         }
 
         public init(from decoder: any Decoder) throws {
@@ -273,8 +276,8 @@ public enum ConvosAPI {
             self.clientNumber = try container.decode(Int64.self, forKey: .clientNumber)
             self.isAdmin = try container.decode(Bool.self, forKey: .isAdmin)
             self.inboxId = try container.decode(String.self, forKey: .inboxId)
-            // Tolerate older backends that don't yet return this field.
             self.emeraldMembershipEnabled = try container.decodeIfPresent(Bool.self, forKey: .emeraldMembershipEnabled) ?? false
+            self.referralCode = try container.decodeIfPresent(String.self, forKey: .referralCode)
         }
     }
 

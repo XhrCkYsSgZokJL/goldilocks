@@ -13,15 +13,14 @@ struct ConvosToolbarButton: View {
             HStack(spacing: DesignConstants.Spacing.stepX) {
                 Image(BrandConfig.shared.assets.logoImageName)
                     .resizable()
-                    .renderingMode(.template)
+                    .renderingMode(.original)
                     .aspectRatio(contentMode: .fit)
-                    .foregroundStyle(.colorFillPrimary)
                     .frame(width: 24.0, height: 24.0)
                     .accessibilityHidden(true)
 
                 Text(BrandConfig.shared.brand.name)
-                    .font(.body)
-                    .foregroundStyle(.colorTextPrimary)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.brandLogoText)
                     .padding(.trailing, DesignConstants.Spacing.stepX)
             }
             .padding(padding ? DesignConstants.Spacing.step2x : 0)
@@ -52,6 +51,7 @@ struct AppSettingsView: View {
     @State private var upgradeCode: String = ""
     @State private var upgradeResultMessage: String?
     @State private var showingUpgradeResult: Bool = false
+    @State private var showingAppShareQR: Bool = false
     @Environment(\.openURL) private var openURL: OpenURLAction
     @Environment(\.dismiss) private var dismiss: DismissAction
 
@@ -66,8 +66,10 @@ struct AppSettingsView: View {
                         .foregroundStyle(.colorTextPrimary)
                 }
                 .listRowInsets(.init(top: 0, leading: DesignConstants.Spacing.step4x, bottom: 0, trailing: 10.0))
+                .listRowBackground(Color.colorFillMinimal)
             } footer: {
                 Text("Share services with conversations")
+                    .foregroundStyle(.colorTextSecondary)
             }
         }
     }
@@ -101,7 +103,9 @@ struct AppSettingsView: View {
             .listRowInsets(.init(top: 0, leading: DesignConstants.Spacing.step4x, bottom: 0, trailing: 10.0))
         } footer: {
             Text("Your \(BrandConfig.shared.brand.name) plan")
+                .foregroundStyle(.colorTextSecondary)
         }
+        .listRowBackground(Color.colorFillMinimal)
     }
 
     @ViewBuilder
@@ -151,7 +155,9 @@ struct AppSettingsView: View {
             .accessibilityIdentifier("contacts-row")
         } footer: {
             Text("Private unless you choose to share")
+                .foregroundStyle(.colorTextSecondary)
         }
+        .listRowBackground(Color.colorFillMinimal)
     }
 
     /// The "My info" destination — shared by the settings row and the
@@ -288,6 +294,7 @@ struct AppSettingsView: View {
                     .foregroundStyle(.colorTextSecondary)
                 }
                 .listRowSeparatorTint(.colorBorderSubtle)
+                .listRowBackground(Color.colorFillMinimal)
 
                 Section {
                     Button(role: .destructive) {
@@ -308,6 +315,7 @@ struct AppSettingsView: View {
                         )
                         .interactiveDismissDisabled(viewModel.isDeleting)
                     }
+                    .listRowBackground(Color.colorFillMinimal)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -320,6 +328,15 @@ struct AppSettingsView: View {
                     Button(role: .cancel) {
                         dismiss()
                     }
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    let showShareQR = { showingAppShareQR = true }
+                    Button(action: showShareQR) {
+                        Image(systemName: "qrcode")
+                    }
+                    .accessibilityLabel("Share \(BrandConfig.shared.brand.name)")
+                    .accessibilityIdentifier("settings-share-button")
                 }
 
                 ToolbarItem(placement: .principal) {
@@ -340,6 +357,9 @@ struct AppSettingsView: View {
                 guard !didApplyInitialRoute, let initialRoute else { return }
                 didApplyInitialRoute = true
                 path = [initialRoute]
+            }
+            .sheet(isPresented: $showingAppShareQR) {
+                AppShareQRSheet()
             }
         }
     }
@@ -529,10 +549,14 @@ struct MembershipView: View {
         } message: {
             Text("This person will be re-added to your membership.")
         }
-        .alert("Request refund?", isPresented: $showingCancelConfirm) {
-            Button("Keep balance", role: .cancel) {}
-            let confirmAction: () -> Void = { Task { await cancelCoverage() } }
-            Button("Refund balance", role: .destructive, action: confirmAction)
+        .alert(hasBalance ? "Request refund?" : "Balance", isPresented: $showingCancelConfirm) {
+            if hasBalance {
+                Button("Keep balance", role: .cancel) {}
+                let confirmAction: () -> Void = { Task { await cancelCoverage() } }
+                Button("Refund balance", role: .destructive, action: confirmAction)
+            } else {
+                Button("OK", role: .cancel) {}
+            }
         } message: {
             Text(cancelConfirmMessage)
         }
@@ -735,19 +759,11 @@ struct MembershipView: View {
     }
 
     private var checkoutButtonLabel: String {
-        if paymentMethod == .crypto {
-            return "Coming Soon"
-        }
-        return "Deposit $\(chargeTotal)"
+        "Deposit $\(chargeTotal)"
     }
 
     private var canStartCheckout: Bool {
-        switch paymentMethod {
-        case .apple, .card:
-            return checkoutPeople > 0
-        case .crypto:
-            return false
-        }
+        checkoutPeople > 0
     }
 
     private var billingInfoMessage: String {
@@ -768,29 +784,32 @@ struct MembershipView: View {
         return "Disable people in your membership before \(dateString) to not be charged."
     }
 
+    private var hasBalance: Bool {
+        (billingStatus?.balanceCents ?? 0) > 0
+    }
+
     private var cancelConfirmMessage: String {
-        "Coverage will not be renewed and your balance will be returned to your payment method."
+        if hasBalance {
+            return "Coverage will not be renewed and your balance will be returned to your payment method."
+        }
+        return "You can request a refund on your balance at any time. When you deposit funds, your balance will appear here and can be refunded to your original payment method."
     }
 
     @ViewBuilder
     private var peopleSection: some View {
         Section {
             tierRow
-            if plan.members.isEmpty {
-                Text("No people on your plan yet.")
-                    .foregroundStyle(.colorTextSecondary)
-            } else {
-                ForEach(plan.members) { member in
-                    memberRow(member)
-                }
-                .onDelete(perform: deleteMembers)
-                .onMove(perform: moveMembers)
+            ForEach(plan.members) { member in
+                memberRow(member)
             }
+            .onDelete(perform: deleteMembers)
+            .onMove(perform: moveMembers)
             addSomeoneRow
         } header: {
             Text("People")
         } footer: {
             Text("\(GoldilocksPlan.priceLabel). Toggle a person on to start coverage. Tap to edit, swipe to remove.")
+                .foregroundStyle(.colorTextSecondary)
         }
     }
 
@@ -936,7 +955,7 @@ struct MembershipView: View {
         case .card:
             await startStripeCheckout()
         case .crypto:
-            break
+            showBillingResult("Product not available. Please try again later.")
         }
     }
 
@@ -989,7 +1008,7 @@ struct MembershipView: View {
                 checkoutSessionId = nil
                 reconcileTask?.cancel()
                 reconcileTask = nil
-                showBillingResult("Your coverage is active.")
+                showBillingResult("Deposit received. Toggle a person on to activate coverage.")
             }
         } catch {
             Log.warning("[Goldilocks] Checkout reconcile failed: \(error.localizedDescription)")
@@ -1122,6 +1141,8 @@ private struct PersonEditorSheet: View {
                 addressSection
                 if onRemove != nil { removeSection }
             }
+            .scrollContentBackground(.hidden)
+            .background(.colorBackgroundRaisedSecondary)
             .navigationTitle(title)
             .toolbarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
@@ -1220,14 +1241,15 @@ private struct PersonEditorSheet: View {
         Section {
             TextField("First name", text: $firstName)
                 .textContentType(.givenName)
-            TextField("Middle name", text: $middleName)
+            TextField("Middle name (optional)", text: $middleName)
                 .textContentType(.middleName)
-            TextField("Last name", text: $lastName)
+            TextField("Last name (optional)", text: $lastName)
                 .textContentType(.familyName)
         } header: {
             Text("Name")
         } footer: {
-            Text("Name fields are optional — the person is identified by their verified emails.")
+            Text("First name is required.")
+                .foregroundStyle(.colorTextSecondary)
         }
     }
 
@@ -1243,6 +1265,7 @@ private struct PersonEditorSheet: View {
             Text("Emails")
         } footer: {
             Text(emailsFooterText)
+                .foregroundStyle(.colorTextSecondary)
         }
     }
 
@@ -1372,8 +1395,6 @@ private struct PersonEditorSheet: View {
                 .textContentType(.countryName)
         } header: {
             Text("Address (optional)")
-        } footer: {
-            Text("Phone and address are optional and can be edited later.")
         }
     }
 
@@ -1405,6 +1426,7 @@ private struct PersonEditorSheet: View {
     }
 
     private var canSave: Bool {
+        guard !firstName.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
         guard emails.contains(where: { $0.status == .verified }) else { return false }
         guard let original = originalMember else { return true }
         return assembledMember != original
@@ -1642,7 +1664,7 @@ private struct TierInfoSheet: View {
                     .foregroundStyle(.colorTextSecondary)
             }
         }
-        .listRowBackground(isCurrent ? tier.tintColor : nil)
+        .listRowBackground(isCurrent ? tier.tintColor : Color.colorFillMinimal)
     }
 }
 
@@ -1656,13 +1678,86 @@ struct InvoicesView: View {
             Section {
                 Text("No invoices yet.")
                     .foregroundStyle(.colorTextSecondary)
+                    .listRowBackground(Color.colorFillMinimal)
             } footer: {
                 Text("Emerald membership invoices will appear here.")
+                    .foregroundStyle(.colorTextSecondary)
             }
         }
         .scrollContentBackground(.hidden)
         .background(.colorBackgroundRaisedSecondary)
         .navigationTitle("Invoices")
         .toolbarTitleDisplayMode(.inline)
+    }
+}
+
+private struct AppShareQRSheet: View {
+    @Environment(\.dismiss) private var dismiss: DismissAction
+
+    private var shareURL: URL {
+        let domain: String = ConfigManager.shared.currentEnvironment.relyingPartyIdentifier
+        let base: String = "https://\(domain)"
+        if let code = GoldilocksSession.shared.identity?.referralCode,
+           let url = URL(string: "\(base)/r/\(code)") {
+            return url
+        }
+        guard let url = URL(string: base) else {
+            return URL(string: "https://goldilocksdigital.xyz")
+                ?? URL(fileURLWithPath: "/")
+        }
+        return url
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: DesignConstants.Spacing.step6x) {
+                VStack(spacing: DesignConstants.Spacing.step2x) {
+                    HStack(alignment: .center, spacing: DesignConstants.Spacing.stepX) {
+                        Image(BrandConfig.shared.assets.logoImageName)
+                            .renderingMode(.original)
+                            .resizable()
+                            .frame(width: 14.0, height: 14.0)
+
+                        Text("Your Gold code")
+                            .kerning(1.0)
+                    }
+                    .foregroundStyle(Color.brandIcon)
+                    .textCase(.uppercase)
+                    .font(.caption)
+                }
+
+                QRCodeView(
+                    url: shareURL,
+                    centerImage: Image(BrandConfig.shared.assets.logoImageName)
+                )
+
+                ShareLink(
+                    item: shareURL,
+                    subject: Text(BrandConfig.shared.brand.name),
+                    message: Text("Join me on \(BrandConfig.shared.brand.name)")
+                ) {
+                    HStack(spacing: DesignConstants.Spacing.stepX) {
+                        Image(systemName: "square.and.arrow.up")
+                        Text("Share link")
+                    }
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.colorTextPrimaryInverted)
+                    .padding(.vertical, DesignConstants.Spacing.step3x)
+                    .padding(.horizontal, DesignConstants.Spacing.step6x)
+                    .background(Color.colorFillPrimary, in: Capsule())
+                }
+            }
+            .padding(DesignConstants.Spacing.step6x)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.colorBackgroundRaisedSecondary)
+            .navigationTitle("Invite")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    let cancelAction = { dismiss() }
+                    Button("Done", action: cancelAction)
+                }
+            }
+        }
     }
 }

@@ -17,6 +17,24 @@ class ConvosAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUser
     let captureMonitor: CaptureMonitor = .init()
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        let brand = BrandConfig.shared
+        GoldilocksMembershipTier.configure(
+            silverThreshold: brand.tiers.thresholds.silver,
+            goldThreshold: brand.tiers.thresholds.gold,
+            descriptions: brand.tiers.descriptions
+        )
+        GoldilocksPlan.configure(
+            monthlyPricePerPersonCents: brand.pricing.monthlyPricePerPersonCents,
+            priceLabel: brand.pricing.priceLabel
+        )
+        if brand.theme?.mode == "dark" {
+            let cellBg = UIColor(named: "colorFillMinimal") ?? .secondarySystemGroupedBackground
+            UITableViewCell.appearance().backgroundColor = cellBg
+            UICollectionView.appearance().backgroundColor = .clear
+            let footerColor = UIColor(named: "colorTextSecondary") ?? .secondaryLabel
+            UITableViewHeaderFooterView.appearance().tintColor = footerColor
+            UILabel.appearance(whenContainedInInstancesOf: [UITableViewHeaderFooterView.self]).textColor = footerColor
+        }
         SentryConfiguration.configure()
         SecureWindow.installWhenWindowAppears()
         captureMonitor.start()

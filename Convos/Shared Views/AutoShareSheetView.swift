@@ -119,7 +119,7 @@ extension AutoShareSheetView where Content == AnyView {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(.systemBackground))
+            .background(.colorBackgroundRaised)
         )
     }
 }
@@ -139,21 +139,17 @@ extension AutoShareSheetView where Content == AnyView {
 
                 VStack(spacing: 0.0) {
                     VStack(spacing: 0.0) {
-                        HStack(alignment: .center) {
-                            Text("Gold code")
-                                .kerning(1.0)
-
+                        HStack(alignment: .center, spacing: DesignConstants.Spacing.stepX) {
                             Image(BrandConfig.shared.assets.logoImageName)
-                                .renderingMode(.template)
+                                .renderingMode(.original)
                                 .resizable()
                                 .frame(width: 14.0, height: 14.0)
-                                .foregroundStyle(.colorFillTertiary)
 
-                            Text("Scan to join")
+                            Text("Your Gold code")
                                 .kerning(1.0)
                         }
                         .offset(y: 5.0) // qr code is generated with some padding
-                        .foregroundStyle(.colorTextSecondary)
+                        .foregroundStyle(Color.brandIcon)
                         .textCase(.uppercase)
                         .font(.caption)
                         .frame(height: DesignConstants.Spacing.step10x)

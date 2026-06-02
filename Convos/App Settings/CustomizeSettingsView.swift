@@ -57,6 +57,7 @@ struct CustomizeSettingsView: View {
                     toggleAccessibilityIdentifier: "read-receipts-toggle"
                 )
             }
+            .listRowBackground(Color.colorFillMinimal)
 
             Section {
                 HStack {
@@ -65,6 +66,7 @@ struct CustomizeSettingsView: View {
                     Spacer()
                     SoonLabel()
                 }
+                .listRowBackground(Color.colorFillMinimal)
             }
             .disabled(true)
         }

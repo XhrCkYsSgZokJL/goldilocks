@@ -20,6 +20,7 @@ import {
   refreshGroupInstallations,
   logInboxInstallations,
   clientNoLongerMember,
+  syncMembership,
   log,
 } from './xmtp-helpers.js';
 
@@ -62,7 +63,7 @@ const REPORTS_INTRO_MESSAGE =
 // swap its avatar. Mirrors `lockGroupMetadata` (which re-asserts the
 // same lock on every reconcile for groups that pre-date this).
 const LOCKED_METADATA_POLICY_SET: PermissionPolicySet = {
-  addMemberPolicy: PermissionPolicy.Allow,
+  addMemberPolicy: PermissionPolicy.Admin,
   removeMemberPolicy: PermissionPolicy.Admin,
   addAdminPolicy: PermissionPolicy.SuperAdmin,
   removeAdminPolicy: PermissionPolicy.SuperAdmin,
@@ -192,13 +193,15 @@ export class ReportsAgent {
         }, false);
         continue;
       }
-      log(`[reports]   Reports #${row.clientNumber} ${row.xmtpGroupId.slice(0, 8)}… refreshing installations`);
+      log(`[reports]   Reports #${row.clientNumber} ${row.xmtpGroupId.slice(0, 8)}… syncing membership and refreshing`);
+      const desired = [row.clientInboxId, this.inboxId];
+      const locked = new Set([row.clientInboxId, this.inboxId]);
+      await syncMembership(group, desired, '[reports]', false, locked);
       await this.enforceGroupMetadata(
         group,
         reportsName(row.clientNumber),
         REPORTS_GROUP_DESCRIPTION,
       );
-      // Pick up any new installations the client has rotated in.
       await refreshGroupInstallations(group, '[reports]');
       await lockGroupMetadata(group);
     }
@@ -511,6 +514,15 @@ async function lockGroupMetadata(group: Group): Promise<void> {
       log(`[reports]   locked ${label} edits to super-admins for ${group.id.slice(0, 8)}…`);
     } catch (err) {
       log(`[reports]   lockGroupMetadata(${label}) failed: ${(err as Error).message}`);
+    }
+  }
+
+  if (policySet.addMemberPolicy !== PermissionPolicy.Admin) {
+    try {
+      await group.updatePermission(PermissionUpdateType.AddMember, PermissionPolicy.Admin);
+      log(`[reports]   locked addMember to admins for ${group.id.slice(0, 8)}…`);
+    } catch (err) {
+      log(`[reports]   lockGroupMetadata(addMember) failed: ${(err as Error).message}`);
     }
   }
 }

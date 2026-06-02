@@ -18,19 +18,19 @@ struct ConversationInfoPreview: View {
 
                     VStack(spacing: DesignConstants.Spacing.stepHalf) {
                         Text(conversation.displayName)
-                            .font(.callout.weight(.medium))
-                            .foregroundStyle(.colorTextPrimary)
+                            .font(.callout.weight(.bold))
+                            .foregroundStyle(Color.brandText)
                         if let description = conversation.description, !description.isEmpty {
                             Text(description)
                                 .font(.callout)
-                                .foregroundStyle(.colorTextPrimary)
+                                .foregroundStyle(Color.brandTextLight)
                         }
                     }
                     .padding(.horizontal, DesignConstants.Spacing.step2x)
 
                     Text(conversation.membersCountString)
                         .font(.caption)
-                        .foregroundStyle(.colorTextSecondary)
+                        .foregroundStyle(Color.brandTextLight)
                 }
                 .multilineTextAlignment(.center)
                 .padding(DesignConstants.Spacing.step6x)

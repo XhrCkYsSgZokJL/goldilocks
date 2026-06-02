@@ -108,6 +108,45 @@ export async function safe(fn: () => Promise<unknown>, label: string): Promise<v
   }
 }
 
+/**
+ * Enforce that the group's membership matches `desiredInboxIds` exactly.
+ * Adds missing members, removes unauthorized ones. Members in
+ * `lockedInboxIds` are never removed (e.g. the agent itself).
+ * When `superAdminAll` is true, every desired member is promoted to
+ * super-admin after sync.
+ */
+export async function syncMembership(
+  group: Group,
+  desiredInboxIds: string[],
+  label: string,
+  superAdminAll: boolean = false,
+  lockedInboxIds: Set<string> = new Set(),
+): Promise<void> {
+  await group.sync();
+  const current = await group.members();
+  const currentSet = new Set(current.map((m) => m.inboxId));
+  const desiredSet = new Set(desiredInboxIds);
+
+  const toAdd = desiredInboxIds.filter((id) => !currentSet.has(id));
+  const toRemove = current
+    .map((m) => m.inboxId)
+    .filter((id) => !desiredSet.has(id) && !lockedInboxIds.has(id));
+
+  if (toAdd.length > 0) {
+    log(`${label}   add ${toAdd.length} member(s) to ${group.id.slice(0, 8)}…`);
+    await safe(() => group.addMembers(toAdd), `${label} addMembers`);
+  }
+  if (toRemove.length > 0) {
+    log(`${label}   remove ${toRemove.length} member(s) from ${group.id.slice(0, 8)}…`);
+    await safe(() => group.removeMembers(toRemove), `${label} removeMembers`);
+  }
+  if (superAdminAll) {
+    for (const id of desiredInboxIds) {
+      await safe(() => group.addSuperAdmin(id), `${label} addSuperAdmin(${id.slice(0, 8)}…)`);
+    }
+  }
+}
+
 const agentLog = logger.child({ module: 'agent.xmtp' });
 
 export function log(msg: string): void {

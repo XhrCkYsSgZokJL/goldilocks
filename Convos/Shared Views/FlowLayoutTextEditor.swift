@@ -75,7 +75,7 @@ private struct FlowLayoutTextEditorExample: View {
                         Text(item)
                             .foregroundStyle(item == selectedItem ? .colorTextPrimaryInverted : .colorTextPrimary)
                             .padding(DesignConstants.Spacing.step2x)
-                            .background(item == selectedItem ? .colorBackgroundInverted : .gray.opacity(0.2))
+                            .background(item == selectedItem ? .colorBackgroundInverted : .colorFillSubtle)
                             .cornerRadius(DesignConstants.CornerRadius.small)
                     }
 

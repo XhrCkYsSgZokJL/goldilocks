@@ -14,6 +14,7 @@ import meRoutes from './routes/me.js';
 import channelRoutes from './routes/channels.js';
 import peopleListRoutes from './routes/people-list.js';
 import billingRoutes from './routes/billing.js';
+import referralApiRoutes, { referralLandingRoutes } from './routes/referral.js';
 import stripeWebhookRoutes from './routes/stripe-webhook.js';
 import appleBillingRoutes from './routes/apple-billing.js';
 import appleWebhookRoutes from './routes/apple-webhook.js';
@@ -75,6 +76,9 @@ async function build() {
   // Goldilocks doesn't have agents, so return an empty key list.
   app.get('/.well-known/agents.json', async () => ({ keys: [] }));
 
+  // Public referral landing page at /r/:code — outside /api for clean URLs.
+  await app.register(referralLandingRoutes);
+
   await app.register(
     async (api) => {
       await api.register(authRoutes);
@@ -85,6 +89,7 @@ async function build() {
       await api.register(notificationRoutes);
       await api.register(attachmentRoutes, { publicBaseUrl });
       await api.register(billingRoutes, { publicBaseUrl });
+      await api.register(referralApiRoutes, { publicBaseUrl });
       await api.register(appleBillingRoutes);
       // Registered as their own plugins so their raw-body parsers (needed
       // for signature verification) stay encapsulated.

@@ -204,7 +204,9 @@ struct ConversationView<MessagesBottomBar: View>: View {
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if viewModel.isLocked {
+                if viewModel.conversation.isGoldilocksManaged {
+                    EmptyView()
+                } else if viewModel.isLocked {
                     Button {
                         showingLockedInfo = true
                     } label: {

@@ -707,7 +707,7 @@ private struct AttachmentPlaceholder: View {
             .foregroundStyle(.primary)
             .frame(width: 44, height: 44)
             .background(.ultraThinMaterial)
-            .background(Color.white.opacity(0.85))
+            .background(Color.colorBackgroundRaised.opacity(0.85))
             .clipShape(Circle())
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityIdentifier("video-play-button")

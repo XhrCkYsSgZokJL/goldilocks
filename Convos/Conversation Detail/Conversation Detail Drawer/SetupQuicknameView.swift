@@ -35,7 +35,7 @@ struct SetupQuicknameView: View {
                 Image(systemName: "lanyardcard.fill")
                     .foregroundStyle(.colorLava)
                     .accessibilityHidden(true)
-                Text("Add your name for this convo")
+                Text("Add your name for this channel")
                     .font(.callout)
                     .foregroundStyle(.colorTextPrimaryInverted)
             }
@@ -43,10 +43,10 @@ struct SetupQuicknameView: View {
             .padding(.horizontal, DesignConstants.Spacing.step4x)
             .background(
                 Capsule()
-                    .fill(.colorBackgroundInverted)
+                    .fill(Color.colorFillPrimary)
             )
         }
-        .accessibilityLabel("Add your name for this convo")
+        .accessibilityLabel("Add your name for this channel")
         .accessibilityIdentifier("setup-quickname-button")
         .transition(.blurReplace)
         .hoverEffect(.lift)
