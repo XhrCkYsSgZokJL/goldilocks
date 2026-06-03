@@ -430,7 +430,8 @@ final class ConversationsViewModel {
         }
         composeConversationViewModel = NewConversationViewModel(
             session: session,
-            mode: .newConversation
+            mode: .newConversation,
+            coreActions: coreActions
         )
         presentingComposeFlow = true
     }

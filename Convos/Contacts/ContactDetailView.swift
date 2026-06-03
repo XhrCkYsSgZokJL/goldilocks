@@ -625,7 +625,8 @@ struct ContactDetailView: View {
         guard let session else { return }
         pushedConversation = NewConversationViewModel(
             session: session,
-            mode: .existingConversation(conversationId: conversation.id)
+            mode: .existingConversation(conversationId: conversation.id),
+            coreActions: coreActions
         )
     }
 
