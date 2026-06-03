@@ -45,7 +45,9 @@
       "Bash(echo \"BD18EE70-2B52-42BF-BEE5-2FD9D8D88345\")",
       "Bash(grep \"PUBLIC_BASE_URL\\\\|STRIPE_SUCCESS_URL\\\\|STRIPE_CANCEL_URL\" /Users/morgan/Desktop/git/goldilocks/.env /Users/morgan/Desktop/git/goldilocks/backend/.env 2>/dev/null)",
       "Bash(find /Users/morgan/Library/Developer/Xcode/DerivedData -name \"ConvosCore*\" -type d 2>/dev/null | head -5)",
-      "Bash(rm -rf /Users/morgan/Desktop/git/goldilocks/.derivedData && rm -rf ~/Library/org.swift.swiftpm/security/registries/cache 2>/dev/null; echo \"cleaned\")"
+      "Bash(rm -rf /Users/morgan/Desktop/git/goldilocks/.derivedData && rm -rf ~/Library/org.swift.swiftpm/security/registries/cache 2>/dev/null; echo \"cleaned\")",
+      "Bash(python3 -c \"import json; d=json.load\\(open\\('shared/brand.json'\\)\\); print\\(json.dumps\\(d.get\\('groups'\\), indent=2\\)\\)\")",
+      "Bash(python3 -c \"import json; d=json.load\\(open\\('shared/brand.json'\\)\\); print\\(json.dumps\\({k:v for k,v in d.items\\(\\) if 'group' in k.lower\\(\\) or k in \\('groupImages','groupIcons','advisoryTierImages'\\)}, indent=2\\)\\)\")"
     ]
   },
   "enableAllProjectMcpServers": true,

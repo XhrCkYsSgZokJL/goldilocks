@@ -2,13 +2,13 @@ import SwiftUI
 
 extension Color {
     static let brandIcon: Color = Color(
-        red: 0.2902, green: 0.4784, blue: 0.7490
+        red: 0.7922, green: 0.6431, blue: 0.3216
     )
     static let brandLogoText: Color = Color(
         red: 0.8784, green: 0.8784, blue: 0.8784
     )
     static let brandText: Color = Color(
-        red: 0.5608, green: 0.6745, blue: 0.7843
+        red: 0.7686, green: 0.6627, blue: 0.4902
     )
     static let brandTextLight: Color = Color(
         red: 0.6000, green: 0.6000, blue: 0.6000

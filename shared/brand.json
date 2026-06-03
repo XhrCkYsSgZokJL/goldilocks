@@ -76,9 +76,9 @@
   },
   "theme": {
     "mode": "dark",
-    "iconColor": "#4A7ABF",
+    "iconColor": "#CAA452",
     "logoTextColor": "#E0E0E0",
-    "textColor": "#8FACC8",
+    "textColor": "#C4A97D",
     "textColorLight": "#999999",
     "backgroundColor": "#0A0A0A"
   },

@@ -75,6 +75,7 @@
       "hidden" : false,
       "layers" : [
         {
+          "hidden" : true,
           "image-name" : "Gemini_Generated_Image_x1h295x1h295x1h2 (2).png",
           "name" : "Gemini_Generated_Image_x1h295x1h295x1h2 (2)",
           "position" : {
@@ -98,7 +99,7 @@
           }
         },
         {
-          "hidden" : true,
+          "hidden" : false,
           "image-name" : "Gemini_Generated_Image_tcmaqmtcmaqmtcma (2).png",
           "name" : "Gemini_Generated_Image_tcmaqmtcmaqmtcma (2)",
           "position" : {

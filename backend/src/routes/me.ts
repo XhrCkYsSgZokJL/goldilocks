@@ -565,12 +565,19 @@ export default async function meRoutes(app: FastifyInstance) {
       .where(and(eq(adminInboxes.inboxId, inboxId), eq(adminInboxes.disabled, false)))
       .limit(1);
 
+    const [referralCount] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(referrals)
+      .where(and(eq(referrals.referrerClientId, client.id), isNotNull(referrals.referrerCreditAppliedAt)));
+
     return reply.code(200).send({
       clientNumber: client.clientNumber,
       isAdmin: !!adminRow,
       inboxId: client.inboxId,
       emeraldMembershipEnabled: client.emeraldMembershipEnabled,
       referralCode,
+      referralCreditCents: client.referralCreditCents,
+      payingReferralCount: referralCount?.count ?? 0,
     });
   });
 }

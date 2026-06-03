@@ -613,6 +613,7 @@ struct MembershipView: View {
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.colorTextTertiary)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .listRowBackground(tier.tintColor)
@@ -653,6 +654,7 @@ struct MembershipView: View {
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.colorTextTertiary)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .sheet(isPresented: $showingReferralSheet) {
@@ -691,6 +693,7 @@ struct MembershipView: View {
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.colorTextTertiary)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -708,6 +711,7 @@ struct MembershipView: View {
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.colorTextTertiary)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -1359,6 +1363,7 @@ private struct PersonEditorSheet: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.colorFillPrimary)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -1392,6 +1397,7 @@ private struct PersonEditorSheet: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.red)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -1408,6 +1414,7 @@ private struct PersonEditorSheet: View {
                     .foregroundStyle(.colorTextPrimary)
                 Spacer()
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -1938,7 +1945,7 @@ private struct ReferralCreditSheet: View {
             resultMessage = "Referral applied."
             referralInput = ""
         } catch {
-            resultMessage = "Could not apply referral code. It may be invalid or already used."
+            resultMessage = "Could not apply referral code. It may be invalid."
         }
         showingResult = true
     }
