@@ -3000,7 +3000,7 @@ extension ConversationViewModel {
         let session = self.session
         let actions: any CoreActions = coreActions
         agentJoinTask = Task { [weak self] in
-            let success = await Self.performAgentJoinCall(
+            let outcome = await Self.performAgentJoinCall(
                 templateId: templateId,
                 slug: slug,
                 conversationId: conversationId,
@@ -3011,10 +3011,10 @@ extension ConversationViewModel {
             let memberCount: Int = await MainActor.run { self?.conversation.members.count ?? 0 }
             await MainActor.run {
                 guard let self else { return }
-                if !success { self.onAgentJoinError() }
+                if outcome == .failed { self.onAgentJoinError() }
                 self.clearAgentJoinTask(id: taskId)
             }
-            if success {
+            if outcome == .succeeded {
                 await actions.addedAssistant(memberCount: memberCount)
             }
         }
@@ -3064,7 +3064,7 @@ extension ConversationViewModel {
                     try? await Task.sleep(nanoseconds: 500_000_000)
                 }
                 let requestId = UUID().uuidString
-                let success = await Self.performAgentJoinCall(
+                let outcome = await Self.performAgentJoinCall(
                     templateId: templateId,
                     slug: slug,
                     conversationId: conversationId,
@@ -3072,7 +3072,7 @@ extension ConversationViewModel {
                     forceErrorCode: forceErrorCode,
                     session: session
                 )
-                if !success { anyFailed = true }
+                if outcome == .failed { anyFailed = true }
             }
             if anyFailed {
                 await MainActor.run { self?.onAgentJoinError() }
@@ -3080,12 +3080,21 @@ extension ConversationViewModel {
         }
     }
 
+    /// Discriminates the three outcomes of an `agents/join` call so callers
+    /// can react differently — `.failed` drives the error UI, `.succeeded`
+    /// drives the analytics metric, `.cancelled` (rapid re-tap or
+    /// URLSession cancel) is a no-op on both axes.
+    private enum AgentJoinOutcome {
+        case succeeded
+        case cancelled
+        case failed
+    }
+
     /// Performs a single `agents/join` call: broadcasts `.pending` before,
     /// broadcasts the appropriate failure status (`.failed` or
-    /// `.noAgentsAvailable`) on error. Returns `true` on success or
-    /// cooperative cancellation, `false` only on an actual error response
-    /// from the backend. Static + parameterized so both the single-flight
-    /// and batched callers can share the same body without holding `self`.
+    /// `.noAgentsAvailable`) on error. Static + parameterized so both the
+    /// single-flight and batched callers can share the same body without
+    /// holding `self`.
     private static func performAgentJoinCall(
         templateId: String?,
         slug: String,
@@ -3093,7 +3102,7 @@ extension ConversationViewModel {
         requestId: String,
         forceErrorCode: Int?,
         session: any SessionManagerProtocol
-    ) async -> Bool {
+    ) async -> AgentJoinOutcome {
         Log.info("performAgentJoinCall starting templateId=\(templateId ?? "nil") requestId=\(requestId)")
         await Self.broadcastAgentJoinRequest(
             status: .pending, requestId: requestId,
@@ -3108,13 +3117,13 @@ extension ConversationViewModel {
                 forceErrorCode: forceErrorCode
             )
             Log.info("performAgentJoinCall succeeded templateId=\(templateId ?? "nil") requestId=\(requestId)")
-            return true
+            return .succeeded
         } catch is CancellationError {
             Log.warning("performAgentJoinCall cancelled (CancellationError) templateId=\(templateId ?? "nil") requestId=\(requestId)")
-            return true
+            return .cancelled
         } catch let urlError as URLError where urlError.code == .cancelled {
             Log.warning("performAgentJoinCall cancelled (URLError.cancelled) templateId=\(templateId ?? "nil") requestId=\(requestId)")
-            return true
+            return .cancelled
         } catch let error as APIError {
             Log.error("requestAgentJoin: agents/join APIError: \(error) - \(error.localizedDescription)")
             let status: AgentJoinStatus
@@ -3123,14 +3132,14 @@ extension ConversationViewModel {
                 status: status, requestId: requestId,
                 conversationId: conversationId, session: session
             )
-            return false
+            return .failed
         } catch {
             Log.error("requestAgentJoin: agents/join unknown error: \(error.localizedDescription)")
             await Self.broadcastAgentJoinRequest(
                 status: .failed, requestId: requestId,
                 conversationId: conversationId, session: session
             )
-            return false
+            return .failed
         }
     }
 

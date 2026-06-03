@@ -525,6 +525,16 @@ final class AgentBuilderViewModel: Identifiable {
     /// each message until it does, so this never blocks the UI.
     func commit(focusCoordinator: FocusCoordinator) {
         guard !hasCommitted, !isCommitting else { return }
+
+        // For the in-chat builder, `commitToExistingConversation` bails when
+        // the inner conversation VM hasn't resolved yet. Mirror that check
+        // upfront so we don't clear the composer or emit a success metric
+        // for a commit that's about to roll back.
+        if targetsExistingConversation, newConversationViewModel.conversationViewModel == nil {
+            Log.warning("AgentBuilder(existing): commit attempted before inner conversation ready; leaving composer intact")
+            return
+        }
+
         isCommitting = true
 
         let textToSend = composerText
