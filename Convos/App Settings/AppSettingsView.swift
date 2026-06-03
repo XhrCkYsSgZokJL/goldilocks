@@ -1,4 +1,5 @@
 import ConvosCore
+import ConvosMetrics
 import SwiftUI
 
 struct ConvosToolbarButton: View {
@@ -56,10 +57,31 @@ struct AppSettingsView: View {
     @Bindable var viewModel: AppSettingsViewModel
     @Bindable var profileSettingsViewModel: ProfileSettingsViewModel
     let session: any SessionManagerProtocol
+    let coreActions: any CoreActions
     let onDeleteAllData: () -> Void
     @State private var showingDeleteAllDataConfirmation: Bool = false
     @Environment(\.openURL) private var openURL: OpenURLAction
     @Environment(\.dismiss) private var dismiss: DismissAction
+    @State private var navState: AppSettingsNavigatorImpl = .init()
+    @State private var navigator: AppSettingsCollector?
+
+    private func ensureNavigator() {
+        guard navigator == nil else { return }
+        navigator = AppSettingsCollector(
+            instance: navState,
+            delegate: PostHogConfiguration.sharedMetricsDelegate ?? CollectorDelegate()
+        )
+    }
+
+    private func handlePaywallPresented(from oldValue: Bool, to newValue: Bool) {
+        guard !oldValue, newValue else { return }
+        navigator?.present(paywall: PaywallNavigatorArgs(source: .settings))
+    }
+
+    private func handleDeleteAllDataPresented(from oldValue: Bool, to newValue: Bool) {
+        guard !oldValue, newValue else { return }
+        navigator?.navigateTo(deleteAllData: DeleteAllDataNavigatorArgs())
+    }
 
     var body: some View {
         NavigationStack {
@@ -81,6 +103,19 @@ struct AppSettingsView: View {
             .toolbar { topToolbar }
             .onReceive(CreditsServices.shared.balancePublisher) { creditBalance = $0 }
             .onReceive(SubscriptionServices.shared.subscriptionPublisher) { currentSubscription = $0 }
+            .onAppear {
+                ensureNavigator()
+                navState.markScreenAppeared()
+            }
+            .onDisappear {
+                navigator?.closed(context: navState.closeContext())
+            }
+            .onChange(of: presentingPaywall) { oldValue, newValue in
+                handlePaywallPresented(from: oldValue, to: newValue)
+            }
+            .onChange(of: showingDeleteAllDataConfirmation) { oldValue, newValue in
+                handleDeleteAllDataPresented(from: oldValue, to: newValue)
+            }
         }
     }
 
@@ -117,6 +152,7 @@ struct AppSettingsView: View {
                     showsUseProfileButton: false,
                     canEditProfile: true
                 ) { _ in }
+                .onAppear { navigator?.navigateTo(myInfo: MyInfoNavigatorArgs()) }
             } label: {
                 myInfoRowLabel
             }
@@ -137,6 +173,7 @@ struct AppSettingsView: View {
                         appGroupIdentifier: ConfigManager.shared.currentEnvironment.appGroupIdentifier
                     )
                 )
+                .onAppear { navigator?.navigateTo(devices: DevicesNavigatorArgs()) }
             } label: {
                 HStack {
                     Image(systemName: "iphone.gen3.sizes")
@@ -183,6 +220,7 @@ struct AppSettingsView: View {
         Section {
             NavigationLink {
                 ConnectionsListView(viewModel: viewModel.connectionsListViewModel)
+                    .onAppear { navigator?.navigateTo(connections: ConnectionsNavigatorArgs()) }
             } label: {
                 connectionsRowLabel
             }
@@ -235,7 +273,11 @@ struct AppSettingsView: View {
             }
             .accessibilityIdentifier("subscription-row")
             .sheet(isPresented: $presentingPaywall) {
-                let viewModel = PaywallViewModel(subscriptionService: SubscriptionServices.shared)
+                let viewModel = PaywallViewModel(
+                    subscriptionService: SubscriptionServices.shared,
+                    paywallSource: .settings,
+                    coreActions: coreActions
+                )
                 PaywallView(viewModel: viewModel)
             }
         } footer: {
@@ -267,6 +309,7 @@ struct AppSettingsView: View {
         Section {
             NavigationLink {
                 CustomizeSettingsView()
+                    .onAppear { navigator?.navigateTo(customize: CustomizeSettingsNavigatorArgs()) }
             } label: {
                 Text("Customize")
                     .foregroundStyle(.colorTextPrimary)
@@ -312,7 +355,7 @@ struct AppSettingsView: View {
     @ViewBuilder
     private var debugRow: some View {
         NavigationLink {
-            DebugExportView(environment: ConfigManager.shared.currentEnvironment, session: session)
+            DebugExportView(environment: ConfigManager.shared.currentEnvironment, session: session, coreActions: coreActions)
         } label: {
             Text("Debug")
         }
@@ -386,6 +429,7 @@ struct AppSettingsView: View {
             viewModel: .mock,
             profileSettingsViewModel: profileSettingsViewModel,
             session: MockInboxesService(),
+            coreActions: NoOpCoreActions(),
             onDeleteAllData: {}
         )
     }

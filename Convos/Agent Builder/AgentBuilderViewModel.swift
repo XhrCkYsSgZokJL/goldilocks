@@ -2,6 +2,7 @@ import Combine
 import ConvosConnections
 import ConvosCore
 import ConvosCoreiOS
+import ConvosMetrics
 import Foundation
 import Observation
 import SwiftUI
@@ -108,10 +109,15 @@ enum AgentBuilderEntryMode {
 final class AgentBuilderViewModel: Identifiable {
     let id: UUID = UUID()
     let session: any SessionManagerProtocol
+    let coreActions: any CoreActions
     /// How the builder was entered. Read by `AgentBuilderView` on appear
     /// to decide whether to focus the composer (and raise the keyboard)
     /// or skip focus and start a voice-memo recording instead.
     let entryMode: AgentBuilderEntryMode
+
+    /// Captured at init so `builtAgent` reports build duration on commit.
+    @ObservationIgnored
+    let buildStartedAt: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
 
     /// Non-nil when the builder targets an existing conversation (the
     /// in-chat "New Agent" context-menu entry) rather than spinning up a
@@ -225,16 +231,19 @@ final class AgentBuilderViewModel: Identifiable {
     init(
         session: any SessionManagerProtocol,
         entryMode: AgentBuilderEntryMode = .composer,
-        existingConversationId: String? = nil
+        existingConversationId: String? = nil,
+        coreActions: any CoreActions = NoOpCoreActions()
     ) {
         self.session = session
+        self.coreActions = coreActions
         self.entryMode = entryMode
         self.existingConversationId = existingConversationId
         let mode: NewConversationMode = existingConversationId
             .map { .existingConversation(conversationId: $0) } ?? .newAgent
         self.newConversationViewModel = NewConversationViewModel(
             session: session,
-            mode: mode
+            mode: mode,
+            coreActions: coreActions
         )
         // Suppress the contact card for the entire builder lifetime. The
         // agent may join while the user is still drafting (state machine
@@ -516,10 +525,21 @@ final class AgentBuilderViewModel: Identifiable {
     /// each message until it does, so this never blocks the UI.
     func commit(focusCoordinator: FocusCoordinator) {
         guard !hasCommitted, !isCommitting else { return }
+
+        // For the in-chat builder, `commitToExistingConversation` bails when
+        // the inner conversation VM hasn't resolved yet. Mirror that check
+        // upfront so we don't clear the composer or emit a success metric
+        // for a commit that's about to roll back.
+        if targetsExistingConversation, newConversationViewModel.conversationViewModel == nil {
+            Log.warning("AgentBuilder(existing): commit attempted before inner conversation ready; leaving composer intact")
+            return
+        }
+
         isCommitting = true
 
         let textToSend = composerText
         composerText = ""
+        emitBuiltAgentMetric(text: textToSend, isSuccess: true)
 
         if targetsExistingConversation {
             commitToExistingConversation(text: textToSend)
@@ -942,6 +962,38 @@ final class AgentBuilderViewModel: Identifiable {
             } catch {
                 Log.error("AgentBuilderViewModel: requestAgentJoin failed: \(error.localizedDescription)")
             }
+        }
+    }
+
+    private func emitBuiltAgentMetric(text: String, isSuccess: Bool) {
+        let durationSecs: Float = Float(CFAbsoluteTimeGetCurrent() - buildStartedAt)
+        let charCount: Int = text.count
+        let wordCount: Int = text.split(whereSeparator: { $0.isWhitespace }).count
+        let attachments: [PendingMediaAttachment] = newConversationViewModel.conversationViewModel?.pendingMediaAttachments ?? []
+        let attachmentMimeTypes: [String] = attachments.map { attachment -> String in
+            switch attachment {
+            case .photo: return "image/jpeg"
+            case .video: return "video/mp4"
+            case .file(let payload): return payload.mimeType
+            }
+        }
+        let hasVoiceMemo: Bool = (recordedVoiceMemo != nil)
+        let voiceMemoDuration: Float = recordedVoiceMemo.map { Float($0.duration) } ?? 0
+        let connectionTypes: [String] = enabledConnections.map { $0.rawValue }
+        let metricsEntryMode: ConvosMetrics.AgentBuilderEntryMode = (entryMode == .voiceMemo) ? .voiceMemo : .composer
+        let actions: any CoreActions = coreActions
+        Task {
+            await actions.builtAgent(
+                buildDuration: durationSecs,
+                instructionCharCount: charCount,
+                instructionWordCount: wordCount,
+                attachmentTypes: attachmentMimeTypes,
+                hasVoiceMemo: hasVoiceMemo,
+                voiceMemoDuration: voiceMemoDuration,
+                connectionTypes: connectionTypes,
+                entryMode: metricsEntryMode,
+                isSuccess: isSuccess
+            )
         }
     }
 }

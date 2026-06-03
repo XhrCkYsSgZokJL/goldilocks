@@ -1,10 +1,12 @@
+import ConvosMetrics
 import Foundation
 
 // App specific methods not needed in our tests target
 extension ConvosClient {
     public static func client(
         environment: AppEnvironment,
-        platformProviders: PlatformProviders
+        platformProviders: PlatformProviders,
+        coreActions: any CoreActions
     ) -> ConvosClient {
         let databaseManager = DatabaseManager(environment: environment)
         let databaseWriter = databaseManager.dbWriter
@@ -21,7 +23,8 @@ extension ConvosClient {
             databaseReader: databaseReader,
             environment: environment,
             identityStore: identityStore,
-            platformProviders: platformProviders
+            platformProviders: platformProviders,
+            coreActions: coreActions
         )
         LinkPreviewWriter.shared = LinkPreviewWriter(dbWriter: databaseWriter)
         // Wire the real backend credits service to the local database now

@@ -1,4 +1,5 @@
 import Combine
+import ConvosMetrics
 import Foundation
 import GRDB
 @preconcurrency import XMTPiOS
@@ -28,6 +29,7 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
     internal let deviceInfoProvider: any DeviceInfoProviding
     let environment: AppEnvironment
     private let backgroundUploadManager: any BackgroundUploadManagerProtocol
+    internal let coreActions: any CoreActions
     private var cancellables: Set<AnyCancellable> = []
 
     // swiftlint:disable:next function_parameter_count
@@ -43,7 +45,8 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
         platformProviders: PlatformProviders,
         deviceRegistrationManager: (any DeviceRegistrationManagerProtocol)? = nil,
         apiClient: (any ConvosAPIClientProtocol)? = nil,
-        xmtpClientFactory: XMTPClientFactory = .onDisk
+        xmtpClientFactory: XMTPClientFactory = .onDisk,
+        coreActions: any CoreActions
     ) -> MessagingService {
         let authorizationOperation = AuthorizeInboxOperation.authorize(
             inboxId: inboxId,
@@ -57,7 +60,8 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
             platformProviders: platformProviders,
             deviceRegistrationManager: deviceRegistrationManager,
             apiClient: apiClient,
-            xmtpClientFactory: xmtpClientFactory
+            xmtpClientFactory: xmtpClientFactory,
+            coreActions: coreActions
         )
         return MessagingService(
             authorizationOperation: authorizationOperation,
@@ -66,7 +70,8 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
             identityStore: identityStore,
             environment: environment,
             deviceInfoProvider: platformProviders.deviceInfo,
-            backgroundUploadManager: platformProviders.backgroundUploadManager
+            backgroundUploadManager: platformProviders.backgroundUploadManager,
+            coreActions: coreActions
         )
     }
 
@@ -76,7 +81,8 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
                   identityStore: any KeychainIdentityStoreProtocol,
                   environment: AppEnvironment,
                   deviceInfoProvider: any DeviceInfoProviding,
-                  backgroundUploadManager: any BackgroundUploadManagerProtocol) {
+                  backgroundUploadManager: any BackgroundUploadManagerProtocol,
+                  coreActions: any CoreActions = NoOpCoreActions()) {
         self.identityStore = identityStore
         self.authorizationOperation = authorizationOperation
         self.sessionStateManager = authorizationOperation.stateMachine
@@ -86,6 +92,7 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
         self.deviceInfoProvider = deviceInfoProvider
         self.environment = environment
         self.backgroundUploadManager = backgroundUploadManager
+        self.coreActions = coreActions
     }
 
     /// Constructs a MessagingService that represents the failed-keychain-read
@@ -100,7 +107,8 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
                   identityStore: any KeychainIdentityStoreProtocol,
                   environment: AppEnvironment,
                   deviceInfoProvider: any DeviceInfoProviding,
-                  backgroundUploadManager: any BackgroundUploadManagerProtocol) {
+                  backgroundUploadManager: any BackgroundUploadManagerProtocol,
+                  coreActions: any CoreActions = NoOpCoreActions()) {
         let operation = FailedIdentityLoadOperation(error: error)
         self.identityStore = identityStore
         self.authorizationOperation = operation
@@ -111,6 +119,7 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
         self.deviceInfoProvider = deviceInfoProvider
         self.environment = environment
         self.backgroundUploadManager = backgroundUploadManager
+        self.coreActions = coreActions
     }
 
     deinit {
@@ -169,7 +178,8 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
             databaseWriter: databaseWriter,
             environment: environment,
             initialMemberInboxIds: initialMemberInboxIds,
-            backgroundUploadManager: backgroundUploadManager
+            backgroundUploadManager: backgroundUploadManager,
+            coreActions: coreActions
         )
     }
 
@@ -191,7 +201,8 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
             environment: environment,
             conversationId: conversationId,
             initialMemberInboxIds: initialMemberInboxIds,
-            backgroundUploadManager: backgroundUploadManager
+            backgroundUploadManager: backgroundUploadManager,
+            coreActions: coreActions
         )
     }
 
@@ -222,7 +233,8 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
             pendingUploadWriter: PendingPhotoUploadWriter(databaseWriter: databaseWriter),
             backgroundUploadManager: backgroundUploadManager,
             attachmentLocalStateWriter: AttachmentLocalStateWriter(databaseWriter: databaseWriter),
-            contactSyncCoordinator: contactSyncCoordinator()
+            contactSyncCoordinator: contactSyncCoordinator(),
+            coreActions: coreActions
         )
     }
 
@@ -263,7 +275,7 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
     func conversationMetadataWriter() -> any ConversationMetadataWriterProtocol {
         ConversationMetadataWriter(
             sessionStateManager: sessionStateManager,
-            inviteWriter: InviteWriter(identityStore: identityStore, databaseWriter: databaseWriter),
+            inviteWriter: InviteWriter(identityStore: identityStore, databaseWriter: databaseWriter, coreActions: coreActions),
             databaseWriter: databaseWriter,
             contactSyncCoordinator: contactSyncCoordinator()
         )

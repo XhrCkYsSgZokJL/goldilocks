@@ -910,7 +910,8 @@ extension MessagingService {
             contactSyncCoordinator: ContactSyncCoordinator(
                 databaseWriter: databaseWriter,
                 databaseReader: databaseReader
-            )
+            ),
+            coreActions: coreActions
         )
         return try await conversationWriter.storeWithLatestMessages(conversation: conversation, inboxId: inboxId)
     }

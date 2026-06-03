@@ -11,7 +11,7 @@ final class PaywallViewModelTests: XCTestCase {
         let service: SlowAvailableProductsService = SlowAvailableProductsService(
             sleepNanoseconds: 50_000_000  // 50ms — long enough for both calls to overlap
         )
-        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service)
+        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service, paywallSource: .debug)
 
         async let first: Void = viewModel.loadProducts()
         async let second: Void = viewModel.loadProducts()
@@ -34,7 +34,7 @@ final class PaywallViewModelTests: XCTestCase {
 
     func testLoadProducts_secondCallAfterSuccess_isNoOp() async {
         let service: SlowAvailableProductsService = SlowAvailableProductsService(sleepNanoseconds: 0)
-        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service)
+        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service, paywallSource: .debug)
 
         await viewModel.loadProducts()
         XCTAssertEqual(service.availableProductsCallCount, 1)
@@ -53,7 +53,7 @@ final class PaywallViewModelTests: XCTestCase {
         let service: StubSubscriptionService = StubSubscriptionService(
             purchaseResult: .failure(SubscriptionServiceError.purchasePending)
         )
-        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service)
+        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service, paywallSource: .debug)
         let product: PaywallProduct = .plusMonthlyTestProduct
 
         await viewModel.purchase(product: product)
@@ -66,7 +66,7 @@ final class PaywallViewModelTests: XCTestCase {
         let service: StubSubscriptionService = StubSubscriptionService(
             purchaseResult: .failure(SubscriptionServiceError.purchaseUnverified)
         )
-        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service)
+        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service, paywallSource: .debug)
 
         await viewModel.purchase(product: .plusMonthlyTestProduct)
 
@@ -78,7 +78,7 @@ final class PaywallViewModelTests: XCTestCase {
         let service: StubSubscriptionService = StubSubscriptionService(
             purchaseResult: .failure(SubscriptionServiceError.purchaseCancelled)
         )
-        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service)
+        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service, paywallSource: .debug)
 
         await viewModel.purchase(product: .plusMonthlyTestProduct)
 
@@ -89,7 +89,7 @@ final class PaywallViewModelTests: XCTestCase {
         let service: StubSubscriptionService = StubSubscriptionService(
             purchaseResult: .failure(SubscriptionServiceError.purchaseFailed(reason: "boom"))
         )
-        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service)
+        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service, paywallSource: .debug)
 
         await viewModel.purchase(product: .plusMonthlyTestProduct)
 
@@ -99,7 +99,7 @@ final class PaywallViewModelTests: XCTestCase {
 
     func testPurchase_success_callsOnPurchaseSucceededOnce() async {
         let service: StubSubscriptionService = StubSubscriptionService(purchaseResult: .success(()))
-        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service)
+        let viewModel: PaywallViewModel = PaywallViewModel(subscriptionService: service, paywallSource: .debug)
         var callbackCount: Int = 0
         viewModel.onPurchaseSucceeded = { callbackCount += 1 }
 

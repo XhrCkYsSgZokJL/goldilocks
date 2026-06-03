@@ -207,7 +207,8 @@ class TestFixtures {
             platformProviders: platformProviders,
             deviceRegistrationManager: nil,
             apiClient: nil,
-            xmtpClientFactory: xmtpClientFactory
+            xmtpClientFactory: xmtpClientFactory,
+            coreActions: NoOpCoreActions()
         )
         return MessagingService(
             authorizationOperation: authorizationOperation,

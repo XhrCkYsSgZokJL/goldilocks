@@ -1,5 +1,6 @@
 import ConvosCore
 import ConvosCoreiOS
+import ConvosMetrics
 import SwiftUI
 import UserNotifications
 import XMTPiOS
@@ -10,6 +11,8 @@ struct ConvosApp: App {
     @Environment(\.scenePhase) private var scenePhase: ScenePhase
 
     private let convos: ConvosClient
+    let metricsDelegate: PostHogCollector
+    let coreActions: any CoreActions
     let conversationsViewModel: ConversationsViewModel
     let profileSettingsViewModel: ProfileSettingsViewModel = .shared
 
@@ -83,7 +86,14 @@ struct ConvosApp: App {
         )
         AgentKeysetStore.instance.configure(agentKeyset)
 
-        self.convos = .client(environment: environment, platformProviders: .iOS)
+        let metricsDelegate = PostHogCollector()
+        let coreMetrics = CoreMetrics(
+            delegate: metricsDelegate,
+            stableId: PostHogConfiguration.stableIdEncoder
+        )
+        PostHogConfiguration.register(metricsDelegate: metricsDelegate)
+        self.metricsDelegate = metricsDelegate
+        self.convos = .client(environment: environment, platformProviders: .iOS, coreActions: coreMetrics.actions)
 
         // Sync the mock credits/subscription state from the persisted picker
         // preset so HOME pill + paywall reflect the operator's last selection.
@@ -99,12 +109,32 @@ struct ConvosApp: App {
             await agentKeyset.prefetch()
             try? await AgentVerificationWriter.reverifyUnverifiedAgents(in: dbWriter)
         }
-        self.conversationsViewModel = .init(session: convos.session)
+        self.coreActions = coreMetrics.actions
+        self.conversationsViewModel = .init(session: convos.session, coreActions: coreMetrics.actions)
         appDelegate.session = convos.session
         // PushNotificationRegistrar.configure(...) ran inside `PlatformProviders.iOS`
         // above, so AppDelegate's APNS callback uses the static accessor directly
         // (see ConvosAppDelegate.didRegisterForRemoteNotificationsWithDeviceToken).
         profileSettingsViewModel.bind(session: convos.session)
+
+        let metricsSession = convos.session
+        Task {
+            do {
+                let messagingService = metricsSession.messagingService()
+                let inboxReady = try await messagingService.sessionStateManager.waitForInboxReadyResult()
+                coreMetrics.identify(privateKey: Data(inboxReady.client.inboxId.utf8))
+                let builder = UserPropertiesBuilder(
+                    contactsRepository: messagingService.contactsRepository(),
+                    conversationsRepository: metricsSession.conversationsRepository(for: .all)
+                )
+                metricsDelegate.userPropertiesCancellable = builder.publisher()
+                    .sink { properties in
+                        Task { await coreMetrics.updateUserProperties(properties: properties) }
+                    }
+            } catch {
+                Log.warning("Metrics identify failed: \(error.localizedDescription)")
+            }
+        }
 
         Self.configureTabBarItemColors()
     }
@@ -131,7 +161,8 @@ struct ConvosApp: App {
         WindowGroup {
             MainTabView(
                 conversationsViewModel: conversationsViewModel,
-                profileSettingsViewModel: profileSettingsViewModel
+                profileSettingsViewModel: profileSettingsViewModel,
+                coreActions: coreActions
             )
             .additionalTopSafeArea(DesignConstants.Spacing.stepX)
             .withSafeAreaEnvironment()

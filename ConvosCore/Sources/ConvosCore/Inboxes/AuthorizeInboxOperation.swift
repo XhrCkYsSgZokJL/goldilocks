@@ -1,4 +1,5 @@
 import Combine
+import ConvosMetrics
 import Foundation
 import GRDB
 
@@ -46,7 +47,8 @@ final class AuthorizeInboxOperation: AuthorizeInboxOperationProtocol, @unchecked
         platformProviders: PlatformProviders,
         deviceRegistrationManager: (any DeviceRegistrationManagerProtocol)? = nil,
         apiClient: (any ConvosAPIClientProtocol)? = nil,
-        xmtpClientFactory: XMTPClientFactory = .onDisk
+        xmtpClientFactory: XMTPClientFactory = .onDisk,
+        coreActions: any CoreActions
     ) -> AuthorizeInboxOperation {
         let operation = AuthorizeInboxOperation(
             clientId: clientId,
@@ -60,7 +62,8 @@ final class AuthorizeInboxOperation: AuthorizeInboxOperationProtocol, @unchecked
             platformProviders: platformProviders,
             deviceRegistrationManager: deviceRegistrationManager,
             apiClient: apiClient,
-            xmtpClientFactory: xmtpClientFactory
+            xmtpClientFactory: xmtpClientFactory,
+            coreActions: coreActions
         )
         operation.authorize(inboxId: inboxId)
         return operation
@@ -75,7 +78,8 @@ final class AuthorizeInboxOperation: AuthorizeInboxOperationProtocol, @unchecked
         platformProviders: PlatformProviders,
         deviceRegistrationManager: (any DeviceRegistrationManagerProtocol)? = nil,
         apiClient: (any ConvosAPIClientProtocol)? = nil,
-        xmtpClientFactory: XMTPClientFactory = .onDisk
+        xmtpClientFactory: XMTPClientFactory = .onDisk,
+        coreActions: any CoreActions
     ) -> AuthorizeInboxOperation {
         // Generate clientId before creating state machine
         let clientId = ClientId.generate().value
@@ -90,7 +94,8 @@ final class AuthorizeInboxOperation: AuthorizeInboxOperationProtocol, @unchecked
             platformProviders: platformProviders,
             deviceRegistrationManager: deviceRegistrationManager,
             apiClient: apiClient,
-            xmtpClientFactory: xmtpClientFactory
+            xmtpClientFactory: xmtpClientFactory,
+            coreActions: coreActions
         )
         operation.register()
         return operation
@@ -108,7 +113,8 @@ final class AuthorizeInboxOperation: AuthorizeInboxOperationProtocol, @unchecked
         platformProviders: PlatformProviders,
         deviceRegistrationManager: (any DeviceRegistrationManagerProtocol)?,
         apiClient: (any ConvosAPIClientProtocol)?,
-        xmtpClientFactory: XMTPClientFactory
+        xmtpClientFactory: XMTPClientFactory,
+        coreActions: any CoreActions
     ) {
         let syncingManager = startsStreamingServices ? SyncingManager(
             identityStore: identityStore,
@@ -116,7 +122,8 @@ final class AuthorizeInboxOperation: AuthorizeInboxOperationProtocol, @unchecked
             databaseReader: databaseReader,
             deviceRegistrationManager: deviceRegistrationManager,
             notificationCenter: platformProviders.notificationCenter,
-            deviceConnections: platformProviders.deviceConnections
+            deviceConnections: platformProviders.deviceConnections,
+            coreActions: coreActions
         ) : nil
         let invitesRepository = InvitesRepository(databaseReader: databaseReader)
         stateMachine = SessionStateMachine(

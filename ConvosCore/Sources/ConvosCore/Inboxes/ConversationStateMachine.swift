@@ -1,6 +1,7 @@
 import Combine
 import ConvosAppData
 import ConvosInvites
+import ConvosMetrics
 import Foundation
 import GRDB
 @preconcurrency import XMTPiOS
@@ -96,6 +97,7 @@ public actor ConversationStateMachine {
     private let streamProcessor: any StreamProcessorProtocol
     private let clientConversationId: String
     private let backgroundUploadManager: any BackgroundUploadManagerProtocol
+    private let coreActions: any CoreActions
     /// Injected at construction by `ConversationStateManager`, which wires
     /// this to `ConversationMetadataWriter.addMembers(_:to:)`. Default is
     /// a no-op so test fixtures and call sites that don't go through the
@@ -181,7 +183,8 @@ public actor ConversationStateMachine {
         environment: AppEnvironment,
         clientConversationId: String,
         backgroundUploadManager: any BackgroundUploadManagerProtocol = UnavailableBackgroundUploadManager(),
-        addMembersHook: @escaping ConversationStateMachineAddMembersHook = { _, _ in }
+        addMembersHook: @escaping ConversationStateMachineAddMembersHook = { _, _ in },
+        coreActions: any CoreActions
     ) {
         self.sessionStateManager = sessionStateManager
         self.identityStore = identityStore
@@ -191,11 +194,13 @@ public actor ConversationStateMachine {
         self.clientConversationId = clientConversationId
         self.backgroundUploadManager = backgroundUploadManager
         self.addMembersHook = addMembersHook
+        self.coreActions = coreActions
         self.streamProcessor = StreamProcessor(
             identityStore: identityStore,
             databaseWriter: databaseWriter,
             databaseReader: databaseReader,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: coreActions
         )
     }
 
@@ -251,7 +256,8 @@ public actor ConversationStateMachine {
             pendingUploadWriter: PendingPhotoUploadWriter(databaseWriter: databaseWriter),
             backgroundUploadManager: backgroundUploadManager,
             attachmentLocalStateWriter: AttachmentLocalStateWriter(databaseWriter: databaseWriter),
-            contactSyncCoordinator: ContactSyncCoordinator(databaseWriter: databaseWriter, databaseReader: databaseReader)
+            contactSyncCoordinator: ContactSyncCoordinator(databaseWriter: databaseWriter, databaseReader: databaseReader),
+            coreActions: coreActions
         )
         cachedMessageWriter = writer
         return writer
@@ -636,7 +642,8 @@ public actor ConversationStateMachine {
                     let conversationWriter = ConversationWriter(
                         identityStore: identityStore,
                         databaseWriter: databaseWriter,
-                        messageWriter: messageWriter
+                        messageWriter: messageWriter,
+                        coreActions: coreActions
                     )
                     _ = try await conversationWriter.createPlaceholderConversation(
                         draftConversationId: existingConversation.id,
@@ -660,7 +667,8 @@ public actor ConversationStateMachine {
             let conversationWriter = ConversationWriter(
                 identityStore: identityStore,
                 databaseWriter: databaseWriter,
-                messageWriter: messageWriter
+                messageWriter: messageWriter,
+                coreActions: coreActions
             )
             let conversationId = try await conversationWriter.createPlaceholderConversation(
                 draftConversationId: nil,

@@ -104,6 +104,7 @@ jobs:
       - name: Generate Secrets.swift
         env:
           BUILD_CONFIGURATION: Prod
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY_PROD }}
           SENTRY_DSN_PROD: ${{ secrets.SENTRY_DSN_PROD }}
         run: ./Scripts/generate-secrets-secure.sh
 

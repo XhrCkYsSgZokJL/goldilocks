@@ -1,4 +1,5 @@
 import ConvosCore
+import ConvosMetrics
 import SwiftUI
 
 // MARK: - Module overview
@@ -51,6 +52,7 @@ struct ContactDetailView: View {
     private let contactsWriter: any ContactsWriterProtocol
     private let contactsRepository: any ContactsRepositoryProtocol
     private let session: (any SessionManagerProtocol)?
+    private let coreActions: any CoreActions
     private let profileSettingsViewModel: ProfileSettingsViewModel
     private let onRemove: (() -> Void)?
 
@@ -79,6 +81,16 @@ struct ContactDetailView: View {
     /// The agent template's description, resolved on appear for template-backed
     /// agents (it isn't stored on the contact). Rendered under the name.
     @State private var agentDescription: String?
+    @State private var navState: ContactCardNavigatorImpl = .init()
+    @State private var navigator: ContactCardCollector?
+
+    private func ensureNavigator() {
+        guard navigator == nil else { return }
+        navigator = ContactCardCollector(
+            instance: navState,
+            delegate: PostHogConfiguration.sharedMetricsDelegate ?? CollectorDelegate()
+        )
+    }
 
     init(
         contact: Contact,
@@ -86,6 +98,7 @@ struct ContactDetailView: View {
         contactsWriter: any ContactsWriterProtocol,
         contactsRepository: any ContactsRepositoryProtocol,
         session: (any SessionManagerProtocol)? = nil,
+        coreActions: any CoreActions,
         profileSettingsViewModel: ProfileSettingsViewModel = .shared,
         showsCloseButton: Bool = true,
         onRemove: (() -> Void)? = nil
@@ -95,6 +108,7 @@ struct ContactDetailView: View {
         self.contactsWriter = contactsWriter
         self.contactsRepository = contactsRepository
         self.session = session
+        self.coreActions = coreActions
         self.profileSettingsViewModel = profileSettingsViewModel
         self.showsCloseButton = showsCloseButton
         self.onRemove = onRemove
@@ -115,6 +129,13 @@ struct ContactDetailView: View {
             .task(id: contact.inboxId) { await syncBlockedState() }
             .task(id: contact.agentTemplateId) { await observeAgentTemplateConversations() }
             .task(id: contact.agentTemplateId) { await loadAgentDescription() }
+            .onAppear {
+                ensureNavigator()
+                navState.markScreenAppeared()
+            }
+            .onDisappear {
+                navigator?.closed(context: navState.closeContext())
+            }
     }
 
     /// `bodyContent` plus the modal / sheet / overlay presentation layer.
@@ -456,7 +477,8 @@ struct ContactDetailView: View {
         if let session, let existing = findExistingOneToOne(session: session) {
             presentingNewConvo = NewConversationViewModel(
                 session: session,
-                mode: .existingConversation(conversationId: existing.id)
+                mode: .existingConversation(conversationId: existing.id),
+                coreActions: coreActions
             )
         } else {
             presentingPicker = true
@@ -560,7 +582,8 @@ struct ContactDetailView: View {
             mode: .newConversationWithMembers(
                 initialMemberInboxIds: Array(memberInboxIds),
                 initialAgentTemplateIds: agentTemplateIds
-            )
+            ),
+            coreActions: coreActions
         )
     }
 
@@ -591,7 +614,8 @@ struct ContactDetailView: View {
         )
         presentingNewConvo = NewConversationViewModel(
             session: session,
-            mode: .newConversationWithTemplate(templateId: templateId, optimisticIdentity: optimisticIdentity)
+            mode: .newConversationWithTemplate(templateId: templateId, optimisticIdentity: optimisticIdentity),
+            coreActions: coreActions
         )
     }
 
@@ -602,7 +626,8 @@ struct ContactDetailView: View {
         guard let session else { return }
         pushedConversation = NewConversationViewModel(
             session: session,
-            mode: .existingConversation(conversationId: conversation.id)
+            mode: .existingConversation(conversationId: conversation.id),
+            coreActions: coreActions
         )
     }
 
@@ -1152,7 +1177,8 @@ extension Contact {
         ContactDetailView(
             contact: .mock(displayName: "Alice"),
             contactsWriter: MockContactsWriter(),
-            contactsRepository: MockContactsRepository()
+            contactsRepository: MockContactsRepository(),
+            coreActions: NoOpCoreActions()
         )
     }
 }
@@ -1162,7 +1188,8 @@ extension Contact {
         ContactDetailView(
             contact: .mock(displayName: "Alice", isBlocked: true),
             contactsWriter: MockContactsWriter(),
-            contactsRepository: MockContactsRepository()
+            contactsRepository: MockContactsRepository(),
+            coreActions: NoOpCoreActions()
         )
     }
 }
@@ -1175,7 +1202,8 @@ extension Contact {
                 agentVerification: .verified(.convos)
             ),
             contactsWriter: MockContactsWriter(),
-            contactsRepository: MockContactsRepository()
+            contactsRepository: MockContactsRepository(),
+            coreActions: NoOpCoreActions()
         )
     }
 }
@@ -1189,7 +1217,8 @@ extension Contact {
                 agentTemplatePublishedURL: "https://agents-dev.convos.org/tifoso.pnw1o"
             ),
             contactsWriter: MockContactsWriter(),
-            contactsRepository: MockContactsRepository()
+            contactsRepository: MockContactsRepository(),
+            coreActions: NoOpCoreActions()
         )
     }
 }
@@ -1204,7 +1233,8 @@ extension Contact {
                 agentInstanceId: "inst_01HZQX0K7AYB5R8N3W2J6FQGCD"
             ),
             contactsWriter: MockContactsWriter(),
-            contactsRepository: MockContactsRepository()
+            contactsRepository: MockContactsRepository(),
+            coreActions: NoOpCoreActions()
         )
     }
 }
@@ -1222,6 +1252,7 @@ extension Contact {
             ),
             contactsWriter: MockContactsWriter(),
             contactsRepository: MockContactsRepository(),
+            coreActions: NoOpCoreActions(),
             onRemove: {}
         )
     }

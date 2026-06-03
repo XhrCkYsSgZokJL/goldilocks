@@ -21,6 +21,10 @@ struct QRCodeCardOverlay<Header: View, Center: View>: View {
     /// toolbar band so it clears the share sheet below it without sliding
     /// under the status bar.
     var ignoresToolbarSafeArea: Bool = false
+    /// Optional hook fired from the native share sheet's completion handler
+    /// so callers can record a metric (e.g. `sharedConversation`) keyed off
+    /// the selected `UIActivity.ActivityType` and success flag.
+    var onShareCompleted: ((UIActivity.ActivityType?, Bool, Error?) -> Void)?
     @ViewBuilder let header: () -> Header
     @ViewBuilder let center: () -> Center
 
@@ -116,7 +120,8 @@ struct QRCodeCardOverlay<Header: View, Center: View>: View {
                         items: [encodedURLString],
                         onDismiss: {
                             dismissFlow()
-                        }
+                        },
+                        onCompletion: onShareCompleted
                     )
             }
             .task {

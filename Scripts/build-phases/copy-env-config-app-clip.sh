@@ -13,8 +13,10 @@ if [ "$CONFIGURATION" = "Local" ] || [ "$CONFIGURATION" = "Dev" ]; then
     # Firebase debug token: cached .env first, else 1Password ("Convos" vault); empty in CI.
     FIREBASE_TOKEN="$(resolve_firebase_debug_token "${SRCROOT}/.env")"
     CONVOS_API_BASE_URL=""
+    POSTHOG_API_KEY=""
     if [ -f "${SRCROOT}/.env" ]; then
         CONVOS_API_BASE_URL=$(grep -v '^#' "${SRCROOT}/.env" | grep '^CONVOS_API_BASE_URL=' | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//' || true)
+        POSTHOG_API_KEY=$(grep -v '^#' "${SRCROOT}/.env" | grep '^POSTHOG_API_KEY=' | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//' || true)
     fi
 
     if [ -n "$FIREBASE_TOKEN" ]; then
@@ -38,6 +40,7 @@ enum Secrets {
     static let XMTP_CUSTOM_HOST = ""
     static let GATEWAY_URL = ""
     static let SENTRY_DSN = ""
+    static let POSTHOG_API_KEY = "$POSTHOG_API_KEY"
     static let FIREBASE_APP_CHECK_DEBUG_TOKEN = "$FIREBASE_TOKEN"
 }
 

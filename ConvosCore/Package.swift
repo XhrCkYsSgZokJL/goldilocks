@@ -34,6 +34,7 @@ let package = Package(
         .package(url: "https://github.com/firebase/firebase-ios-sdk", from: "12.1.0"),
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.31.1"),
         .package(url: "https://github.com/getsentry/sentry-cocoa.git", from: "8.57.1"),
+        .package(url: "https://github.com/xmtplabs/convos-shared.git", branch: "main"),
         .package(path: "../ConvosLogging"),
         .package(path: "../ConvosInvites"),
         .package(path: "../ConvosAppData"),
@@ -55,6 +56,7 @@ let package = Package(
                 .product(name: "ConvosInvites", package: "ConvosInvites"),
                 .product(name: "ConvosAppData", package: "ConvosAppData"),
                 .product(name: "ConvosConnections", package: "ConvosConnections"),
+                .product(name: "ConvosMetrics", package: "convos-shared"),
                 .target(name: "ConvosConnectionsXMTP"),
             ],
             swiftSettings: [
