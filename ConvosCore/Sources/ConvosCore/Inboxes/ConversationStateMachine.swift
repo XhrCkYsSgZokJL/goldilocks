@@ -199,7 +199,8 @@ public actor ConversationStateMachine {
             identityStore: identityStore,
             databaseWriter: databaseWriter,
             databaseReader: databaseReader,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: coreActions
         )
     }
 
@@ -665,7 +666,8 @@ public actor ConversationStateMachine {
             let conversationWriter = ConversationWriter(
                 identityStore: identityStore,
                 databaseWriter: databaseWriter,
-                messageWriter: messageWriter
+                messageWriter: messageWriter,
+                coreActions: coreActions
             )
             let conversationId = try await conversationWriter.createPlaceholderConversation(
                 draftConversationId: nil,

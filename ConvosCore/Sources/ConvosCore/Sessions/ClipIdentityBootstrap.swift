@@ -1,3 +1,4 @@
+import ConvosMetrics
 import Foundation
 
 /// Dedicated entry point for the App Clip. The clip's job is narrow:
@@ -29,7 +30,8 @@ public enum ClipIdentityBootstrap {
     @MainActor
     public static func bootstrap(
         environment: AppEnvironment,
-        platformProviders: PlatformProviders
+        platformProviders: PlatformProviders,
+        coreActions: any CoreActions
     ) -> ClipSession {
         let databaseManager = DatabaseManager(environment: environment)
         // The clip's auto-registered identity must not be escrowed to
@@ -46,7 +48,8 @@ public enum ClipIdentityBootstrap {
             environment: environment,
             identityStore: identityStore,
             platformProviders: platformProviders,
-            mode: .clipBootstrap
+            mode: .clipBootstrap,
+            coreActions: coreActions
         )
 
         // Force the messaging service to materialize so the register

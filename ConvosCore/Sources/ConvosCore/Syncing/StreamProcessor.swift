@@ -1,6 +1,7 @@
 import ConvosConnections
 import ConvosConnectionsXMTP
 import ConvosInvites
+import ConvosMetrics
 import Foundation
 import GRDB
 import UserNotifications
@@ -97,7 +98,8 @@ actor StreamProcessor: StreamProcessorProtocol {
         databaseReader: any DatabaseReader,
         deviceRegistrationManager: (any DeviceRegistrationManagerProtocol)? = nil,
         notificationCenter: any UserNotificationCenterProtocol,
-        invocationRuntime: ConnectionInvocationRuntime? = nil
+        invocationRuntime: ConnectionInvocationRuntime? = nil,
+        coreActions: any CoreActions
     ) {
         self.identityStore = identityStore
         self.databaseWriter = databaseWriter
@@ -123,7 +125,8 @@ actor StreamProcessor: StreamProcessorProtocol {
             contactSyncCoordinator: ContactSyncCoordinator(
                 databaseWriter: databaseWriter,
                 databaseReader: databaseReader
-            )
+            ),
+            coreActions: coreActions
         )
         self.messageWriter = messageWriter
         self.localStateWriter = ConversationLocalStateWriter(databaseWriter: databaseWriter)

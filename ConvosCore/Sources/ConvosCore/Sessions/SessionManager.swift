@@ -361,7 +361,8 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
                 startsStreamingServices: true,
                 platformProviders: platformProviders,
                 deviceRegistrationManager: deviceRegistrationManager,
-                apiClient: apiClient
+                apiClient: apiClient,
+                coreActions: coreActions
             )
         } else {
             op = AuthorizeInboxOperation.register(
@@ -371,7 +372,8 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
                 environment: environment,
                 platformProviders: platformProviders,
                 deviceRegistrationManager: deviceRegistrationManager,
-                apiClient: apiClient
+                apiClient: apiClient,
+                coreActions: coreActions
             )
         }
         return MessagingService(

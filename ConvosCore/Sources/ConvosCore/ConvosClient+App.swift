@@ -6,7 +6,7 @@ extension ConvosClient {
     public static func client(
         environment: AppEnvironment,
         platformProviders: PlatformProviders,
-        coreActions: any CoreActions = NoOpCoreActions()
+        coreActions: any CoreActions
     ) -> ConvosClient {
         let databaseManager = DatabaseManager(environment: environment)
         let databaseWriter = databaseManager.dbWriter

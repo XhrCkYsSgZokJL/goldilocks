@@ -1,5 +1,6 @@
 import ConvosConnections
 import ConvosInvites
+import ConvosMetrics
 import Foundation
 import GRDB
 @preconcurrency import XMTPiOS
@@ -156,16 +157,22 @@ actor SyncingManager: SyncingManagerProtocol {
     /// Held for foreground batch catch-up construction; not used elsewhere
     /// since the stream path's writers live inside `streamProcessor`.
     private let databaseWriter: any DatabaseWriter
+    /// Threaded into the writers constructed both at init (the stream
+    /// processor's `ConversationWriter`) and per-call inside the foreground
+    /// batch catch-up path so metrics-emitting writes have a real sink.
+    private let coreActions: any CoreActions
 
     init(identityStore: any KeychainIdentityStoreProtocol,
          databaseWriter: any DatabaseWriter,
          databaseReader: any DatabaseReader,
          deviceRegistrationManager: (any DeviceRegistrationManagerProtocol)? = nil,
          notificationCenter: any UserNotificationCenterProtocol,
-         deviceConnections: DeviceConnectionsBundle = .none) {
+         deviceConnections: DeviceConnectionsBundle = .none,
+         coreActions: any CoreActions) {
         self.identityStore = identityStore
         self.databaseReader = databaseReader
         self.databaseWriter = databaseWriter
+        self.coreActions = coreActions
         let enablementStore: any EnablementStore = GRDBEnablementStore(dbWriter: databaseWriter, dbReader: databaseReader)
         // The GRDB-backed subscription store is a Core-side type that doesn't
         // pull HealthKit; safe to construct unconditionally. The HKHealthStore-
@@ -186,7 +193,8 @@ actor SyncingManager: SyncingManagerProtocol {
             databaseReader: databaseReader,
             deviceRegistrationManager: deviceRegistrationManager,
             notificationCenter: notificationCenter,
-            invocationRuntime: invocationRuntime
+            invocationRuntime: invocationRuntime,
+            coreActions: coreActions
         )
     }
 
@@ -258,19 +266,19 @@ actor SyncingManager: SyncingManagerProtocol {
             let conversationWriter = ConversationWriter(
                 identityStore: identityStore,
                 databaseWriter: databaseWriter,
-                messageWriter: messageWriter
+                messageWriter: messageWriter,
+                coreActions: coreActions
             )
             let batch = BatchCatchUp(
                 conversationWriter: conversationWriter,
                 messageWriter: messageWriter,
                 databaseWriter: databaseWriter
             )
-            let activeId = await activeConversationId
             _ = try await batch.run(
                 client: client,
                 inboxId: identity.inboxId,
                 since: since,
-                activeConversationId: activeId
+                activeConversationId: await activeConversationId
             )
         } catch {
             Log.error("catchup.batch.messages failed: \(error.localizedDescription)")

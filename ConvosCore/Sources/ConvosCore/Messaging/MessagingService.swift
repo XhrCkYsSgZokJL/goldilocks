@@ -46,7 +46,7 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
         deviceRegistrationManager: (any DeviceRegistrationManagerProtocol)? = nil,
         apiClient: (any ConvosAPIClientProtocol)? = nil,
         xmtpClientFactory: XMTPClientFactory = .onDisk,
-        coreActions: any CoreActions = NoOpCoreActions()
+        coreActions: any CoreActions
     ) -> MessagingService {
         let authorizationOperation = AuthorizeInboxOperation.authorize(
             inboxId: inboxId,
@@ -60,7 +60,8 @@ final class MessagingService: MessagingServiceProtocol, @unchecked Sendable {
             platformProviders: platformProviders,
             deviceRegistrationManager: deviceRegistrationManager,
             apiClient: apiClient,
-            xmtpClientFactory: xmtpClientFactory
+            xmtpClientFactory: xmtpClientFactory,
+            coreActions: coreActions
         )
         return MessagingService(
             authorizationOperation: authorizationOperation,
