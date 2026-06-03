@@ -110,15 +110,14 @@ struct ConvosApp: App {
         profileSettingsViewModel.bind(session: convos.session)
 
         let metricsSession = convos.session
-        let metricsDatabaseReader = convos.databaseReader
         Task {
             do {
-                let inboxReady = try await metricsSession.messagingService().sessionStateManager.waitForInboxReadyResult()
-                let inboxId = inboxReady.client.inboxId
-                coreMetrics.identify(privateKey: Data(inboxId.utf8))
+                let messagingService = metricsSession.messagingService()
+                let inboxReady = try await messagingService.sessionStateManager.waitForInboxReadyResult()
+                coreMetrics.identify(privateKey: Data(inboxReady.client.inboxId.utf8))
                 let builder = UserPropertiesBuilder(
-                    databaseReader: metricsDatabaseReader,
-                    currentInboxId: inboxId
+                    contactsRepository: messagingService.contactsRepository(),
+                    conversationsRepository: metricsSession.conversationsRepository(for: .all)
                 )
                 metricsDelegate.userPropertiesCancellable = builder.publisher()
                     .sink { properties in
