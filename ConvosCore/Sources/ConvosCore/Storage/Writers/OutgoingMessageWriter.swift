@@ -311,6 +311,11 @@ actor OutgoingMessageWriter: OutgoingMessageWriterProtocol {
 
     private func emitSentMessage(clientMessageId: String, isSuccess: Bool) async {
         guard let data = sendMetricData.removeValue(forKey: clientMessageId) else { return }
+        // Skip the member-count + agent-presence DB read on the hot send path
+        // when nothing is listening. The shared `NoOpCoreActions` is wired
+        // wherever metrics aren't configured (tests, App Clip, etc.), so the
+        // query would otherwise run every send for no consumer.
+        guard !(coreActions is NoOpCoreActions) else { return }
         let sendingTime: Float = Float(CFAbsoluteTimeGetCurrent() - data.startTime)
         let convoId: String = conversationId
         let actions: any CoreActions = coreActions
@@ -318,11 +323,11 @@ actor OutgoingMessageWriter: OutgoingMessageWriterProtocol {
             let count: Int = try DBConversationMember
                 .filter(DBConversationMember.Columns.conversationId == convoId)
                 .fetchCount(db)
-            let agent: DBMemberProfile? = try DBMemberProfile
+            let hasAgent: Bool = try DBMemberProfile
                 .filter(DBMemberProfile.Columns.conversationId == convoId)
                 .filter(DBMemberProfile.Columns.memberKind != nil)
-                .fetchOne(db)
-            return (count, agent?.isAgent ?? false)
+                .fetchCount(db) > 0
+            return (count, hasAgent)
         }) ?? (0, false)
         await actions.sentMessage(
             sendingTime: sendingTime,

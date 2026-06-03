@@ -9,7 +9,18 @@ enum PostHogConfiguration {
         info: Data("inbox-stable-id".utf8)
     )
 
-    nonisolated(unsafe) static var sharedMetricsDelegate: CollectorDelegate?
+    /// Set exactly once during `ConvosApp.init()` via
+    /// `register(metricsDelegate:)` and read from many SwiftUI view init sites
+    /// thereafter. The write-once-at-launch + read-many invariant is what makes
+    /// `nonisolated(unsafe)` safe here -- there is no concurrent mutation to
+    /// race against. Don't introduce a second writer; if you need to clear or
+    /// swap the delegate, add an explicit API and reason about the readers
+    /// first.
+    nonisolated(unsafe) private(set) static var sharedMetricsDelegate: CollectorDelegate?
+
+    static func register(metricsDelegate: CollectorDelegate) {
+        sharedMetricsDelegate = metricsDelegate
+    }
 
     static func configure() {
         guard shouldEnablePostHog() else {

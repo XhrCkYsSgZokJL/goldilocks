@@ -718,6 +718,7 @@ struct MemberContactDetailSheetContent: View {
                 contactsWriter: contactsWriter,
                 contactsRepository: contactsRepository,
                 session: viewModel.session,
+                coreActions: viewModel.coreActions,
                 profileSettingsViewModel: profileSettingsViewModel,
                 onRemove: onRemove
             )

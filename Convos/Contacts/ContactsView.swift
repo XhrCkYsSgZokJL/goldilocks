@@ -233,6 +233,7 @@ struct ContactsView: View {
             contactsWriter: contactsWriter,
             contactsRepository: contactsRepository,
             session: session,
+            coreActions: coreActions,
             profileSettingsViewModel: profileSettingsViewModel,
             showsCloseButton: false
         )

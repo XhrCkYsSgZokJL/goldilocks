@@ -83,7 +83,7 @@ struct ConvosApp: App {
             delegate: metricsDelegate,
             stableId: PostHogConfiguration.stableIdEncoder
         )
-        PostHogConfiguration.sharedMetricsDelegate = metricsDelegate
+        PostHogConfiguration.register(metricsDelegate: metricsDelegate)
         self.metricsDelegate = metricsDelegate
         self.convos = .client(environment: environment, platformProviders: .iOS, coreActions: coreMetrics.actions)
 

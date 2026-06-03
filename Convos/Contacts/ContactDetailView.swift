@@ -1171,6 +1171,7 @@ extension Contact {
             contact: .mock(displayName: "Alice"),
             contactsWriter: MockContactsWriter(),
             contactsRepository: MockContactsRepository(),
+            coreActions: NoOpCoreActions()
         )
     }
 }
@@ -1180,7 +1181,8 @@ extension Contact {
         ContactDetailView(
             contact: .mock(displayName: "Alice", isBlocked: true),
             contactsWriter: MockContactsWriter(),
-            contactsRepository: MockContactsRepository()
+            contactsRepository: MockContactsRepository(),
+            coreActions: NoOpCoreActions()
         )
     }
 }
@@ -1193,7 +1195,8 @@ extension Contact {
                 agentVerification: .verified(.convos)
             ),
             contactsWriter: MockContactsWriter(),
-            contactsRepository: MockContactsRepository()
+            contactsRepository: MockContactsRepository(),
+            coreActions: NoOpCoreActions()
         )
     }
 }
@@ -1207,7 +1210,8 @@ extension Contact {
                 agentTemplatePublishedURL: "https://agents-dev.convos.org/tifoso.pnw1o"
             ),
             contactsWriter: MockContactsWriter(),
-            contactsRepository: MockContactsRepository()
+            contactsRepository: MockContactsRepository(),
+            coreActions: NoOpCoreActions()
         )
     }
 }
@@ -1222,7 +1226,8 @@ extension Contact {
                 agentInstanceId: "inst_01HZQX0K7AYB5R8N3W2J6FQGCD"
             ),
             contactsWriter: MockContactsWriter(),
-            contactsRepository: MockContactsRepository()
+            contactsRepository: MockContactsRepository(),
+            coreActions: NoOpCoreActions()
         )
     }
 }
@@ -1240,6 +1245,7 @@ extension Contact {
             ),
             contactsWriter: MockContactsWriter(),
             contactsRepository: MockContactsRepository(),
+            coreActions: NoOpCoreActions(),
             onRemove: {}
         )
     }
