@@ -834,10 +834,22 @@ struct MembershipView: View {
     }
 
     private var cancelConfirmMessage: String {
-        if hasBalance {
-            return "Coverage will not be renewed and your balance will be returned to your payment method."
+        guard hasBalance else {
+            let creditCents: Int = GoldilocksSession.shared.identity?.referralCreditCents ?? 0
+            guard creditCents > 0 else {
+                return "You can request a refund on your balance at any time."
+            }
+            let creditDollars: Int = creditCents / 100
+            return "You have $\(creditDollars) in referral credit. Credit is applied to your monthly charges and new members, and isn't refundable to your payment method."
         }
-        return "You can request a refund on your balance at any time."
+        let balance: Int = billingStatus?.balanceCents ?? 0
+        let rate: Int = billingStatus?.monthlyRateCents ?? 0
+        let refundCents: Int = max(0, balance - rate)
+        guard refundCents > 0 else {
+            return "Coverage will not be renewed. The current month is non-refundable, so no balance will be returned."
+        }
+        let refundDollars: Int = refundCents / 100
+        return "Coverage will not be renewed and $\(refundDollars) will be returned to your payment method. The current month is non-refundable."
     }
 
     @ViewBuilder
