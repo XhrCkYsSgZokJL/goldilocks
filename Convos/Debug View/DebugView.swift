@@ -230,6 +230,33 @@ struct DebugViewSection: View {
                     ProgressView()
                 }
             }
+
+            postHogTokenRow
+        }
+    }
+
+    @ViewBuilder
+    private var postHogTokenRow: some View {
+        let token: String = Secrets.POSTHOG_API_KEY
+        VStack(alignment: .leading, spacing: 6) {
+            Text("PostHog Project Token")
+            HStack(spacing: 8) {
+                ScrollView(.horizontal, showsIndicators: true) {
+                    Text(token.isEmpty ? "(not set)" : token)
+                        .font(.system(.footnote, design: .monospaced))
+                        .foregroundStyle(.colorTextSecondary)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Button {
+                    UIPasteboard.general.string = token
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .disabled(token.isEmpty)
+            }
         }
     }
 
