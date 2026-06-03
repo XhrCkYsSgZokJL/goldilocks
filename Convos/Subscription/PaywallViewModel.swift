@@ -53,7 +53,7 @@ final class PaywallViewModel {
     init(
         subscriptionService: any SubscriptionServiceProtocol,
         paywallSource: PaywallSource,
-        coreActions: any CoreActions
+        coreActions: any CoreActions = NoOpCoreActions()
     ) {
         self.subscriptionService = subscriptionService
         self.paywallSource = paywallSource
