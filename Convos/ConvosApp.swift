@@ -1,5 +1,6 @@
 import ConvosCore
 import ConvosCoreiOS
+import ConvosMetrics
 import SwiftUI
 import UserNotifications
 import XMTPiOS
@@ -10,6 +11,7 @@ struct ConvosApp: App {
     @Environment(\.scenePhase) private var scenePhase: ScenePhase
 
     private let convos: ConvosClient
+    let metricsDelegate: PostHogCollector
     let conversationsViewModel: ConversationsViewModel
     let profileSettingsViewModel: ProfileSettingsViewModel = .shared
 
@@ -91,12 +93,30 @@ struct ConvosApp: App {
             await agentKeyset.prefetch()
             try? await AgentVerificationWriter.reverifyUnverifiedAgents(in: dbWriter)
         }
+        let metricsDelegate = PostHogCollector()
+        let coreMetrics = CoreMetrics(
+            delegate: metricsDelegate,
+            stableId: PostHogConfiguration.stableIdEncoder
+        )
+        PostHogConfiguration.sharedMetricsDelegate = metricsDelegate
+        PostHogConfiguration.sharedCoreMetrics = coreMetrics
+        self.metricsDelegate = metricsDelegate
         self.conversationsViewModel = .init(session: convos.session)
         appDelegate.session = convos.session
         // PushNotificationRegistrar.configure(...) ran inside `PlatformProviders.iOS`
         // above, so AppDelegate's APNS callback uses the static accessor directly
         // (see ConvosAppDelegate.didRegisterForRemoteNotificationsWithDeviceToken).
         profileSettingsViewModel.bind(session: convos.session)
+
+        let metricsSession = convos.session
+        Task {
+            do {
+                let inboxReady = try await metricsSession.messagingService().sessionStateManager.waitForInboxReadyResult()
+                coreMetrics.identify(privateKey: Data(inboxReady.client.inboxId.utf8))
+            } catch {
+                Log.warning("Metrics identify failed: \(error.localizedDescription)")
+            }
+        }
 
         Self.configureTabBarItemColors()
     }

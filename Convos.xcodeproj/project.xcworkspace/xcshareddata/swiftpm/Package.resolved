@@ -29,6 +29,15 @@
       }
     },
     {
+      "identity" : "convos-shared",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/xmtplabs/convos-shared.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "8b7bfe0e865239b6b018dbfad75398e8ebcfd3bb"
+      }
+    },
+    {
       "identity" : "cryptoswift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/krzyzanowskim/CryptoSwift.git",
@@ -161,6 +170,15 @@
       "state" : {
         "revision" : "b7e1104502eca3a213b46303391ca4d3bc8ddec1",
         "version" : "2.30910.0"
+      }
+    },
+    {
+      "identity" : "posthog-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/PostHog/posthog-ios.git",
+      "state" : {
+        "revision" : "218fb6fe016a27baa3651613d53dae5c6e36af15",
+        "version" : "3.57.3"
       }
     },
     {
