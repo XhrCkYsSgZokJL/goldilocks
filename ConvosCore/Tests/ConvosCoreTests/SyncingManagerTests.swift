@@ -456,7 +456,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing
@@ -493,7 +494,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         await syncingManager.start(with: mockClient, apiClient: mockAPIClient)
@@ -529,7 +531,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing (streams start first, then syncAllConversations is called)
@@ -568,7 +571,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing
@@ -606,7 +610,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         await syncingManager.start(with: mockClient, apiClient: mockAPIClient)
@@ -652,7 +657,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing
@@ -686,7 +692,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing
@@ -721,7 +728,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing
@@ -762,7 +770,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         await syncingManager.start(with: mockClient1, apiClient: mockAPIClient)
@@ -803,7 +812,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing
@@ -840,7 +850,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing - this will be in starting state
@@ -880,7 +891,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing - this will be in starting state
@@ -920,7 +932,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing
@@ -951,7 +964,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing
@@ -982,7 +996,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing
@@ -1018,7 +1033,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing
@@ -1047,7 +1063,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing
@@ -1090,7 +1107,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Before starting, should not be ready
@@ -1130,7 +1148,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // swiftlint:disable:next force_cast
@@ -1178,7 +1197,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start and wait for ready
@@ -1224,7 +1244,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Start syncing - streams will fail but readiness signals are still sent
@@ -1256,7 +1277,8 @@ struct SyncingManagerTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: nil,
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         // Cycle 1

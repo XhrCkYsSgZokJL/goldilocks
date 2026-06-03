@@ -24,7 +24,8 @@ struct ConversationStateMachineUseExistingTests {
             databaseReader: fixtures.databaseManager.dbReader,
             databaseWriter: fixtures.databaseManager.dbWriter,
             environment: testEnvironment,
-            clientConversationId: DBConversation.generateDraftConversationId()
+            clientConversationId: DBConversation.generateDraftConversationId(),
+            coreActions: NoOpCoreActions()
         )
 
         await createStateMachine.create()
@@ -56,7 +57,8 @@ struct ConversationStateMachineUseExistingTests {
             databaseReader: fixtures.databaseManager.dbReader,
             databaseWriter: fixtures.databaseManager.dbWriter,
             environment: testEnvironment,
-            clientConversationId: DBConversation.generateDraftConversationId()
+            clientConversationId: DBConversation.generateDraftConversationId(),
+            coreActions: NoOpCoreActions()
         )
 
         let initialState = await stateMachine.state
@@ -106,7 +108,8 @@ struct ConversationStateMachineUseExistingTests {
             databaseReader: fixtures.databaseManager.dbReader,
             databaseWriter: fixtures.databaseManager.dbWriter,
             environment: testEnvironment,
-            clientConversationId: DBConversation.generateDraftConversationId()
+            clientConversationId: DBConversation.generateDraftConversationId(),
+            coreActions: NoOpCoreActions()
         )
 
         await createStateMachine.create()
@@ -138,7 +141,8 @@ struct ConversationStateMachineUseExistingTests {
             databaseReader: fixtures.databaseManager.dbReader,
             databaseWriter: fixtures.databaseManager.dbWriter,
             environment: testEnvironment,
-            clientConversationId: DBConversation.generateDraftConversationId()
+            clientConversationId: DBConversation.generateDraftConversationId(),
+            coreActions: NoOpCoreActions()
         )
 
         await stateMachine.useExisting(conversationId: conversationId)
@@ -191,7 +195,8 @@ struct ConversationStateMachineUseExistingTests {
             databaseReader: fixtures.databaseManager.dbReader,
             databaseWriter: fixtures.databaseManager.dbWriter,
             environment: testEnvironment,
-            clientConversationId: DBConversation.generateDraftConversationId()
+            clientConversationId: DBConversation.generateDraftConversationId(),
+            coreActions: NoOpCoreActions()
         )
 
         await createStateMachine.create()
@@ -223,7 +228,8 @@ struct ConversationStateMachineUseExistingTests {
             databaseReader: fixtures.databaseManager.dbReader,
             databaseWriter: fixtures.databaseManager.dbWriter,
             environment: testEnvironment,
-            clientConversationId: DBConversation.generateDraftConversationId()
+            clientConversationId: DBConversation.generateDraftConversationId(),
+            coreActions: NoOpCoreActions()
         )
 
         actor StateCollector {
@@ -285,7 +291,8 @@ struct ConversationStateMachineUseExistingTests {
             databaseReader: fixtures.databaseManager.dbReader,
             databaseWriter: fixtures.databaseManager.dbWriter,
             environment: testEnvironment,
-            clientConversationId: DBConversation.generateDraftConversationId()
+            clientConversationId: DBConversation.generateDraftConversationId(),
+            coreActions: NoOpCoreActions()
         )
 
         await stateMachine.create()

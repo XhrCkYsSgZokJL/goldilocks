@@ -29,7 +29,8 @@ struct SyncingManagerPushReconciliationTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: NoopDeviceRegistrationManager(),
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         await syncingManager.start(with: mockClient, apiClient: recordingAPI)
@@ -70,7 +71,8 @@ struct SyncingManagerPushReconciliationTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: NoopDeviceRegistrationManager(),
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         await syncingManager.start(with: mockClient, apiClient: recordingAPI)
@@ -116,7 +118,8 @@ struct SyncingManagerPushReconciliationTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: NoopDeviceRegistrationManager(),
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         await syncingManager.start(with: mockClient, apiClient: recordingAPI)
@@ -165,7 +168,8 @@ struct SyncingManagerPushReconciliationTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             databaseReader: fixtures.databaseManager.dbReader,
             deviceRegistrationManager: NoopDeviceRegistrationManager(),
-            notificationCenter: MockUserNotificationCenter()
+            notificationCenter: MockUserNotificationCenter(),
+            coreActions: NoOpCoreActions()
         )
 
         await syncingManager.start(with: mockClient, apiClient: recordingAPI)

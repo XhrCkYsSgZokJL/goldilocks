@@ -35,7 +35,8 @@ struct ConversationStateMachineAddMembersHookTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             environment: testEnvironment,
             clientConversationId: DBConversation.generateDraftConversationId(),
-            addMembersHook: probedHook
+            addMembersHook: probedHook,
+            coreActions: NoOpCoreActions()
         )
 
         let probeWatcher = Task {
@@ -100,7 +101,8 @@ struct ConversationStateMachineAddMembersHookTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             environment: testEnvironment,
             clientConversationId: DBConversation.generateDraftConversationId(),
-            addMembersHook: hook
+            addMembersHook: hook,
+            coreActions: NoOpCoreActions()
         )
 
         await stateMachine.create()
@@ -148,7 +150,8 @@ struct ConversationStateMachineAddMembersHookTests {
             databaseWriter: fixtures.databaseManager.dbWriter,
             environment: testEnvironment,
             clientConversationId: DBConversation.generateDraftConversationId(),
-            addMembersHook: failingHook
+            addMembersHook: failingHook,
+            coreActions: NoOpCoreActions()
         )
 
         await stateMachine.create(initialMemberInboxIds: ["test-inbox-id-alice"])
