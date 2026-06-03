@@ -13,5 +13,6 @@
   "firebaseConfig": "GoogleService-Info.PR",
   "siweDomain": "dev.convos.org",
   "siweUri": "https://dev.convos.org",
-  "siweChainId": 1
+  "siweChainId": 1,
+  "posthogHost": "https://us.i.posthog.com"
 }
