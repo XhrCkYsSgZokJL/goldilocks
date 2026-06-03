@@ -1031,7 +1031,7 @@ private struct PeopleAndCoverageSection: View {
         guard GoldilocksConfig.role == .admin else { return false }
         guard viewModel.conversation.goldilocksPinnedSection == .client else { return false }
         let name: String = viewModel.conversation.name ?? ""
-        return name.hasPrefix("Advisory") || name.hasPrefix("Reports")
+        return name.hasPrefix("Advisory") || name.hasPrefix("Back Office")
     }
 
     private var coverageRow: some View {

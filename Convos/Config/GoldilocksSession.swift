@@ -279,7 +279,6 @@ final class GoldilocksSession {
                 ownedIds.append(contentsOf: advisoryIds)
             }
         }
-        GoldilocksOwnedChannels.set(ownedIds)
         // The backend provisions channels asynchronously; only treat setup
         // as complete once every expected role has a group id. An older
         // backend that omits `expectedRoles` yields an empty set, which is
@@ -287,6 +286,12 @@ final class GoldilocksSession {
         let expectedRoles: Set<String> = Set(response.expectedRoles ?? [])
         let provisionedRoles: Set<String> = Set(active.filter { $0.xmtpGroupId != nil }.map { $0.role })
         let allRolesProvisioned: Bool = expectedRoles.isSubset(of: provisionedRoles)
+        // Arm the staleness filter only on a complete set. A partial
+        // snapshot (one role provisioned milliseconds ahead of the other)
+        // would otherwise hide the slower channel the moment its welcome
+        // lands. The ids are still stored so an admin's merged groups are
+        // available immediately.
+        GoldilocksOwnedChannels.set(ownedIds, complete: allRolesProvisioned)
         return (perRoleIds: perRoleIds, allRolesProvisioned: allRolesProvisioned)
     }
 

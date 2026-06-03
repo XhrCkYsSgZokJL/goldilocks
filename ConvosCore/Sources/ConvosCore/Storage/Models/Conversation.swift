@@ -107,11 +107,27 @@ public extension Conversation {
         return !otherMembers.map(\.profile).hasAnyNamedProfile
     }
 
-    var defaultEmoji: String {
-        if let conversationEmoji, !conversationEmoji.isEmpty {
-            return conversationEmoji
+    /// A stored emoji the user actually picked, or nil when the stored value
+    /// is just the auto-generated default. New channels auto-seed the
+    /// deterministic `EmojiSelector.emoji(for:)` into group metadata; treating
+    /// that as "not chosen" lets the suggested-icon rotation cycle a blank
+    /// draft while still honoring an emoji the user explicitly set.
+    var userChosenEmoji: String? {
+        guard let conversationEmoji, !conversationEmoji.isEmpty else { return nil }
+        if conversationEmoji == EmojiSelector.emoji(for: clientConversationId) {
+            return nil
         }
-        return EmojiSelector.emoji(for: clientConversationId)
+        return conversationEmoji
+    }
+
+    var defaultEmoji: String {
+        if let userChosenEmoji {
+            return userChosenEmoji
+        }
+        return EmojiSelector.emoji(
+            for: clientConversationId,
+            offset: SuggestedEmojiRotation.offset(for: clientConversationId)
+        )
     }
 
     var avatarType: ConversationAvatarType {
@@ -122,8 +138,8 @@ public extension Conversation {
         if otherMembers.count == 1, let member = otherMembers.first {
             return .profile(member.profile, member.agentVerification)
         }
-        if let conversationEmoji, !conversationEmoji.isEmpty {
-            return .emoji(conversationEmoji)
+        if let userChosenEmoji {
+            return .emoji(userChosenEmoji)
         }
         let otherProfiles = otherMembers.map(\.profile)
         if otherProfiles.isEmpty || !otherProfiles.hasAnyAvatar {

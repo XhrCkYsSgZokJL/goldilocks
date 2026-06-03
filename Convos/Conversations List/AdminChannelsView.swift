@@ -192,7 +192,7 @@ struct AdminChannelsView: View {
 
     @ViewBuilder
     private func roleIcon(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
-        let groupName: String = channel.role == "advisory" ? "Advisory" : channel.role == "reports" ? "Reports" : ""
+        let groupName: String = channel.role == "advisory" ? "Advisory" : channel.role == "reports" ? "Back Office" : ""
         let tier: GoldilocksMembershipTier = GoldilocksMembershipTier(
             monthlyRateCents: channel.monthlyRateCents,
             hasActiveCoverage: channel.coverageActive,

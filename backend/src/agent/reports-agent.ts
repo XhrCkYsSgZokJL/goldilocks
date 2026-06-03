@@ -24,8 +24,9 @@ import {
   log,
 } from './xmtp-helpers.js';
 
-// Per-client Reports naming: "Reports #N" so the iOS list and admin
-// grid can disambiguate clients without an extra subtitle.
+// Per-client Back Office naming: "Back Office #N" so the iOS list and
+// admin grid can disambiguate clients without an extra subtitle. (The
+// internal channel role stays 'reports'; only the display name changed.)
 //
 // Membership invariant: Reports has only [client + agent]. Admins are
 // NOT added — Reports is the client-private feed where the agent posts
@@ -33,8 +34,8 @@ import {
 // preserves this; reconcile() never calls syncMembership() on Reports
 // groups, only refreshGroupInstallations(), so admin-set changes can't
 // leak into Reports membership.
-const reportsName = (clientNumber: number): string => `Reports #${clientNumber}`;
-const REPORTS_GROUP_DESCRIPTION = 'Goldilocks Digital Audit Log';
+const reportsName = (clientNumber: number): string => `Back Office #${clientNumber}`;
+const REPORTS_GROUP_DESCRIPTION = 'Goldilocks Digital Back Office';
 // Minimum gap between recreating the same channel. A recreate issues a
 // fresh welcome that takes a moment to reach the client; recreating
 // faster than this just churns dead groups.
@@ -55,7 +56,7 @@ const REPORTS_AUTO_REPLY =
 // Posted into a Reports group the first time it is provisioned, so the
 // feed opens with an explanation. Recreates do not repeat it.
 const REPORTS_INTRO_MESSAGE =
-  'Goldilocks Digital uses this group chat to send you live alerts, monthly reports, and custom advisory documents.';
+  'Goldilocks Digital uses this group chat to send you live alerts, monthly reports, and advisory files.';
 
 // Permission policy baked into the Reports group at creation time.
 // Same shape as the admins-agent's lock: name / description / image

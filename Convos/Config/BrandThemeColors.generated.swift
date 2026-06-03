@@ -5,7 +5,7 @@ extension Color {
         red: 0.2902, green: 0.4784, blue: 0.7490
     )
     static let brandLogoText: Color = Color(
-        red: 0.4667, green: 0.4667, blue: 0.4667
+        red: 0.8784, green: 0.8784, blue: 0.8784
     )
     static let brandText: Color = Color(
         red: 0.5608, green: 0.6745, blue: 0.7843

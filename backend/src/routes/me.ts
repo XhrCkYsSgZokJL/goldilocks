@@ -545,6 +545,17 @@ export default async function meRoutes(app: FastifyInstance) {
       return reply.code(500).send({ error: 'client_create_failed' });
     }
 
+    // Every client gets a referral code, paying or not. Generate it here
+    // at registration and return it on this first response so the iOS
+    // identity is populated immediately, rather than waiting for a later
+    // GET /v2/me to lazily mint one.
+    let referralCode: string = client.referralCode ?? '';
+    if (!referralCode) {
+      const n = randomBytes(4).readUInt32BE() % 1_000_000;
+      referralCode = String(n).padStart(6, '0');
+      await db.update(clients).set({ referralCode }).where(eq(clients.id, client.id));
+    }
+
     // Admin allowlist lookup (post-claim, so a fresh admin shows
     // isAdmin=true on the very first /v2/me response). A disabled row
     // counts as a non-admin.
@@ -559,6 +570,7 @@ export default async function meRoutes(app: FastifyInstance) {
       isAdmin: !!adminRow,
       inboxId: client.inboxId,
       emeraldMembershipEnabled: client.emeraldMembershipEnabled,
+      referralCode,
     });
   });
 }

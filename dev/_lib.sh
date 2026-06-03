@@ -13,8 +13,8 @@ goldilocks_compose() {
 clean_old_logs() {
   local name="$1"
   local dir="$DEV_BACKEND/.dev-run"
-  local -a old
-  old=($(ls -t "$dir/${name}"-*.log 2>/dev/null | tail -n +2))
+  local -a old=()
+  old=($(ls -t "$dir/${name}"-*.log 2>/dev/null | tail -n +2)) || true
   if [ ${#old[@]} -gt 0 ]; then
     rm -f "${old[@]}"
   fi

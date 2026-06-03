@@ -9,21 +9,21 @@
     "footerCredit": "Modified in private by Goldilocks Digital"
   },
   "groups": {
-    "client": ["Advisory", "Reports"],
+    "client": ["Advisory", "Back Office"],
     "admin": ["Admins", "Audit Log"]
   },
   "groupIcons": {
     "Admins": "shield.lefthalf.filled",
     "Audit Log": "scroll.fill",
     "Advisory": "lightbulb.fill",
-    "Reports": "doc.text.fill",
+    "Back Office": "doc.text.fill",
     "History": "clock.fill",
     "default": "bubble.left.and.bubble.right.fill"
   },
   "groupImages": {
     "Admins": "adminsIcon",
     "Audit Log": "auditLogIcon",
-    "Reports": "reportsIcon"
+    "Back Office": "reportsIcon"
   },
   "advisoryTierImages": {
     "bronze": "advisoryBronze",
@@ -77,7 +77,7 @@
   "theme": {
     "mode": "dark",
     "iconColor": "#4A7ABF",
-    "logoTextColor": "#777777",
+    "logoTextColor": "#E0E0E0",
     "textColor": "#8FACC8",
     "textColorLight": "#999999",
     "backgroundColor": "#0A0A0A"

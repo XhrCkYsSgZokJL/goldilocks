@@ -132,8 +132,9 @@ extension Conversation {
     }
 
     /// Client-facing display name for Goldilocks channels. Strips the
-    /// " #N" client number suffix so clients see "Advisory" and "Reports"
-    /// instead of "Advisory #1" and "Reports #1". Admins see the full name.
+    /// " #N" client number suffix so clients see "Advisory" and "Back
+    /// Office" instead of "Advisory #1" and "Back Office #1". Admins see
+    /// the full name.
     var goldilocksDisplayName: String? {
         guard let name else { return nil }
         guard GoldilocksConfig.role == .client, isGoldilocksGroup else { return nil }

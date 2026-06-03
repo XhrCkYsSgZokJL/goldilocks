@@ -480,6 +480,86 @@ struct MembershipView: View {
     }
 
     private var listContent: some View {
+        listWithSheets
+            .alert("Verification", isPresented: $showingVerifyResult) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(verifyResultMessage ?? "")
+            }
+            .alert("Coverage", isPresented: $showingBillingResult) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(billingResultMessage ?? "")
+            }
+            .alert("Activate coverage?", isPresented: $showingActivationConfirm) {
+                let confirmAction: () -> Void = {
+                    guard let member = pendingActivation else { return }
+                    Task { await confirmActivation(member) }
+                }
+                Button("Activate", action: confirmAction)
+                Button("Cancel", role: .cancel) { pendingActivation = nil }
+            } message: {
+                Text("$\(GoldilocksPlan.monthlyPricePerPerson)/mo will be deducted from your balance.")
+            }
+            .alert("Re-activate coverage?", isPresented: $showingReactivationConfirm) {
+                let confirmAction: () -> Void = {
+                    guard let member = pendingActivation else { return }
+                    Task { await confirmActivation(member) }
+                }
+                Button("Re-activate", action: confirmAction)
+                Button("Cancel", role: .cancel) { pendingActivation = nil }
+            } message: {
+                Text("This person will be re-added to your membership for no extra charge.")
+            }
+            .alert(cancelAlertTitle, isPresented: $showingCancelConfirm) {
+                if hasBalance {
+                    Button("Keep balance", role: .cancel) {}
+                    let confirmAction: () -> Void = { Task { await cancelCoverage() } }
+                    Button("Refund balance", role: .destructive, action: confirmAction)
+                } else {
+                    Button("OK", role: .cancel) {}
+                }
+            } message: {
+                Text(cancelConfirmMessage)
+            }
+            .alert("Billing", isPresented: $showingBillingInfo) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(billingInfoMessage)
+            }
+    }
+
+    private var listWithSheets: some View {
+        listBase
+            .sheet(item: $editingMember) { member in
+                PersonEditorSheet(
+                    mode: .edit(member),
+                    onSave: { updated in
+                        guard let index = plan.members.firstIndex(where: { $0.id == updated.id }) else { return }
+                        plan.members[index] = updated
+                    },
+                    onRemove: {
+                        let label: String = member.displayName
+                        plan.members.removeAll { $0.id == member.id }
+                        showVerifyResult("Removed \(label) from your plan.")
+                    }
+                )
+            }
+            .sheet(isPresented: $showingAddPerson) {
+                PersonEditorSheet(
+                    mode: .add,
+                    onSave: { newMember in
+                        plan.members.append(newMember)
+                        showVerifyResult("\(newMember.displayName) was added to your plan.")
+                    }
+                )
+            }
+            .sheet(isPresented: $showingTierInfo) {
+                TierInfoSheet(currentTier: currentTier)
+            }
+    }
+
+    private var listBase: some View {
         List {
             peopleSection
             balanceSection
@@ -496,78 +576,10 @@ struct MembershipView: View {
                 }
             }
         }
-        .sheet(item: $editingMember) { member in
-            PersonEditorSheet(
-                mode: .edit(member),
-                onSave: { updated in
-                    guard let index = plan.members.firstIndex(where: { $0.id == updated.id }) else { return }
-                    plan.members[index] = updated
-                },
-                onRemove: {
-                    let label: String = member.displayName
-                    plan.members.removeAll { $0.id == member.id }
-                    showVerifyResult("Removed \(label) from your plan.")
-                }
-            )
-        }
-        .sheet(isPresented: $showingAddPerson) {
-            PersonEditorSheet(
-                mode: .add,
-                onSave: { newMember in
-                    plan.members.append(newMember)
-                    showVerifyResult("\(newMember.displayName) was added to your plan.")
-                }
-            )
-        }
-        .alert("Verification", isPresented: $showingVerifyResult) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(verifyResultMessage ?? "")
-        }
-        .alert("Coverage", isPresented: $showingBillingResult) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(billingResultMessage ?? "")
-        }
-        .alert("Activate coverage?", isPresented: $showingActivationConfirm) {
-            let confirmAction: () -> Void = {
-                guard let member = pendingActivation else { return }
-                Task { await confirmActivation(member) }
-            }
-            Button("Activate", action: confirmAction)
-            Button("Cancel", role: .cancel) { pendingActivation = nil }
-        } message: {
-            Text("$\(GoldilocksPlan.monthlyPricePerPerson)/mo will be deducted from your balance.")
-        }
-        .alert("Re-activate coverage?", isPresented: $showingReactivationConfirm) {
-            let confirmAction: () -> Void = {
-                guard let member = pendingActivation else { return }
-                Task { await confirmActivation(member) }
-            }
-            Button("Re-activate", action: confirmAction)
-            Button("Cancel", role: .cancel) { pendingActivation = nil }
-        } message: {
-            Text("This person will be re-added to your membership for no extra charge.")
-        }
-        .alert(hasBalance ? "Request refund?" : "Balance", isPresented: $showingCancelConfirm) {
-            if hasBalance {
-                Button("Keep balance", role: .cancel) {}
-                let confirmAction: () -> Void = { Task { await cancelCoverage() } }
-                Button("Refund balance", role: .destructive, action: confirmAction)
-            } else {
-                Button("OK", role: .cancel) {}
-            }
-        } message: {
-            Text(cancelConfirmMessage)
-        }
-        .alert("Billing", isPresented: $showingBillingInfo) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(billingInfoMessage)
-        }
-        .sheet(isPresented: $showingTierInfo) {
-            TierInfoSheet(currentTier: currentTier)
-        }
+    }
+
+    private var cancelAlertTitle: String {
+        hasBalance ? "Request refund?" : "Balance"
     }
 
     /// True when the admin has flipped this client's Emerald flag on.

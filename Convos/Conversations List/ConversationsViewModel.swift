@@ -737,12 +737,13 @@ final class ConversationsViewModel {
         let memberInboxIds = conversation.members.map { $0.profile.inboxId }
         // Backend ROLE schema is `z.enum(['advisory', 'reports'])`. Pull
         // just the role token from the per-client name (e.g. "Advisory #5"
-        // → "advisory"). Returns nil for "Admins" since admin coordination
-        // isn't a per-client `client_channels` row.
+        // → "advisory", "Back Office #5" → "reports"). Returns nil for
+        // "Admins" since admin coordination isn't a per-client
+        // `client_channels` row.
         let goldilocksRole: String? = {
             guard conversation.isGoldilocksGroup, let name = conversation.name else { return nil }
             if name.hasPrefix("Advisory") { return "advisory" }
-            if name.hasPrefix("Reports") { return "reports" }
+            if name.hasPrefix("Back Office") { return "reports" }
             return nil
         }()
 

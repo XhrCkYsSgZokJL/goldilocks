@@ -70,6 +70,38 @@ struct GoldilocksStaleChannelFilterTests {
         let convo = makeConversation(id: "any-group", creatorInboxId: trustedInbox)
         #expect(!convo.isStaleGoldilocksChannel)
     }
+
+    @Test("partial owned set (complete: false) → don't filter the not-yet-listed channel")
+    func partialOwnedSetMeansNotStale() {
+        let trustedInbox = "trusted-agent-inbox-4"
+        GoldilocksAgentTrust.setTrustedInboxIds([trustedInbox])
+        // Mirrors the registration-time race: the first /v2/me/channels
+        // fetch returns only Advisory because Reports was registered a
+        // few ms later. A partial snapshot must not arm the filter, or the
+        // Reports group is hidden the instant its welcome lands.
+        GoldilocksOwnedChannels.set(["advisory-group"], complete: false)
+        defer {
+            GoldilocksAgentTrust.setTrustedInboxIds([])
+            GoldilocksOwnedChannels.set([])
+        }
+
+        let reports = makeConversation(id: "reports-group", creatorInboxId: trustedInbox)
+        #expect(!reports.isStaleGoldilocksChannel)
+    }
+
+    @Test("complete owned set → unowned trusted channel still filtered")
+    func completeOwnedSetStillFiltersStrangers() {
+        let trustedInbox = "trusted-agent-inbox-5"
+        GoldilocksAgentTrust.setTrustedInboxIds([trustedInbox])
+        GoldilocksOwnedChannels.set(["advisory-group", "reports-group"], complete: true)
+        defer {
+            GoldilocksAgentTrust.setTrustedInboxIds([])
+            GoldilocksOwnedChannels.set([])
+        }
+
+        let stranger = makeConversation(id: "other-client-advisory", creatorInboxId: trustedInbox)
+        #expect(stranger.isStaleGoldilocksChannel)
+    }
 }
 
 // MARK: - Helpers

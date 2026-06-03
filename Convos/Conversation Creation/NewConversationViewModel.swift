@@ -89,6 +89,8 @@ class NewConversationViewModel: Identifiable {
     @ObservationIgnored
     private var _cleanedUp: Bool = false
     @ObservationIgnored
+    private var _graduatedDraft: Bool = false
+    @ObservationIgnored
     private var inboxAcquisitionTask: Task<Void, Never>?
     @ObservationIgnored
     private var newConversationTask: Task<Void, Error>?
@@ -667,8 +669,34 @@ class NewConversationViewModel: Identifiable {
             guard let self else { return }
             guard conversationState.isReadyOrJoining else { return }
             messagesTopBarTrailingItem = .share
+            graduateDraftIfNeeded()
         }
         .store(in: &cancellables)
+
+        // Setting a name is also a commit — graduate so a named-but-unsent
+        // channel isn't reused as a blank draft on the next "new channel".
+        conversationStateManager.draftConversationRepository.conversationPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] conversation in
+                guard let self else { return }
+                let name: String = conversation?.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !name.isEmpty else { return }
+                graduateDraftIfNeeded()
+            }
+            .store(in: &cancellables)
+    }
+
+    /// The user committed to this new channel by sending a message, so the
+    /// reused draft is no longer a throwaway — graduate it out of the hidden
+    /// draft state and let the session arm a fresh draft for the next "new
+    /// channel". Runs once.
+    private func graduateDraftIfNeeded() {
+        guard !_graduatedDraft else { return }
+        guard let conversationId = conversationStateManager?.draftConversationRepository.conversationId else { return }
+        _graduatedDraft = true
+        Task { [session] in
+            await session.markNewConversationUsed(conversationId: conversationId)
+        }
     }
 
     private enum Constant {

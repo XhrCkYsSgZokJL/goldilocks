@@ -7,7 +7,7 @@ import UIKit
 enum ConversationListGroup: String, Hashable, CaseIterable {
     /// Cross-admin "Admins" + "Audit Log" groups (admin role only).
     case admin
-    /// The caller's own "Advisory" + "Reports" channels.
+    /// The caller's own "Advisory" + "Back Office" channels.
     case client
     /// Other clients' Advisory channels (admin role only).
     case advisory

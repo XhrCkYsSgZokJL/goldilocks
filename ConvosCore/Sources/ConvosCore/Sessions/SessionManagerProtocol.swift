@@ -13,11 +13,20 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     // MARK: Inbox Management
 
     /// Returns the shared messaging service and an optional conversation id
-    /// for a group pre-prepared by `UnusedConversationCache`. A background
-    /// prewarm is kicked off for the next caller. `conversationId` is nil
+    /// for a hidden draft group prepared by `UnusedConversationCache`. The
+    /// draft is *peeked*, not claimed, so reopening an untouched "new channel"
+    /// reuses the same group rather than minting another; it stays hidden
+    /// until `markNewConversationUsed` graduates it. `conversationId` is nil
     /// if no prepared group was available and the caller should create one
     /// on demand.
     func prepareNewConversation() async -> (service: AnyMessagingService, conversationId: String?)
+
+    /// Graduates a reused draft to a real conversation once the user commits
+    /// to it (sends the first message), so it leaves the hidden-draft state
+    /// and appears in the conversation list. No-op for conformers that don't
+    /// use the unused-conversation cache.
+    func markNewConversationUsed(conversationId: String) async
+
     func deleteAllInboxes() async throws
     func deleteAllInboxesWithProgress() -> AsyncThrowingStream<InboxDeletionProgress, Error>
 
@@ -287,6 +296,13 @@ extension SessionManagerProtocol {
     }
 
     public func promoteSelfToAdminDev() async throws {
+        // No-op for mocks
+    }
+
+    /// Default no-op so conformers that don't use the unused-conversation
+    /// cache (mocks, test doubles) need no implementation. The production
+    /// `SessionManager` overrides this to graduate the draft.
+    public func markNewConversationUsed(conversationId: String) async {
         // No-op for mocks
     }
 

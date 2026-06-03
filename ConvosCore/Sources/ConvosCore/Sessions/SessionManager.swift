@@ -190,13 +190,21 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         }
     }
 
-    /// Goldilocks: the unused-conversation prewarm is disabled. Goldilocks
-    /// clients and admins never start ad-hoc group chats — Advisory, Reports
-    /// and the cross-admin groups are all agent-created — so pre-publishing
-    /// an empty MLS group on every launch only littered the XMTP network and
-    /// could surface as a stray "New Channel" row once consumed.
+    /// Pre-publishes a single empty MLS group so the first "new channel" a
+    /// user taps into opens instantly against an already-published group,
+    /// rather than paying the create-and-publish cost inline. The cache is
+    /// idempotent: it no-ops if a preparation is already in flight or an
+    /// unused row already exists, so at most one unused group exists at a
+    /// time. Consumed by `prepareNewConversation`, which re-arms it for the
+    /// next caller.
     private func prewarmUnusedConversation() async {
-        // No-op: prewarm intentionally disabled for Goldilocks.
+        let service = loadOrCreateService()
+        await unusedConversationCache.prepareUnusedConversation(
+            service: service,
+            databaseWriter: databaseWriter,
+            databaseReader: databaseReader,
+            environment: environment
+        )
     }
 
     /// Single entry point for the process-wide `MessagingService`. Every
@@ -332,13 +340,37 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
 
     public func prepareNewConversation() async -> (service: AnyMessagingService, conversationId: String?) {
         let service = loadOrCreateService()
-        // Goldilocks: prewarm is disabled (see `prewarmUnusedConversation`),
-        // so there is no cached conversation to hand back — `conversationId`
-        // is nil and callers create one on demand. We also don't re-arm it.
-        let conversationId = await unusedConversationCache.consumeUnusedConversationId(
+        // Peek (don't claim) the prewarmed draft so an untouched "new channel"
+        // the user backed out of is reopened next time instead of minting
+        // another group. The draft stays `isUnused` (hidden from the list)
+        // until the user commits — `markNewConversationUsed` graduates it.
+        var conversationId = await unusedConversationCache.peekUnusedConversationId(
+            databaseReader: databaseReader
+        )
+        if conversationId == nil {
+            // No prepared draft yet (first open before prewarm has landed).
+            // Arm one for next time; the caller creates on demand this pass.
+            await prewarmUnusedConversation()
+            conversationId = await unusedConversationCache.peekUnusedConversationId(
+                databaseReader: databaseReader
+            )
+        }
+        // Cycle the suggested icon so reopening the same reused draft shows a
+        // different default emoji each time (UI-only; nothing persisted changes).
+        if let conversationId {
+            SuggestedEmojiRotation.advance(for: conversationId)
+        }
+        return (service, conversationId)
+    }
+
+    public func markNewConversationUsed(conversationId: String) async {
+        // The user committed to the draft (first message). Make it visible in
+        // the list, then arm a fresh hidden draft for the next "new channel".
+        await unusedConversationCache.markConversationUsed(
+            conversationId: conversationId,
             databaseWriter: databaseWriter
         )
-        return (service, conversationId)
+        await prewarmUnusedConversation()
     }
 
     public func deleteAllInboxes() async throws {
