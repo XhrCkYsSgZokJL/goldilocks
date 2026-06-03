@@ -184,7 +184,7 @@ public actor ConversationStateMachine {
         clientConversationId: String,
         backgroundUploadManager: any BackgroundUploadManagerProtocol = UnavailableBackgroundUploadManager(),
         addMembersHook: @escaping ConversationStateMachineAddMembersHook = { _, _ in },
-        coreActions: any CoreActions = NoOpCoreActions()
+        coreActions: any CoreActions
     ) {
         self.sessionStateManager = sessionStateManager
         self.identityStore = identityStore
@@ -642,7 +642,8 @@ public actor ConversationStateMachine {
                     let conversationWriter = ConversationWriter(
                         identityStore: identityStore,
                         databaseWriter: databaseWriter,
-                        messageWriter: messageWriter
+                        messageWriter: messageWriter,
+                        coreActions: coreActions
                     )
                     _ = try await conversationWriter.createPlaceholderConversation(
                         draftConversationId: existingConversation.id,
