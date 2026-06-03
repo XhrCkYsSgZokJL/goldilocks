@@ -99,6 +99,7 @@ jobs:
       - name: Generate Secrets.swift
         env:
           BUILD_CONFIGURATION: Dev
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY_DEV }}
         run: ./Scripts/generate-secrets-secure.sh
 
       - name: Run fastlane firebase_pr

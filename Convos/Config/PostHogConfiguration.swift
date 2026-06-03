@@ -34,6 +34,7 @@ enum PostHogConfiguration {
         let config = PostHogConfig(projectToken: apiKey, host: host)
         config.captureApplicationLifecycleEvents = true
         config.captureScreenViews = false
+        config.enableSwizzling = false
         PostHogSDK.shared.setup(config)
         PostHogSDK.shared.register(["environment": envName])
 
@@ -42,8 +43,10 @@ enum PostHogConfiguration {
 
     private static func shouldEnablePostHog() -> Bool {
         switch ConfigManager.shared.currentEnvironment {
-        case .local, .tests:
+        case .tests:
             return false
+        case .local:
+            return !Secrets.POSTHOG_API_KEY.isEmpty
         case .dev, .production:
             return true
         }
