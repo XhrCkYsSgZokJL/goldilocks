@@ -152,12 +152,10 @@ struct AppSettingsView: View {
                     showsUseProfileButton: false,
                     canEditProfile: true
                 ) { _ in }
+                .onAppear { navigator?.navigateTo(myInfo: MyInfoNavigatorArgs()) }
             } label: {
                 myInfoRowLabel
             }
-            .simultaneousGesture(TapGesture().onEnded {
-                navigator?.navigateTo(myInfo: MyInfoNavigatorArgs())
-            })
             .accessibilityIdentifier("my-info-row")
         }
     }
@@ -175,6 +173,7 @@ struct AppSettingsView: View {
                         appGroupIdentifier: ConfigManager.shared.currentEnvironment.appGroupIdentifier
                     )
                 )
+                .onAppear { navigator?.navigateTo(devices: DevicesNavigatorArgs()) }
             } label: {
                 HStack {
                     Image(systemName: "iphone.gen3.sizes")
@@ -184,9 +183,6 @@ struct AppSettingsView: View {
                         .foregroundStyle(.colorTextPrimary)
                 }
             }
-            .simultaneousGesture(TapGesture().onEnded {
-                navigator?.navigateTo(devices: DevicesNavigatorArgs())
-            })
             .accessibilityIdentifier("devices-row")
         } footer: {
             Text("Manage and pair other devices")
@@ -224,12 +220,10 @@ struct AppSettingsView: View {
         Section {
             NavigationLink {
                 ConnectionsListView(viewModel: viewModel.connectionsListViewModel)
+                    .onAppear { navigator?.navigateTo(connections: ConnectionsNavigatorArgs()) }
             } label: {
                 connectionsRowLabel
             }
-            .simultaneousGesture(TapGesture().onEnded {
-                navigator?.navigateTo(connections: ConnectionsNavigatorArgs())
-            })
             .accessibilityIdentifier("connections-row")
         } footer: {
             Text("Apps and info agents can use")
@@ -315,13 +309,11 @@ struct AppSettingsView: View {
         Section {
             NavigationLink {
                 CustomizeSettingsView()
+                    .onAppear { navigator?.navigateTo(customize: CustomizeSettingsNavigatorArgs()) }
             } label: {
                 Text("Customize")
                     .foregroundStyle(.colorTextPrimary)
             }
-            .simultaneousGesture(TapGesture().onEnded {
-                navigator?.navigateTo(customize: CustomizeSettingsNavigatorArgs())
-            })
         }
         .listRowSeparatorTint(.colorBorderSubtle)
     }

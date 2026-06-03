@@ -142,10 +142,10 @@ struct ConversationMembersListView: View {
         } else {
             NavigationLink {
                 memberContactDetailDestination(for: member)
+                    .onAppear { reportMemberProfileTap(member) }
             } label: {
                 row
             }
-            .simultaneousGesture(TapGesture().onEnded { reportMemberProfileTap(member) })
         }
     }
 
