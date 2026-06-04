@@ -204,6 +204,12 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// so the admin home screen can render "Advisory #55", "Reports #56" etc.
     func fetchAdminChannels() async throws -> [ConvosAPI.GoldilocksAdminChannel]
 
+    /// Admin-only. Aggregate, point-in-time snapshot of the application —
+    /// client counts, membership-tier mix, MRR, prepaid balance, revenue,
+    /// coverage state, seat distribution, and referrals — powering the
+    /// admin Stats dashboard.
+    func fetchAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse
+
     /// Admin-only. Flip the Emerald membership flag on a client. The
     /// backend posts an "Admin #N enabled/disabled Emerald membership
     /// for Client #M" line to the audit log when the flag actually
@@ -412,6 +418,27 @@ extension SessionManagerProtocol {
 
     public func fetchAdminChannels() async throws -> [ConvosAPI.GoldilocksAdminChannel] {
         []
+    }
+
+    public func fetchAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse {
+        ConvosAPI.GoldilocksAdminStatsResponse(
+            totalClients: 0,
+            newClientsThisMonth: 0,
+            clientsWithActiveCoverage: 0,
+            totalCoveredPeople: 0,
+            membershipsTotal: 0,
+            mrrCents: 0,
+            totalBalanceCents: 0,
+            clientsByTier: .init(bronze: 0, silver: 0, gold: 0, emerald: 0),
+            mrrByTierCents: .init(bronze: 0, silver: 0, gold: 0, emerald: 0),
+            lifetimeRevenueCents: 0,
+            refundedCents: 0,
+            seatDistribution: [],
+            coverage: .init(active: 0, paused: 0, none: 0),
+            referrals: .init(total: 0, paying: 0, creditIssuedCents: 0),
+            screeningTrend: [],
+            asOf: ""
+        )
     }
 
     public func setEmeraldMembership(

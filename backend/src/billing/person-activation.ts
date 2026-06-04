@@ -16,7 +16,7 @@
 
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { clients, coveredPersons } from '../db/schema.js';
+import { clients, coveredPersons, screeningEvents } from '../db/schema.js';
 import { MONTHLY_PRICE_CENTS } from './pricing.js';
 import { logger } from '../observability/logger.js';
 
@@ -128,6 +128,14 @@ async function activatePerson(
       displayName,
       enabled: true,
     });
+  }
+
+  // Record the screening event for the admin stats trend. Best-effort:
+  // analytics must never fail an activation.
+  try {
+    await db.insert(screeningEvents).values({ clientId, personId, kind: 'activation' });
+  } catch (error) {
+    log.warn({ clientId, personId, error }, 'failed to record activation screening event');
   }
 
   log.info(

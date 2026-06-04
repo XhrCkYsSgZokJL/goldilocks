@@ -403,6 +403,134 @@ public enum ConvosAPI {
         public let channels: [GoldilocksAdminChannel]
     }
 
+    // MARK: - Goldilocks admin stats dashboard
+
+    /// Per-tier client counts (and per-tier MRR) for the admin Stats page.
+    public struct GoldilocksStatsTierCounts: Codable, Sendable {
+        public let bronze: Int
+        public let silver: Int
+        public let gold: Int
+        public let emerald: Int
+
+        public init(bronze: Int, silver: Int, gold: Int, emerald: Int) {
+            self.bronze = bronze
+            self.silver = silver
+            self.gold = gold
+            self.emerald = emerald
+        }
+    }
+
+    /// One bar of the seat-distribution histogram. A `seats` value of 4
+    /// represents the "4+" bucket.
+    public struct GoldilocksStatsSeatBucket: Codable, Sendable, Identifiable {
+        public let seats: Int
+        public let clients: Int
+
+        public var id: Int { seats }
+
+        public init(seats: Int, clients: Int) {
+            self.seats = seats
+            self.clients = clients
+        }
+    }
+
+    /// Coverage state breakdown: live coverage, client-paused, or
+    /// enabled-but-never-started.
+    public struct GoldilocksStatsCoverage: Codable, Sendable {
+        public let active: Int
+        public let paused: Int
+        public let none: Int
+
+        public init(active: Int, paused: Int, none: Int) {
+            self.active = active
+            self.paused = paused
+            self.none = none
+        }
+    }
+
+    public struct GoldilocksStatsReferrals: Codable, Sendable {
+        public let total: Int
+        public let paying: Int
+        public let creditIssuedCents: Int
+
+        public init(total: Int, paying: Int, creditIssuedCents: Int) {
+            self.total = total
+            self.paying = paying
+            self.creditIssuedCents = creditIssuedCents
+        }
+    }
+
+    /// One point of the cumulative-screenings trend. `date` is a UTC
+    /// calendar day, "YYYY-MM-DD".
+    public struct GoldilocksStatsTrendPoint: Codable, Sendable, Identifiable {
+        public let date: String
+        public let cumulative: Int
+
+        public var id: String { date }
+
+        public init(date: String, cumulative: Int) {
+            self.date = date
+            self.cumulative = cumulative
+        }
+    }
+
+    /// Response for `GET /v2/admin/stats` — an aggregate, point-in-time
+    /// snapshot powering the admin-only Stats dashboard.
+    public struct GoldilocksAdminStatsResponse: Codable, Sendable {
+        public let totalClients: Int
+        public let newClientsThisMonth: Int
+        public let clientsWithActiveCoverage: Int
+        public let totalCoveredPeople: Int
+        public let membershipsTotal: Int
+        public let mrrCents: Int
+        public let totalBalanceCents: Int
+        public let clientsByTier: GoldilocksStatsTierCounts
+        public let mrrByTierCents: GoldilocksStatsTierCounts
+        public let lifetimeRevenueCents: Int
+        public let refundedCents: Int
+        public let seatDistribution: [GoldilocksStatsSeatBucket]
+        public let coverage: GoldilocksStatsCoverage
+        public let referrals: GoldilocksStatsReferrals
+        public let screeningTrend: [GoldilocksStatsTrendPoint]
+        public let asOf: String
+
+        public init(
+            totalClients: Int,
+            newClientsThisMonth: Int,
+            clientsWithActiveCoverage: Int,
+            totalCoveredPeople: Int,
+            membershipsTotal: Int,
+            mrrCents: Int,
+            totalBalanceCents: Int,
+            clientsByTier: GoldilocksStatsTierCounts,
+            mrrByTierCents: GoldilocksStatsTierCounts,
+            lifetimeRevenueCents: Int,
+            refundedCents: Int,
+            seatDistribution: [GoldilocksStatsSeatBucket],
+            coverage: GoldilocksStatsCoverage,
+            referrals: GoldilocksStatsReferrals,
+            screeningTrend: [GoldilocksStatsTrendPoint],
+            asOf: String
+        ) {
+            self.totalClients = totalClients
+            self.newClientsThisMonth = newClientsThisMonth
+            self.clientsWithActiveCoverage = clientsWithActiveCoverage
+            self.totalCoveredPeople = totalCoveredPeople
+            self.membershipsTotal = membershipsTotal
+            self.mrrCents = mrrCents
+            self.totalBalanceCents = totalBalanceCents
+            self.clientsByTier = clientsByTier
+            self.mrrByTierCents = mrrByTierCents
+            self.lifetimeRevenueCents = lifetimeRevenueCents
+            self.refundedCents = refundedCents
+            self.seatDistribution = seatDistribution
+            self.coverage = coverage
+            self.referrals = referrals
+            self.screeningTrend = screeningTrend
+            self.asOf = asOf
+        }
+    }
+
     // MARK: - Goldilocks billing (Stripe prepaid balance)
 
     /// Body for `POST /v2/billing/checkout` — deposit funds into the

@@ -153,6 +153,66 @@ export const adminChannelsResponseSchema = z.object({
 
 export type AdminChannelsResponse = z.infer<typeof adminChannelsResponseSchema>;
 
+export const statsTierCountsSchema = z.object({
+  bronze: z.number(),
+  silver: z.number(),
+  gold: z.number(),
+  emerald: z.number(),
+});
+
+export type StatsTierCounts = z.infer<typeof statsTierCountsSchema>;
+
+export const statsSeatBucketSchema = z.object({
+  seats: z.number(),
+  clients: z.number(),
+});
+
+export type StatsSeatBucket = z.infer<typeof statsSeatBucketSchema>;
+
+export const statsCoverageSchema = z.object({
+  active: z.number(),
+  paused: z.number(),
+  none: z.number(),
+});
+
+export type StatsCoverage = z.infer<typeof statsCoverageSchema>;
+
+export const statsReferralsSchema = z.object({
+  total: z.number(),
+  paying: z.number(),
+  creditIssuedCents: z.number(),
+});
+
+export type StatsReferrals = z.infer<typeof statsReferralsSchema>;
+
+export const statsTrendPointSchema = z.object({
+  date: z.string(),
+  cumulative: z.number(),
+});
+
+export type StatsTrendPoint = z.infer<typeof statsTrendPointSchema>;
+
+export const adminStatsResponseSchema = z.object({
+  totalClients: z.number(),
+  newClientsThisMonth: z.number(),
+  clientsWithActiveCoverage: z.number(),
+  totalCoveredPeople: z.number(),
+  membershipsTotal: z.number(),
+  mrrCents: z.number(),
+  totalBalanceCents: z.number(),
+  clientsByTier: statsTierCountsSchema,
+  mrrByTierCents: statsTierCountsSchema,
+  lifetimeRevenueCents: z.number(),
+  refundedCents: z.number(),
+  seatDistribution: z.array(statsSeatBucketSchema),
+  coverage: statsCoverageSchema,
+  referrals: statsReferralsSchema,
+  screeningTrend: z.array(statsTrendPointSchema),
+  asOf: z.string(),
+});
+
+export type AdminStatsResponse = z.infer<typeof adminStatsResponseSchema>;
+
 export const emeraldToggleRequestSchema = z.object({
   enabled: z.boolean(),
 });

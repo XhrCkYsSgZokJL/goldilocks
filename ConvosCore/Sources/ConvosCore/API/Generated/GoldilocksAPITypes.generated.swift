@@ -135,6 +135,54 @@ public struct GoldilocksAdminChannelsResponse: Codable, Sendable {
     public let channels: [GoldilocksAdminChannel]
 }
 
+public struct GoldilocksStatsTierCounts: Codable, Sendable {
+    public let bronze: Int
+    public let silver: Int
+    public let gold: Int
+    public let emerald: Int
+}
+
+public struct GoldilocksStatsSeatBucket: Codable, Sendable {
+    public let seats: Int
+    public let clients: Int
+}
+
+public struct GoldilocksStatsCoverage: Codable, Sendable {
+    public let active: Int
+    public let paused: Int
+    public let none: Int
+}
+
+public struct GoldilocksStatsReferrals: Codable, Sendable {
+    public let total: Int
+    public let paying: Int
+    public let creditIssuedCents: Int
+}
+
+public struct GoldilocksStatsTrendPoint: Codable, Sendable {
+    public let date: String
+    public let cumulative: Int
+}
+
+public struct GoldilocksAdminStatsResponse: Codable, Sendable {
+    public let totalClients: Int
+    public let newClientsThisMonth: Int
+    public let clientsWithActiveCoverage: Int
+    public let totalCoveredPeople: Int
+    public let membershipsTotal: Int
+    public let mrrCents: Int
+    public let totalBalanceCents: Int
+    public let clientsByTier: GoldilocksStatsTierCounts
+    public let mrrByTierCents: GoldilocksStatsTierCounts
+    public let lifetimeRevenueCents: Int
+    public let refundedCents: Int
+    public let seatDistribution: [GoldilocksStatsSeatBucket]
+    public let coverage: GoldilocksStatsCoverage
+    public let referrals: GoldilocksStatsReferrals
+    public let screeningTrend: [GoldilocksStatsTrendPoint]
+    public let asOf: String
+}
+
 public struct GoldilocksEmeraldToggleRequest: Codable, Sendable {
     public let enabled: Bool
 }

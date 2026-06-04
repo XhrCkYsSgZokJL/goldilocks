@@ -86,6 +86,7 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse
     func fetchGoldilocksAgents() async throws -> ConvosAPI.GoldilocksAgentsResponse
     func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse
+    func fetchGoldilocksAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse
     func setGoldilocksEmeraldMembership(
         clientInboxId: String,
         enabled: Bool
@@ -879,6 +880,11 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
 
     func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse {
         let request = try authenticatedRequest(for: "v2/admin/channels", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func fetchGoldilocksAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse {
+        let request = try authenticatedRequest(for: "v2/admin/stats", method: "GET")
         return try await performRequest(request)
     }
 

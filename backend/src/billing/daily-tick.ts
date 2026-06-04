@@ -8,7 +8,7 @@
 // Idempotent within a calendar month: skips clients whose
 // last_balance_tick_at is already in the current month.
 
-import { and, eq, gt, isNull, lt, or } from 'drizzle-orm';
+import { and, eq, gt, isNull, lt, or, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { clients } from '../db/schema.js';
 import { computeMonthlyTick } from './balance.js';
@@ -70,6 +70,20 @@ export async function runDailyBalanceTick(): Promise<TickResult> {
 
     result.processed += 1;
     result.deducted += tick.deductedCents;
+
+    // Record one renewal screening event per enabled covered person for
+    // the admin stats trend. Best-effort: analytics must never break the
+    // billing tick.
+    try {
+      await db.execute(sql`
+        INSERT INTO screening_events (client_id, person_id, kind, occurred_at)
+        SELECT ${client.id}::uuid, person_id, 'renewal', ${now}
+        FROM covered_persons
+        WHERE client_id = ${client.id}::uuid AND enabled = true
+      `);
+    } catch (error) {
+      log.warn({ clientId: client.id, error }, 'failed to record renewal screening events');
+    }
 
     if (tick.coverageLapsed) {
       result.lapsed += 1;

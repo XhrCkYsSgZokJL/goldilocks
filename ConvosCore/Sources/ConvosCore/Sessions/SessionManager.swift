@@ -694,6 +694,10 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         return response.channels
     }
 
+    public func fetchAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse {
+        try await apiClient.fetchGoldilocksAdminStats()
+    }
+
     /// Admin: flip the Emerald membership flag on a client. Returns
     /// the new state; the backend posts an audit-log line if the
     /// flag actually changed.

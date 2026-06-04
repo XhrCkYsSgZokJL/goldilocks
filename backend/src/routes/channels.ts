@@ -11,12 +11,13 @@
 // (we resolve their `clientId` via deviceId → inbox_id → clients).
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, gte, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { aggregateAdminStats } from '../billing/admin-stats.js';
 import { isCoverageActive, liveBalanceCents } from '../billing/balance.js';
 import { monthlyTotalCents } from '../billing/pricing.js';
 import { db } from '../db/client.js';
-import { adminInboxes, clients, clientChannels, devices } from '../db/schema.js';
+import { adminInboxes, billingCheckouts, clients, clientChannels, devices, referrals, screeningEvents } from '../db/schema.js';
 import { requireJwt } from '../middleware/jwt.js';
 import { adminNumberForInbox, emitAuditEvent } from '../audit-events.js';
 import { emitOpsEvent } from '../observability/ops-events.js';
@@ -397,4 +398,71 @@ export default async function channelRoutes(app: FastifyInstance) {
       });
     },
   );
+
+  // -------------------------------------------------------------------
+  // GET /v2/admin/stats
+  // Admin-only. Aggregate snapshot for the in-app admin Stats dashboard:
+  // client counts, membership-tier mix, MRR, prepaid balance held,
+  // lifetime revenue, coverage state, seat distribution, and referrals.
+  // All figures are point-in-time (no history table yet).
+  //
+  // Tier is computed per client from seats + coverage + emerald, mirroring
+  // the iOS tier badge (src/billing/tier.ts). MRR is the actual monthly
+  // burn — $100 per covered person — summed over clients with live
+  // coverage, which is what the monthly tick charges (src/billing/balance.ts).
+  // -------------------------------------------------------------------
+  app.get('/v2/admin/stats', async (req, reply) => {
+    const caller = await resolveCaller(req, reply);
+    if (!caller) return;
+    if (!caller.isAdmin) {
+      return reply.code(403).send({ error: 'not_admin' });
+    }
+
+    const clientRows = await db
+      .select({
+        createdAt: clients.createdAt,
+        billingBalanceCents: clients.billingBalanceCents,
+        referralCreditCents: clients.referralCreditCents,
+        billingSeats: clients.billingSeats,
+        coveredPeople: clients.coveredPeople,
+        lastBalanceTickAt: clients.lastBalanceTickAt,
+        emeraldMembershipEnabled: clients.emeraldMembershipEnabled,
+        coverageEnabled: clients.coverageEnabled,
+      })
+      .from(clients);
+
+    const [revenueRow] = await db
+      .select({
+        lifetime: sql<string>`coalesce(sum(${billingCheckouts.amountCents}), 0)`,
+        refunded: sql<string>`coalesce(sum(${billingCheckouts.refundedCents}), 0)`,
+      })
+      .from(billingCheckouts)
+      .where(eq(billingCheckouts.status, 'completed'));
+
+    const referralRows = await db
+      .select({ referrerCreditAppliedAt: referrals.referrerCreditAppliedAt })
+      .from(referrals);
+
+    // Daily screening counts over the trailing 90 days, bucketed by UTC day.
+    const screeningRows = await db
+      .select({
+        date: sql<string>`to_char(date_trunc('day', ${screeningEvents.occurredAt} AT TIME ZONE 'UTC'), 'YYYY-MM-DD')`,
+        count: sql<string>`count(*)`,
+      })
+      .from(screeningEvents)
+      .where(gte(screeningEvents.occurredAt, sql`now() - interval '90 days'`))
+      .groupBy(sql`date_trunc('day', ${screeningEvents.occurredAt} AT TIME ZONE 'UTC')`);
+
+    const stats = aggregateAdminStats({
+      clients: clientRows,
+      now: new Date(),
+      lifetimeRevenueCents: Number(revenueRow?.lifetime ?? 0),
+      refundedCents: Number(revenueRow?.refunded ?? 0),
+      referralsTotal: referralRows.length,
+      referralsPaying: referralRows.filter((r) => r.referrerCreditAppliedAt !== null).length,
+      screeningDays: screeningRows.map((r) => ({ date: r.date, count: Number(r.count) })),
+    });
+
+    return reply.code(200).send(stats);
+  });
 }

@@ -267,15 +267,6 @@ struct AppSettingsView: View {
                     }
                     .foregroundStyle(.colorTextPrimary)
                     .accessibilityHint("Opens xmtp.org in your browser")
-
-                    if GoldilocksSession.shared.isAdmin {
-                        NavigationLink {
-                            DebugExportView(environment: ConfigManager.shared.currentEnvironment, session: session)
-                        } label: {
-                            Text("Debug")
-                        }
-                        .foregroundStyle(.colorTextPrimary)
-                    }
                 } footer: {
                     VStack(alignment: .leading, spacing: 0) {
                         HStack {
@@ -295,6 +286,26 @@ struct AppSettingsView: View {
                 }
                 .listRowSeparatorTint(.colorBorderSubtle)
                 .listRowBackground(Color.colorFillMinimal)
+
+                if GoldilocksSession.shared.isAdmin {
+                    Section {
+                        NavigationLink {
+                            StatsView(session: session)
+                        } label: {
+                            Text("Stats")
+                                .foregroundStyle(.colorTextPrimary)
+                        }
+
+                        NavigationLink {
+                            DebugExportView(environment: ConfigManager.shared.currentEnvironment, session: session)
+                        } label: {
+                            Text("Debug")
+                                .foregroundStyle(.colorTextPrimary)
+                        }
+                    }
+                    .listRowSeparatorTint(.colorBorderSubtle)
+                    .listRowBackground(Color.colorFillMinimal)
+                }
 
                 Section {
                     Button(role: .destructive) {
@@ -858,8 +869,12 @@ struct MembershipView: View {
 
     @ViewBuilder
     private var peopleSection: some View {
+        // With no members the tier row sits directly above "Add someone";
+        // drop the separator between them so they read as one block.
+        let tierSeparatorVisibility: Visibility = plan.members.isEmpty ? .hidden : .automatic
         Section {
             tierRow
+                .listRowSeparator(tierSeparatorVisibility, edges: .bottom)
             ForEach(plan.members) { member in
                 memberRow(member)
             }

@@ -169,6 +169,33 @@ final class MockAPIClient: ConvosAPIClientProtocol, Sendable {
         .init(channels: [])
     }
 
+    func fetchGoldilocksAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse {
+        .init(
+            totalClients: 128,
+            newClientsThisMonth: 14,
+            clientsWithActiveCoverage: 73,
+            totalCoveredPeople: 191,
+            membershipsTotal: 214,
+            mrrCents: 1_910_000,
+            totalBalanceCents: 4_820_000,
+            clientsByTier: .init(bronze: 41, silver: 52, gold: 21, emerald: 14),
+            mrrByTierCents: .init(bronze: 0, silver: 720_000, gold: 1_010_000, emerald: 180_000),
+            lifetimeRevenueCents: 9_640_000,
+            refundedCents: 120_000,
+            seatDistribution: [
+                .init(seats: 0, clients: 41),
+                .init(seats: 1, clients: 33),
+                .init(seats: 2, clients: 19),
+                .init(seats: 3, clients: 14),
+                .init(seats: 4, clients: 21),
+            ],
+            coverage: .init(active: 73, paused: 22, none: 33),
+            referrals: .init(total: 38, paying: 21, creditIssuedCents: 210_000),
+            screeningTrend: [],
+            asOf: "2026-06-03T12:00:00.000Z"
+        )
+    }
+
     func setGoldilocksEmeraldMembership(
         clientInboxId: String,
         enabled: Bool

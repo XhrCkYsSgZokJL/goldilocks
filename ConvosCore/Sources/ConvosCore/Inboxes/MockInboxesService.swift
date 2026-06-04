@@ -9,6 +9,49 @@ public final class MockInboxesService: SessionManagerProtocol {
         self.mockMessagingService = mockMessagingService
     }
 
+    public func fetchAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse {
+        ConvosAPI.GoldilocksAdminStatsResponse(
+            totalClients: 128,
+            newClientsThisMonth: 14,
+            clientsWithActiveCoverage: 73,
+            totalCoveredPeople: 191,
+            membershipsTotal: 214,
+            mrrCents: 1_910_000,
+            totalBalanceCents: 4_820_000,
+            clientsByTier: .init(bronze: 41, silver: 52, gold: 21, emerald: 14),
+            mrrByTierCents: .init(bronze: 0, silver: 720_000, gold: 1_010_000, emerald: 180_000),
+            lifetimeRevenueCents: 9_640_000,
+            refundedCents: 120_000,
+            seatDistribution: [
+                .init(seats: 0, clients: 41),
+                .init(seats: 1, clients: 33),
+                .init(seats: 2, clients: 19),
+                .init(seats: 3, clients: 14),
+                .init(seats: 4, clients: 21),
+            ],
+            coverage: .init(active: 73, paused: 22, none: 33),
+            referrals: .init(total: 38, paying: 21, creditIssuedCents: 210_000),
+            screeningTrend: Self.sampleScreeningTrend(),
+            asOf: "2026-06-03T12:00:00.000Z"
+        )
+    }
+
+    private static func sampleScreeningTrend() -> [ConvosAPI.GoldilocksStatsTrendPoint] {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        let calendar = Calendar(identifier: .gregorian)
+        let today = Date()
+        var points: [ConvosAPI.GoldilocksStatsTrendPoint] = []
+        var cumulative: Int = 40
+        for offset in stride(from: 89, through: 0, by: -1) {
+            let day = calendar.date(byAdding: .day, value: -offset, to: today) ?? today
+            cumulative += Int.random(in: 0...4)
+            points.append(.init(date: formatter.string(from: day), cumulative: cumulative))
+        }
+        return points
+    }
+
     // MARK: - Inbox Management
 
     public func prepareNewConversation() async -> (service: AnyMessagingService, conversationId: String?) {

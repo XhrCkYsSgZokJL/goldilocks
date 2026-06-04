@@ -159,6 +159,70 @@ export interface AdminChannelsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Admin stats dashboard
+// ---------------------------------------------------------------------------
+
+/** @swift GoldilocksStatsTierCounts */
+export interface StatsTierCounts {
+  bronze: number;
+  silver: number;
+  gold: number;
+  emerald: number;
+}
+
+/** @swift GoldilocksStatsSeatBucket */
+export interface StatsSeatBucket {
+  /** Seat count for this bucket (4 represents "4+"). */
+  seats: number;
+  clients: number;
+}
+
+/** @swift GoldilocksStatsCoverage */
+export interface StatsCoverage {
+  active: number;
+  paused: number;
+  none: number;
+}
+
+/** @swift GoldilocksStatsReferrals */
+export interface StatsReferrals {
+  total: number;
+  paying: number;
+  creditIssuedCents: number;
+}
+
+/** @swift GoldilocksStatsTrendPoint */
+export interface StatsTrendPoint {
+  /** UTC calendar day, YYYY-MM-DD. */
+  date: string;
+  /** Running total of screenings from the window start through this day. */
+  cumulative: number;
+}
+
+/** @swift GoldilocksAdminStatsResponse */
+export interface AdminStatsResponse {
+  totalClients: number;
+  newClientsThisMonth: number;
+  clientsWithActiveCoverage: number;
+  totalCoveredPeople: number;
+  /** Total memberships across all clients (sum of billing seats). */
+  membershipsTotal: number;
+  mrrCents: number;
+  totalBalanceCents: number;
+  clientsByTier: StatsTierCounts;
+  mrrByTierCents: StatsTierCounts;
+  lifetimeRevenueCents: number;
+  refundedCents: number;
+  seatDistribution: StatsSeatBucket[];
+  coverage: StatsCoverage;
+  referrals: StatsReferrals;
+  /** Daily cumulative screenings (activations + renewals) over the last 90 days. */
+  screeningTrend: StatsTrendPoint[];
+  /** ISO8601 timestamp the snapshot was computed. */
+  asOf: string;
+}
+
+// ---------------------------------------------------------------------------
 // Emerald membership toggle
 // ---------------------------------------------------------------------------
 

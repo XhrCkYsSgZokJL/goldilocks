@@ -343,6 +343,28 @@ export const coveredPersons = pgTable('covered_persons', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Append-only log of person activations and monthly renewals (migration
+// 028). One row per screening event — written when a person is activated
+// or re-activated (person-activation.ts) and once per enabled person each
+// month when the balance tick renews coverage (daily-tick.ts). Read only
+// by the admin Stats dashboard; billing never depends on it, so writes
+// are best-effort.
+export const screeningEvents = pgTable(
+  'screening_events',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    clientId: uuid('client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }),
+    personId: uuid('person_id'),
+    // 'activation' | 'renewal'.
+    kind: text('kind').notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    occurredIdx: index('idx_screening_events_occurred').on(t.occurredAt),
+    clientIdx: index('idx_screening_events_client').on(t.clientId),
+  }),
+);
+
 // Encrypted people list — see migration 013. The blob is AES-256-GCM
 // ciphertext; the key is the Advisory group's key and never reaches this
 // database, so a dump of this table is opaque. `version` drives
