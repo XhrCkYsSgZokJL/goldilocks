@@ -1,0 +1,154 @@
+.claude/DESIGNER.md
+.claude/commands/firebase-token.md
+.claude/commands/setup.md
+.env.example
+.gitignore
+CLAUDE.md
+Convos.xcodeproj/project.pbxproj
+Convos.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+Convos/App Settings/AppSettingsView.swift
+Convos/App Settings/AssistantSettingsView.swift
+Convos/App Settings/CustomizeSettingsView.swift
+Convos/Config/Dev.xcconfig
+Convos/Config/Local.xcconfig
+Convos/Config/Prod.xcconfig
+Convos/Config/SentryConfiguration.swift
+Convos/Config/config.dev.json
+Convos/Config/config.local.json
+Convos/Config/config.prod.json
+Convos/Contacts/AddFromContactsPickerModifier.swift
+Convos/Contacts/Contact+ListSubtitle.swift
+Convos/Contacts/ContactDetailView.swift
+Convos/Contacts/ContactRowView.swift
+Convos/Contacts/ContactsListView.swift
+Convos/Contacts/ContactsPickerRow.swift
+Convos/Contacts/ContactsPickerView.swift
+Convos/Contacts/ContactsPickerViewModel.swift
+Convos/Contacts/ContactsSearchBar.swift
+Convos/Contacts/ContactsView.swift
+Convos/Contacts/ContactsViewModel.swift
+Convos/Conversation Creation/ComposeFlowView.swift
+Convos/Conversation Creation/JoinConversationView.swift
+Convos/Conversation Creation/NewConversationViewModel.swift
+Convos/Conversation Detail/AddToConversationMenu.swift
+Convos/Conversation Detail/AssistantProcessingPowerInfoView.swift
+Convos/Conversation Detail/Conversation Detail Drawer/InviteAcceptedView.swift
+Convos/Conversation Detail/Conversation Detail Drawer/RequestPushNotificationsView.swift
+Convos/Conversation Detail/Conversation Detail Drawer/WhatIsQuicknameView.swift
+Convos/Conversation Detail/ConversationForkedInfoView.swift
+Convos/Conversation Detail/ConversationInfoView.swift
+Convos/Conversation Detail/ConversationMemberView.swift
+Convos/Conversation Detail/ConversationMembersListView.swift
+Convos/Conversation Detail/ConversationOnboardingCoordinator.swift
+Convos/Conversation Detail/ConversationShareView.swift
+Convos/Conversation Detail/ConversationView.swift
+Convos/Conversation Detail/ConversationViewModel.swift
+Convos/Conversation Detail/Messages/Messages View Controller/Reactions/MessageReactionsView.swift
+Convos/Conversation Detail/Messages/Messages View Controller/Reactions/ReactionsDrawerView.swift
+Convos/Conversation Detail/Messages/Messages View Controller/View Controller/Cells/MessageInviteContainerView.swift
+Convos/Conversation Detail/Messages/Messages View Controller/View Controller/Data Source/DefaultMessagesLayoutDelegate.swift
+Convos/Conversation Detail/Messages/Messages View Controller/View Controller/MessagesViewController.swift
+Convos/Conversation Detail/Messages/Messages View Controller/View Controller/Views/MessagesBottomBar.swift
+Convos/Conversation Detail/Messages/Messages View Controller/View Controller/Views/MessagesInputView.swift
+Convos/Conversation Detail/Messages/Messages View Controller/View Controller/Views/MessagesMediaInputView.swift
+Convos/Conversation Detail/Messages/MessagesListView/MessageContextMenu/MessageContextMenuOverlay.swift
+Convos/Conversation Detail/Messages/MessagesListView/Messages List Items/AssistantJoinedInfoView.swift
+Convos/Conversation Detail/Messages/MessagesListView/Messages List Items/ConversationInfoPreview.swift
+Convos/Conversation Detail/Messages/MessagesListView/Messages List Items/HTMLAttachmentBubble.swift
+Convos/Conversation Detail/Messages/MessagesListView/Messages List Items/HTMLBodyBackgroundBridge.swift
+Convos/Conversation Detail/Messages/MessagesListView/Messages List Items/HTMLContentPrewarmer.swift
+Convos/Conversation Detail/Messages/MessagesListView/Messages List Items/HTMLThumbnailRenderer.swift
+Convos/Conversation Detail/Messages/MessagesListView/Messages List Items/NewConvoIdentityView.swift
+Convos/Conversation Detail/Messages/MessagesListView/Messages List Items/PhotosInfoSheet.swift
+Convos/Conversation Detail/Messages/MessagesListView/Messages List Items/ReplyReferenceView.swift
+Convos/Conversation Detail/Messages/MessagesListView/Messages List Items/RevealMediaInfoSheet.swift
+Convos/Conversation Detail/Messages/MessagesListView/MessagesGroupItemView.swift
+Convos/Conversation Detail/Messages/MessagesListView/MessagesGroupView.swift
+Convos/Conversation Detail/Messages/MessagesView.swift
+Convos/Conversation Detail/Messages/MessagesViewRepresentable.swift
+Convos/Conversations List/ConversationsListEmptyCTA.swift
+Convos/Conversations List/ConversationsListItem.swift
+Convos/Conversations List/ConversationsView.swift
+Convos/Conversations List/ConversationsViewModel.swift
+Convos/Conversations List/View Controller/Cells/ConversationListItemCell.swift
+Convos/Conversations List/View Controller/ConversationsViewController.swift
+Convos/Convos.entitlements
+Convos/ConvosApp.swift
+Convos/ConvosAppDelegate.swift
+Convos/Debug View/DebugView.swift
+Convos/Profile/MyInfoView.swift
+Convos/Shared Views/AutoShareSheetView.swift
+Convos/Shared Views/AvatarView.swift
+Convos/Shared Views/LinkDetectingTextView.swift
+Convos/Shared Views/QuickEditView.swift
+ConvosAppClip/ConvosAppClipApp.swift
+ConvosCore/Package.resolved
+ConvosCore/Package.swift
+ConvosCore/Sources/ConvosCore/API/ConvosAPIClient+Models.swift
+ConvosCore/Sources/ConvosCore/API/ConvosAPIClient.swift
+ConvosCore/Sources/ConvosCore/API/MockAPIClient.swift
+ConvosCore/Sources/ConvosCore/AppEnvironment.swift
+ConvosCore/Sources/ConvosCore/Auth/Keychain/KeychainIdentityStore.swift
+ConvosCore/Sources/ConvosCore/Connections/ConnectionManager.swift
+ConvosCore/Sources/ConvosCore/Contacts/ContactSyncCoordinator.swift
+ConvosCore/Sources/ConvosCore/ConvosClient+App.swift
+ConvosCore/Sources/ConvosCore/Inboxes/ConversationStateMachine.swift
+ConvosCore/Sources/ConvosCore/Inboxes/MessagingService+PushNotifications.swift
+ConvosCore/Sources/ConvosCore/Inboxes/SessionStateMachine.swift
+ConvosCore/Sources/ConvosCore/Messaging/MessagingService.swift
+ConvosCore/Sources/ConvosCore/Messaging/MessagingServiceProtocol.swift
+ConvosCore/Sources/ConvosCore/Messaging/UnusedConversationCache.swift
+ConvosCore/Sources/ConvosCore/Mocks/MockContactsRepository.swift
+ConvosCore/Sources/ConvosCore/Mocks/MockConversationStateManager.swift
+ConvosCore/Sources/ConvosCore/Mocks/MockMessagingService.swift
+ConvosCore/Sources/ConvosCore/Mocks/MockOutgoingMessageWriter.swift
+ConvosCore/Sources/ConvosCore/Mocks/ModelMocks.swift
+ConvosCore/Sources/ConvosCore/Notifications/NotificationExtensionEnvironment.swift
+ConvosCore/Sources/ConvosCore/PlatformProviders.swift
+ConvosCore/Sources/ConvosCore/Sessions/ClipIdentityBootstrap.swift
+ConvosCore/Sources/ConvosCore/Sessions/SessionManager.swift
+ConvosCore/Sources/ConvosCore/Sessions/SessionManagerProtocol.swift
+ConvosCore/Sources/ConvosCore/Shared/ConvosKeychainItem.swift
+ConvosCore/Sources/ConvosCore/Storage/Database Models/DBContact.swift
+ConvosCore/Sources/ConvosCore/Storage/Models/AgentVerification.swift
+ConvosCore/Sources/ConvosCore/Storage/Models/Contact.swift
+ConvosCore/Sources/ConvosCore/Storage/Models/Conversation.swift
+ConvosCore/Sources/ConvosCore/Storage/Models/ConversationMember.swift
+ConvosCore/Sources/ConvosCore/Storage/Models/HydratedAttachment.swift
+ConvosCore/Sources/ConvosCore/Storage/Models/MessagesListProcessor.swift
+ConvosCore/Sources/ConvosCore/Storage/Models/Profile.swift
+ConvosCore/Sources/ConvosCore/Storage/Repositories/ContactsRepository.swift
+ConvosCore/Sources/ConvosCore/Storage/SharedDatabaseMigrator.swift
+ConvosCore/Sources/ConvosCore/Storage/Writers/ContactsWriter.swift
+ConvosCore/Sources/ConvosCore/Storage/Writers/ConversationConsentWriter.swift
+ConvosCore/Sources/ConvosCore/Storage/Writers/ConversationStateManager.swift
+ConvosCore/Sources/ConvosCore/Storage/Writers/ConversationWriter.swift
+ConvosCore/Sources/ConvosCore/Storage/Writers/OutgoingMessageWriter.swift
+ConvosCore/Sources/ConvosCore/Syncing/StreamProcessor.swift
+ConvosCore/Sources/ConvosCoreiOS/IOSDeviceInfo.swift
+ConvosCore/Tests/ConvosCoreTests/Assets/AssetRenewalManagerTests.swift
+ConvosCore/Tests/ConvosCoreTests/ConnectionManagerTests.swift
+ConvosCore/Tests/ConvosCoreTests/ContactSyncCoordinatorTests.swift
+ConvosCore/Tests/ConvosCoreTests/ContactsRepositoryTests.swift
+ConvosCore/Tests/ConvosCoreTests/ContactsWriterTests.swift
+ConvosCore/Tests/ConvosCoreTests/ConversationConsentWriterDeleteTests.swift
+ConvosCore/Tests/ConvosCoreTests/SyncingManagerTests.swift
+ConvosInvites/Package.resolved
+ConvosInvites/Package.swift
+ConvosInvites/Sources/ConvosInvites/InviteCoordinator.swift
+ConvosInvites/Sources/ConvosInvites/Models.swift
+ConvosInvites/Tests/ConvosInvitesTests/JoinRequestProcessingTests.swift
+ConvosTests/ContactsPickerViewModelTests.swift
+ConvosTests/ContactsViewModelTests.swift
+ConvosTests/ConversationOnboardingCoordinatorTests.swift
+ConvosTests/ConversationsViewModelDeleteTests.swift
+NotificationService/NotificationService.swift
+README.md
+Scripts/build-phases/copy-env-config-app-clip.sh
+Scripts/build-phases/copy-env-config-main-app.sh
+Scripts/build-phases/copy-env-config-notification-service.sh
+Scripts/generate-secrets-local.sh
+Scripts/hooks/pre-commit
+Scripts/hooks/pre-push
+Scripts/setup.sh
+dev/test

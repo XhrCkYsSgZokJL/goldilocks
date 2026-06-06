@@ -1,0 +1,275 @@
+"Convos/AppIcon-Dev.icon/Assets/1 \342\200\223 Layer.svg"
+"Convos/AppIcon-Dev.icon/Assets/2 \342\200\223 Layer.svg"
+"Convos/AppIcon-Local.icon/Assets/1 \342\200\223 Layer.svg"
+"Convos/AppIcon-Local.icon/Assets/2 \342\200\223 Layer.svg"
+"Convos/AppIcon-Prod.icon/Assets/1 \342\200\223 Layer.svg"
+"Convos/AppIcon-Prod.icon/Assets/2 \342\200\223 Layer.svg"
+.claude/projects/-Users-morgan-Desktop-git-goldilocks/memory/MEMORY.md
+.claude/projects/-Users-morgan-Desktop-git-goldilocks/memory/project_billing_model.md
+.github/dependabot.yml
+.github/workflows-upstream-archived/auto-release.yml
+.github/workflows-upstream-archived/claude-code-review.yml
+.github/workflows-upstream-archived/claude.yml
+.github/workflows-upstream-archived/convoscore-tests.yml
+.github/workflows-upstream-archived/create-release.yml
+.github/workflows-upstream-archived/fly-cleanup.yml
+.github/workflows-upstream-archived/keychain-identity-store-tests.yml
+.github/workflows-upstream-archived/promote-to-main.yml
+.github/workflows-upstream-archived/release-tag-on-merge.yml
+.github/workflows-upstream-archived/swiftlint.yml
+.github/workflows/README.md
+.github/workflows/audit.yml
+Convos/App Settings/AssistantSettingsView.swift
+Convos/App Settings/GoldilocksMembershipTier+Style.swift
+Convos/App Settings/GoldilocksPeopleAudit.swift
+Convos/App Settings/GoldilocksPeopleListCrypto.swift
+Convos/App Settings/GoldilocksSeatPlan.swift
+Convos/App Settings/GoldilocksStore.swift
+Convos/App Settings/LegalView.swift
+Convos/App Settings/StatsFormatting.swift
+Convos/App Settings/StatsView.swift
+Convos/App Settings/StatsViewModel.swift
+Convos/AppIcon-Dev.icon/Assets/Gemini_Generated_Image_tcmaqmtcmaqmtcma (2).png
+Convos/AppIcon-Dev.icon/Assets/Gemini_Generated_Image_urtrrnurtrrnurtr (3).png
+Convos/AppIcon-Dev.icon/Assets/Gemini_Generated_Image_x1h295x1h295x1h2 (1).png
+Convos/AppIcon-Dev.icon/Assets/Gemini_Generated_Image_x1h295x1h295x1h2 (2).png
+Convos/AppIcon-Local.icon/Assets/Gemini_Generated_Image_tcmaqmtcmaqmtcma (2).png
+Convos/AppIcon-Local.icon/Assets/Gemini_Generated_Image_urtrrnurtrrnurtr (3).png
+Convos/AppIcon-Local.icon/Assets/Gemini_Generated_Image_x1h295x1h295x1h2 (1).png
+Convos/AppIcon-Local.icon/Assets/Gemini_Generated_Image_x1h295x1h295x1h2 (2).png
+Convos/AppIcon-Prod.icon/Assets/Gemini_Generated_Image_tcmaqmtcmaqmtcma (2).png
+Convos/AppIcon-Prod.icon/Assets/Gemini_Generated_Image_urtrrnurtrrnurtr (3).png
+Convos/AppIcon-Prod.icon/Assets/Gemini_Generated_Image_x1h295x1h295x1h2 (1).png
+Convos/AppIcon-Prod.icon/Assets/Gemini_Generated_Image_x1h295x1h295x1h2 (2).png
+Convos/Assets.xcassets/adminsIcon.imageset/Contents.json
+Convos/Assets.xcassets/adminsIcon.imageset/admins.png
+Convos/Assets.xcassets/advisoryBronze.imageset/Contents.json
+Convos/Assets.xcassets/advisoryBronze.imageset/copper.png
+Convos/Assets.xcassets/advisoryEmerald.imageset/Contents.json
+Convos/Assets.xcassets/advisoryEmerald.imageset/emerald.png
+Convos/Assets.xcassets/advisoryGold.imageset/Contents.json
+Convos/Assets.xcassets/advisoryGold.imageset/gold.png
+Convos/Assets.xcassets/advisorySilver.imageset/Contents.json
+Convos/Assets.xcassets/advisorySilver.imageset/silver.png
+Convos/Assets.xcassets/auditLogIcon.imageset/Contents.json
+Convos/Assets.xcassets/auditLogIcon.imageset/audit-log.png
+Convos/Assets.xcassets/goldilocksBot.imageset/Contents.json
+Convos/Assets.xcassets/goldilocksBot.imageset/goldilocks-bot.png
+Convos/Assets.xcassets/goldilocksLogo.imageset/Contents.json
+Convos/Assets.xcassets/goldilocksLogo.imageset/gd_logo.png
+Convos/Assets.xcassets/goldilocksLogo.imageset/gd_logo_blue.png
+Convos/Assets.xcassets/goldilocksLogo.imageset/gd_logo_flat.png
+Convos/Assets.xcassets/reportsIcon.imageset/Contents.json
+Convos/Assets.xcassets/reportsIcon.imageset/reports.png
+Convos/Config/BrandConfig.swift
+Convos/Config/BrandThemeColors.generated.swift
+Convos/Config/GoldilocksConfig.swift
+Convos/Config/GoldilocksRole.swift
+Convos/Config/GoldilocksSession.swift
+Convos/Contacts/AgentLinks.swift
+Convos/Conversation Detail/AssistantProcessingPowerInfoView.swift
+Convos/Conversation Detail/AssistantsInfoView.swift
+Convos/Conversation Detail/Conversation Detail Drawer/SetupQuicknameView.swift
+Convos/Conversation Detail/Conversation Detail Drawer/WhatIsQuicknameView.swift
+Convos/Conversation Detail/Messages/MessagesListView/Messages List Items/AssistantJoinedInfoView.swift
+Convos/Conversation Detail/Messages/MessagesListView/Messages List Items/HTMLAttachmentPreviewSheet.swift
+Convos/Conversations List/AdminChannelsView.swift
+Convos/Conversations List/AdminClientPeopleListView.swift
+Convos/Conversations List/ConversationsListEmptyCTA.swift
+Convos/Conversations List/View Controller/Cells/SectionDividerCell.swift
+Convos/Shared Views/AutoShareSheetView.swift
+Convos/Window/CaptureMonitor.swift
+Convos/Window/CaptureOverlay.swift
+Convos/Window/SecureWindow.swift
+ConvosCore/Sources/ConvosCore/API/Generated/GoldilocksAPITypes.generated.swift
+ConvosCore/Sources/ConvosCore/Auth/GoldilocksAuth.swift
+ConvosCore/Sources/ConvosCore/Auth/SecureEnclave/IdentityKeyWrapper.swift
+ConvosCore/Sources/ConvosCore/Billing/GoldilocksBilling.swift
+ConvosCore/Sources/ConvosCore/Connections/ConnectionManager.swift
+ConvosCore/Sources/ConvosCore/Goldilocks/GoldilocksAgentTrust.swift
+ConvosCore/Sources/ConvosCore/Goldilocks/GoldilocksNameRegistry.swift
+ConvosCore/Sources/ConvosCore/Goldilocks/GoldilocksOwnedChannels.swift
+ConvosCore/Sources/ConvosCore/Logging/SecurityLog.swift
+ConvosCore/Sources/ConvosCore/Networking/CertificatePinner.swift
+ConvosCore/Sources/ConvosCore/Storage/ProtectedFile.swift
+ConvosCore/Sources/ConvosCoreiOS/SecureEnclaveIdentityKeyWrapper.swift
+ConvosCore/Tests/ConvosCoreTests/GoldilocksStaleChannelFilterTests.swift
+ConvosCore/Tests/ConvosCoreTests/IdentityKeyWrapperTests.swift
+Scripts/upstream-sync.sh
+backend/.env.example
+backend/.env.production.example
+backend/.github/dependabot.yml
+backend/.github/workflows/audit.yml
+backend/.gitignore
+backend/.sops.yaml
+backend/Dockerfile
+backend/README.md
+backend/dev/Caddyfile
+backend/dev/Dockerfile.backup
+backend/dev/restore-drill
+backend/dev/up-caddy
+backend/docker-compose.prod.yml
+backend/docker-compose.yml
+backend/migrations/001_initial.sql
+backend/migrations/002_clients_and_channels.sql
+backend/migrations/003_agents.sql
+backend/migrations/004_server_agents_nullable_inbox.sql
+backend/migrations/005_alerts_server_group.sql
+backend/migrations/006_admin_inboxes_disabled.sql
+backend/migrations/007_admin_codes.sql
+backend/migrations/008_client_subscriptions.sql
+backend/migrations/009_subscription_none.sql
+backend/migrations/010_drop_subscription_request.sql
+backend/migrations/011_stripe_billing.sql
+backend/migrations/012_billing_balance.sql
+backend/migrations/013_people_list.sql
+backend/migrations/014_single_plan.sql
+backend/migrations/015_diamond_membership.sql
+backend/migrations/016_rename_diamond_to_emerald.sql
+backend/migrations/017_encrypt_subscription_hmac_keys.sql
+backend/migrations/018_refresh_tokens.sql
+backend/migrations/019_admin_upgrade_code_lookup.sql
+backend/migrations/020_admin_upgrade_code_lookup_not_null.sql
+backend/migrations/021_report_day_and_daily_billing.sql
+backend/migrations/022_coverage_enabled.sql
+backend/migrations/023_covered_persons.sql
+backend/migrations/024_referral_codes.sql
+backend/migrations/025_referral_credit.sql
+backend/migrations/026_fix_referral_codes_numeric.sql
+backend/migrations/027_referral_credit_balance.sql
+backend/migrations/028_screening_events.sql
+backend/package-lock.json
+backend/package.json
+backend/scripts/admins.ts
+backend/scripts/backfill-admin-upgrade-lookups.ts
+backend/scripts/backup.sh
+backend/scripts/db-entrypoint.sh
+backend/scripts/deploy.sh
+backend/scripts/dev-env.sh
+backend/scripts/init-tls.sh
+backend/scripts/migrate-encrypt-columns.ts
+backend/scripts/mirror-sim-logs.sh
+backend/scripts/patch-xmtp-bindings.sh
+backend/scripts/preflight.sh
+backend/scripts/pull-latest-backup.sh
+backend/scripts/renew-tls.sh
+backend/scripts/reset.ts
+backend/scripts/restore.sh
+backend/scripts/seal-env.sh
+backend/scripts/spawn-two-sims.sh
+backend/scripts/tunnel-url.sh
+backend/scripts/unseal-env.sh
+backend/scripts/with-prod-secrets.sh
+backend/secrets/dev.env.enc
+backend/src/agent/__tests__/listener.test.ts
+backend/src/agent/__tests__/work-queue.test.ts
+backend/src/agent/admins-agent.ts
+backend/src/agent/audit-format.ts
+backend/src/agent/audit.ts
+backend/src/agent/index.ts
+backend/src/agent/listener.ts
+backend/src/agent/reports-agent.ts
+backend/src/agent/reports-watcher.ts
+backend/src/agent/store.ts
+backend/src/agent/work-queue.ts
+backend/src/agent/xmtp-helpers.ts
+backend/src/agent/xmtp-runtime.ts
+backend/src/audit-events.ts
+backend/src/auth/jwt.ts
+backend/src/auth/refresh-tokens.test.ts
+backend/src/auth/refresh-tokens.ts
+backend/src/auth/siwe.ts
+backend/src/billing/admin-stats.test.ts
+backend/src/billing/admin-stats.ts
+backend/src/billing/apple.ts
+backend/src/billing/balance.ts
+backend/src/billing/daily-tick.ts
+backend/src/billing/person-activation.ts
+backend/src/billing/pricing.ts
+backend/src/billing/reconcile-checkout.ts
+backend/src/billing/sample-report.ts
+backend/src/billing/stripe.ts
+backend/src/billing/tier.ts
+backend/src/config.ts
+backend/src/crypto/at-rest.test.ts
+backend/src/crypto/at-rest.ts
+backend/src/crypto/encrypted-json.test.ts
+backend/src/crypto/encrypted-json.ts
+backend/src/crypto/encrypted-text.ts
+backend/src/crypto/lookup-hash.test.ts
+backend/src/crypto/lookup-hash.ts
+backend/src/db/backfill-admin-upgrade-lookups.ts
+backend/src/db/client.ts
+backend/src/db/migrate.ts
+backend/src/db/schema.ts
+backend/src/generated/api-schemas.ts
+backend/src/middleware/jwt.ts
+backend/src/middleware/rate-limit-keys.ts
+backend/src/observability/billing-events.ts
+backend/src/observability/logger.ts
+backend/src/observability/ops-events.ts
+backend/src/observability/redact-paths.test.ts
+backend/src/observability/redact-paths.ts
+backend/src/observability/security-events.ts
+backend/src/routes/apple-billing.ts
+backend/src/routes/apple-webhook.ts
+backend/src/routes/attachments.ts
+backend/src/routes/auth.ts
+backend/src/routes/billing.ts
+backend/src/routes/channels.ts
+backend/src/routes/devices.ts
+backend/src/routes/health.ts
+backend/src/routes/me.ts
+backend/src/routes/notifications.ts
+backend/src/routes/people-list.ts
+backend/src/routes/referral.ts
+backend/src/routes/stripe-webhook.ts
+backend/src/server.ts
+backend/src/storage/index.ts
+backend/src/storage/lighthouse.ts
+backend/src/storage/local.ts
+backend/src/storage/mock.ts
+backend/src/storage/provider.ts
+backend/src/xmtp/identity-client.ts
+backend/tsconfig.json
+dev/_lib.sh
+dev/admins
+dev/backup
+dev/help
+dev/keys
+dev/logs
+dev/reset
+dev/security
+dev/setup
+dev/sim
+dev/start
+dev/status
+dev/stop
+docs/architecture/identity-system-overview.md
+docs/architecture/security-architecture.md
+docs/architecture/security-backend.md
+docs/architecture/security-ios.md
+docs/architecture/vault-backup-architecture-review.md
+docs/operations/backup-restore-hardening.md
+docs/operations/encryption-and-backup.md
+docs/operations/environments.md
+docs/operations/production-setup.md
+docs/operations/release.md
+docs/operations/walkthrough.md
+docs/plans/2026-05-29-security-hardening.md
+docs/plans/2026-06-03-admin-stats-page.md
+docs/plans/seat-subscriptions.md
+docs/plans/subscription-roster-sync.md
+docs/plans/upstream-sync.md
+docs/templates/TEMPLATE_ADR.md
+docs/templates/TEMPLATE_ONE_PAGER.md
+docs/templates/TEMPLATE_PRD.md
+package.json
+shared/api-types.ts
+shared/brand.json
+shared/codegen/generate-swift.ts
+shared/codegen/generate-zod.ts
+shared/codegen/package-lock.json
+shared/codegen/package.json
+shared/codegen/sync-brand-colors.py
+shared/codegen/tsconfig.json
