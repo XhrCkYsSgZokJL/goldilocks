@@ -1,0 +1,89 @@
+{
+  "brand": {
+    "name": "Goldilocks Digital",
+    "tagline": "Helping you secure your digital life.",
+    "privacyIntro": "Goldilocks Digital helps you secure your digital life.",
+    "serviceDescription": "Goldilocks Digital is a secure messaging app that connects you with professional security advisors.",
+    "supportEmail": "support@goldilocksdigital.xyz",
+    "legalEntity": "Goldilocks Digital LLC",
+    "footerCredit": "Modified in private by Goldilocks Digital"
+  },
+  "groups": {
+    "client": ["Advisory", "Back Office"],
+    "admin": ["Admins", "Audit Log"]
+  },
+  "groupIcons": {
+    "Admins": "shield.lefthalf.filled",
+    "Audit Log": "scroll.fill",
+    "Advisory": "lightbulb.fill",
+    "Back Office": "doc.text.fill",
+    "History": "clock.fill",
+    "default": "bubble.left.and.bubble.right.fill"
+  },
+  "groupImages": {
+    "Admins": "adminsIcon",
+    "Audit Log": "auditLogIcon",
+    "Back Office": "reportsIcon"
+  },
+  "advisoryTierImages": {
+    "bronze": "advisoryBronze",
+    "silver": "advisorySilver",
+    "gold": "advisoryGold",
+    "emerald": "advisoryEmerald"
+  },
+  "pricing": {
+    "monthlyPricePerPersonCents": 10000,
+    "currency": "USD",
+    "priceLabel": "$100/mo per person"
+  },
+  "tiers": {
+    "thresholds": {
+      "silver": 1,
+      "gold": 4
+    },
+    "styles": {
+      "bronze": {
+        "colorHex": "#B87333",
+        "colorRGB": [0.72, 0.45, 0.20],
+        "icon": "seal.fill"
+      },
+      "silver": {
+        "colorHex": "#858A99",
+        "colorRGB": [0.52, 0.55, 0.60],
+        "icon": "seal.fill"
+      },
+      "gold": {
+        "colorHex": "#CC9C21",
+        "colorRGB": [0.80, 0.61, 0.13],
+        "icon": "seal.fill"
+      },
+      "emerald": {
+        "colorHex": "#339E66",
+        "colorRGB": [0.20, 0.62, 0.40],
+        "icon": "diamond.fill"
+      }
+    },
+    "descriptions": {
+      "bronze": "A free private briefing.",
+      "silver": "One or more memberships.",
+      "gold": "Four or more memberships.",
+      "emerald": "Awarded directly by Goldilocks."
+    }
+  },
+  "assets": {
+    "logoImageName": "goldilocksLogo",
+    "botImageName": "goldilocksBot"
+  },
+  "theme": {
+    "mode": "dark",
+    "iconColor": "#CAA452",
+    "logoTextColor": "#E0E0E0",
+    "textColor": "#C4A97D",
+    "textColorLight": "#999999",
+    "backgroundColor": "#0A0A0A"
+  },
+  "legal": {
+    "privacyPolicyUrl": "https://goldilocksdigital.xyz/privacy",
+    "termsOfServiceUrl": "https://goldilocksdigital.xyz/terms"
+  }
+}
