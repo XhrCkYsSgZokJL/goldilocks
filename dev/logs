@@ -1,0 +1,75 @@
+#!/bin/bash
+set -euo pipefail
+
+# Stream live logs from the Convos iOS simulator app.
+# Blends the simulator's os_log stream with the app's file-based log.
+#
+# Usage:
+#   ./dev/logs              # all logs
+#   ./dev/logs Emerald      # grep filter
+#   ./dev/logs "Emerald|Goldilocks"  # multiple patterns
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_lib.sh" 2>/dev/null || true
+
+FILTER="${1:-}"
+
+# Resolve the app group container for the Dev scheme (org.convos.ios-preview)
+BUNDLE_ID="org.convos.ios-preview"
+APP_GROUP="group.$BUNDLE_ID"
+
+# Find the booted simulator
+SIM_ID=$(xcrun simctl list devices booted -j 2>/dev/null | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for runtime, devices in data.get('devices', {}).items():
+    for d in devices:
+        if d.get('state') == 'Booted':
+            print(d['udid'])
+            sys.exit(0)
+" 2>/dev/null || true)
+
+if [ -z "$SIM_ID" ]; then
+    echo "No booted simulator found. Boot one first with: xcrun simctl boot <device-id>"
+    exit 1
+fi
+
+# The app group container lives under the simulator's data directory
+SIM_DATA="$HOME/Library/Developer/CoreSimulator/Devices/$SIM_ID/data"
+APP_GROUP_DIR=$(find "$SIM_DATA/Containers/Shared/AppGroup" -maxdepth 2 -name ".com.apple.mobile_container_manager.metadata.plist" -exec /usr/libexec/PlistBuddy -c "Print :MCMMetadataIdentifier" {} \; 2>/dev/null | while read -r ident; do
+    if [ "$ident" = "$APP_GROUP" ]; then
+        dirname "$(find "$SIM_DATA/Containers/Shared/AppGroup" -name ".com.apple.mobile_container_manager.metadata.plist" -exec sh -c "if /usr/libexec/PlistBuddy -c 'Print :MCMMetadataIdentifier' '{}' 2>/dev/null | grep -q '$APP_GROUP'; then echo '{}'; fi" \; 2>/dev/null | head -1)"
+        break
+    fi
+done)
+
+# Simpler approach: search for the convos.log file directly
+LOG_FILE=$(find "$SIM_DATA/Containers/Shared/AppGroup" -path "*/Logs/convos.log" 2>/dev/null | head -1)
+
+if [ -z "$LOG_FILE" ]; then
+    echo "Log file not found. Make sure the app has been launched at least once."
+    echo "Looking in: $SIM_DATA/Containers/Shared/AppGroup/*/Logs/convos.log"
+    echo ""
+    echo "Falling back to os_log stream only..."
+    echo "---"
+    if [ -n "$FILTER" ]; then
+        xcrun simctl spawn "$SIM_ID" log stream --level debug --predicate "subsystem == 'convos' OR process == 'Convos'" 2>/dev/null | grep -iE "$FILTER"
+    else
+        xcrun simctl spawn "$SIM_ID" log stream --level debug --predicate "subsystem == 'convos' OR process == 'Convos'" 2>/dev/null
+    fi
+    exit 0
+fi
+
+echo "📋 Streaming logs from: $LOG_FILE"
+echo "   Simulator: $SIM_ID"
+if [ -n "$FILTER" ]; then
+    echo "   Filter: $FILTER"
+fi
+echo "---"
+
+# Tail the log file, optionally filtering
+if [ -n "$FILTER" ]; then
+    tail -f "$LOG_FILE" | grep -iE --line-buffered "$FILTER"
+else
+    tail -f "$LOG_FILE"
+fi

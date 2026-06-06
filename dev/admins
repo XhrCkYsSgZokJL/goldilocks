@@ -1,0 +1,15 @@
+#!/bin/bash
+set -euo pipefail
+
+# Admin slot management for the dev environment.
+#
+# Usage:
+#   ./dev/admins list              List all admin slots
+#   ./dev/admins add <name>        Add an admin slot (prints upgrade code)
+#   ./dev/admins remove <name>     Remove an admin slot
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BACKEND_DIR="$SCRIPT_DIR/../backend"
+
+cd "$BACKEND_DIR"
+GOLDILOCKS_ENV=dev exec npx tsx scripts/admins.ts "$@"

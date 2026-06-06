@@ -1,0 +1,29 @@
+#!/bin/bash
+# Show available dev commands.
+
+cat <<'EOF'
+Goldilocks dev commands
+
+Lifecycle
+  ./dev/setup              First-time setup (secrets, TLS, backup image)
+  ./dev/start              Start everything (Docker, server, agents, Caddy)
+  ./dev/stop               Stop everything (data kept)
+  ./dev/reset              Stop + wipe all state (database, keys, sim apps)
+  ./dev/status             Show what's running
+
+iOS
+  ./dev/sim                Build + relaunch in simulator (no Xcode needed)
+  ./dev/sim --skip-build   Relaunch without rebuilding
+  ./dev/sim --clean        Wipe all state, then build + launch fresh
+  ./dev/sim --stop         Stop the running app
+  ./dev/test               Run tests (starts Docker automatically)
+  ./dev/test --unit        Run unit tests only (no Docker)
+
+Operations
+  ./dev/admins             Manage admin slots (list, add, remove)
+  ./dev/backup             Backups (run, list, restore, verify)
+  ./dev/keys               Key material (seal, unseal, TLS)
+  ./dev/security           Security config (pins, TTLs, secure-window)
+
+Run any command without arguments to see its full usage.
+EOF

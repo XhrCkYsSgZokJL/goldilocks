@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+
+# One-command dev environment stop.
+# Stops background processes (server, agents) and Docker stacks.
+# Data is preserved — ./dev/start brings everything back.
+#
+# Usage: ./dev/stop
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_lib.sh"
+
+echo "🛑  Stopping dev environment"
+echo ""
+
+stop_background_processes
+
+cd "$DEV_BACKEND"
+bash scripts/dev-env.sh down
+
+echo ""
+echo "✅  Dev environment stopped. Data is preserved."

@@ -1,0 +1,111 @@
+#!/bin/bash
+set -euo pipefail
+
+# One-command dev environment start.
+# Brings up Docker (XMTP node + Postgres), runs migrations, then starts
+# the backend server and agents as background processes.
+#
+# Usage: ./dev/start
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_lib.sh"
+
+cd "$DEV_BACKEND"
+
+# Infrastructure: Docker stacks + npm install + TLS + migrations
+bash scripts/dev-env.sh up
+
+# Background processes: server + agents
+echo ""
+echo "→ starting backend server + agents as background processes"
+mkdir -p .dev-run
+
+start_process() {
+  local name="$1"; shift
+  if [ -f ".dev-run/${name}.pid" ] && kill -0 "$(cat ".dev-run/${name}.pid" 2>/dev/null)" 2>/dev/null; then
+    echo "  $name already running"
+    return
+  fi
+  clean_old_logs "$name"
+  local log=".dev-run/${name}-$(date +%Y%m%d-%H%M%S).log"
+  nohup "$@" > "$log" 2>&1 &
+  echo $! > ".dev-run/${name}.pid"
+  echo "  ✓ $name started (log: $log)"
+}
+
+# Stripe CLI webhook forwarder — forwards checkout.session.completed
+# events to the local server so balance crediting works in dev.
+# The signing secret is captured and written to .env.dev so the server
+# can verify webhook signatures. Stripe CLI must be installed and
+# logged in (`stripe login`).
+if command -v stripe >/dev/null 2>&1 && grep -q "STRIPE_SECRET_KEY=sk_" .env.dev 2>/dev/null; then
+  if [ -f ".dev-run/stripe.pid" ] && kill -0 "$(cat ".dev-run/stripe.pid" 2>/dev/null)" 2>/dev/null; then
+    echo "  stripe listener already running"
+  else
+    clean_old_logs stripe
+    local_log=".dev-run/stripe-$(date +%Y%m%d-%H%M%S).log"
+
+    # Start stripe listen in background and capture the webhook secret
+    # from its initial output (line: "whsec_...").
+    nohup stripe listen \
+      --forward-to "localhost:${PORT:-4000}/api/v2/stripe/webhook" \
+      > "$local_log" 2>&1 &
+    echo $! > ".dev-run/stripe.pid"
+
+    # Wait up to 10s for the signing secret to appear in the log.
+    whsec=""
+    for i in $(seq 1 20); do
+      sleep 0.5
+      whsec=$(grep -o 'whsec_[A-Za-z0-9]*' "$local_log" 2>/dev/null | head -1) || true
+      if [ -n "$whsec" ]; then break; fi
+    done
+
+    if [ -n "$whsec" ]; then
+      # Write the secret to .env.dev so the server verifies signatures.
+      if grep -q "^STRIPE_WEBHOOK_SECRET=" .env.dev 2>/dev/null; then
+        sed -i '' "s|^STRIPE_WEBHOOK_SECRET=.*|STRIPE_WEBHOOK_SECRET=${whsec}|" .env.dev
+      else
+        echo "STRIPE_WEBHOOK_SECRET=${whsec}" >> .env.dev
+      fi
+      echo "  ✓ stripe listener started (secret: ${whsec:0:12}…)"
+    else
+      echo "  ⚠ stripe listener started but couldn't capture webhook secret"
+      echo "    check: tail -f $local_log"
+    fi
+  fi
+else
+  if ! command -v stripe >/dev/null 2>&1; then
+    echo "  ⚠ stripe CLI not installed — webhook forwarding disabled (brew install stripe/stripe-cli/stripe)"
+  fi
+fi
+
+start_process server npm run server:dev
+start_process agent npm run agents:dev
+
+# Caddy HTTPS reverse proxy (localhost:4443 → localhost:4000).
+# Required for file attachments — the XMTP SDK rejects non-HTTPS
+# RemoteAttachment URLs. On first run, install the root CA into
+# the macOS System keychain with `caddy trust` (requires sudo).
+if command -v caddy >/dev/null 2>&1; then
+  start_process caddy caddy run --config "$DEV_BACKEND/dev/Caddyfile" --adapter caddyfile
+
+  # Add Caddy's local CA root to the booted iOS Simulator keychain
+  # so the simulator trusts our self-signed cert. No-op if no sim is booted.
+  root_cert="$HOME/Library/Application Support/Caddy/pki/authorities/local/root.crt"
+  if [[ -f "$root_cert" ]]; then
+    for sim_id in $(xcrun simctl list devices booted -j 2>/dev/null | grep '"udid"' | sed 's/.*: "\(.*\)".*/\1/'); do
+      xcrun simctl keychain "$sim_id" add-root-cert "$root_cert" 2>/dev/null || true
+    done
+  fi
+else
+  echo "  ⚠ caddy not installed — file attachments won't work (brew install caddy)"
+fi
+
+echo ""
+echo "✅  Dev environment is running."
+echo "    Server logs:  tail -f $DEV_BACKEND/.dev-run/server-*.log"
+echo "    Agent logs:   tail -f $DEV_BACKEND/.dev-run/agent-*.log"
+echo "    Stripe logs:  tail -f $DEV_BACKEND/.dev-run/stripe-*.log"
+echo "    Status:       ./dev/status"
+echo "    Stop:         ./dev/stop"
+echo "    Reset:        ./dev/reset"

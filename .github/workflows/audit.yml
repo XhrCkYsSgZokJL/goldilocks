@@ -1,0 +1,29 @@
+name: audit
+
+# Scans Swift Package Manager dependencies against the OSV.dev advisory
+# database. Runs on every PR and weekly on the default branch.
+on:
+  pull_request:
+  push:
+    branches: [goldilocks]
+  schedule:
+    - cron: '0 13 * * 1' # Mondays 13:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  osv-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: OSV scan SPM dependencies
+        uses: google/osv-scanner-action/osv-scanner-action@v2.0.2
+        with:
+          # Package.resolved is the SPM lockfile-equivalent. osv-scanner
+          # parses it and queries osv.dev for known advisories.
+          scan-args: |-
+            --lockfile=ConvosCore/Package.resolved
+            --lockfile=ConvosInvites/Package.resolved
+            --lockfile=ConvosAppData/Package.resolved
+            --lockfile=ConvosLogging/Package.resolved

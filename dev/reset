@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+
+# One-command dev environment reset.
+# Stops everything, wipes all state (database, XMTP, agent keys,
+# simulator app data), and leaves a clean slate.
+#
+# Usage: ./dev/reset
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_lib.sh"
+
+echo "🔄  Resetting dev environment (wipes all data)"
+echo ""
+
+stop_background_processes
+
+cd "$DEV_BACKEND"
+bash scripts/dev-env.sh reset
+
+echo ""
+echo "✅  Dev environment reset. Run ./dev/start to begin fresh."
