@@ -1,96 +1,192 @@
 # Upstream Sync Plan — Convos → Goldilocks
 
-_Generated 2026-05-20. Re-run the analysis after a fresh `git fetch upstream`._
+_Refreshed 2026-06-06 after `git fetch upstream`. Supersedes the 2026-05-20 revision (kept inline as "already executed" history). Re-run the analysis after each fetch._
 
 ## Snapshot
 
-- **Fork point:** `4c47949b` — "Add Cloud Connections v0.1 (#719)", 2026-04-27.
-- **Upstream tip:** `upstream/dev` @ `ba90faf4`, 2026-05-20.
-- **Behind by:** 118 upstream commits.
-- **File spread:** upstream changed 543 files; Goldilocks changed 74; **35 files overlap** (the conflict zone).
+- **Last shared ancestor:** `4c47949b` — "Add Cloud Connections v0.1 (#719)", 2026-04-27.
+- **`upstream/main`:** effectively frozen — only 3 trivial CI commits since the fork (`4d2b1b29`, 2026-04-16). **Not the line to track.**
+- **`upstream/dev`:** the active line — `b75d9f09`, 2026-06-06. **This is what "convos main" really means for us.**
+- **Behind by:** 277 commits / 184 PRs on `upstream/dev`.
+- **Already pulled (12 PRs):** #762, #763, #766, #768, #772, #773, #780, #790, #794, #815, #818, #822 (Wave 1 + start of Wave 2 from the prior revision).
+- **File spread:** upstream changed 933 files; Goldilocks changed 495; **166 overlap** (the conflict zone).
 
-The local `upstream/*` tracking branches are current as of today, but my sandbox can't reach GitHub — run `git fetch upstream` on your Mac before executing this plan to confirm nothing newer landed.
+### Strategic decisions (confirmed 2026-06-06)
 
-## Approach
+These shape every wave below:
 
-Do **not** merge `upstream/dev` wholesale. A merge drags in the Contacts MVP (~40 commits, the biggest conflict source) and forces all 35 overlapping files at once.
+| Cluster | Decision | Rationale |
+|---------|----------|-----------|
+| **Agents** (Agent Builder, Templates, agent-share/QR, agent-contacts — ~50 PRs) | **Skip entirely** | Consistent with removing the Assistants row; largest conflict source; off-strategy for a security concierge. |
+| **IAP / Credits / StoreKit subscriptions** (~12 PRs) | **Keep ours, skip upstream** | Goldilocks has its own backend billing (per-admin upgrade codes, tier schema). Review their fixes for bugs worth replicating, don't cherry-pick. |
+| **Observability** (Sentry crash reporting, PostHog metrics — ~15 PRs) | **Skip both** | No external crash/analytics SDKs in Goldilocks. |
+| **Contacts — people** (list, picker, blocking, DM-from-contact, contact card/detail, Contacts tab) | **Bring in** (Wave C below) | Wanted. Hand-merged mini-project — base MVP touches 52 conflict-zone files. |
+| **Contacts — agents** (agent-contacts, suggested agents, agent-share cards, agent reorder) | **Skip** | Same rationale as the Agents decision. The base Contacts code already hides agents until functional, so this UI stays **inert** without the agent-template PRs — we just don't pull the PRs that *populate* agent contacts. |
+| **SIWE auth #827/#846** | **Keep ours, skip upstream** | Goldilocks shipped its own SIWE against its backend. Review #846 once for a signing-context bug worth mirroring in `GoldilocksAuth`. |
+| **Backups / iCloud backup #725/#760/#778** | **Skip** | Upstream reverted all of it (`c74f475b`); not in `upstream/dev`. |
+| **Firebase / fastlane CI** | **Skip** | Goldilocks runs its own CI. |
 
-Instead: cherry-pick discrete PRs onto a dedicated branch, in waves, building and testing between waves.
+Everything below is what remains **after** removing those clusters: the standalone crash, correctness, and UX fixes that apply to a chat app regardless of the Agents/billing/contacts surface.
 
-```
+## Agents — re-review (2026-06-06): why we don't adopt upstream's, and what we do instead
+
+The "skip Agents" decision was revisited against the goal of **a Goldilocks agent customers can chat with about their report results**. Conclusion unchanged — but the reasoning matters, so it's recorded here.
+
+**Two different things share the name "agent":**
+
+1. **Upstream's agent system** is a *consumer agent-authoring product*. A user opens the Agent Builder, writes a prompt + attaches media + toggles Composio connections (Google Calendar, Apple Health), taps "Make", and an agent is **provisioned by upstream's backend pool** and joins the chat. Templates are publishable and shareable (QR/deeplink/"Suggested agents"). The ~40 new iOS files (`Convos/Agent Builder/*`, `ConvosCore/.../AgentBuilder/*`, `Convos/Contacts/AgentShare*`, `ConvosCore/.../AgentShare/*`, `DBAgentTemplate`, `DBAgentBuilderSummary`) are **config UI + display + share + verification only — the agent brain runs on upstream's backend, which we don't run.** It is tightly coupled to the three clusters we skip: **Cloud Connections (Composio), IAP/Credits ("Power"), and the Contacts MVP** (agents render as synthetic contacts).
+
+2. **What Goldilocks wants** is a *server-owned* agent — and we already own the substrate. `backend/src/agent/reports-agent.ts` is an XMTP `Client` that owns each client's Back Office / Reports group as super-admin and **already streams incoming client messages** (`startAutoResponder` → `handleIncomingMessage`); today it posts a canned "no one is monitoring this" reply. We also already have a generic agent-join endpoint + pool (`docs/plans/agent-join-endpoint.md`), an `AdminsAgent`, a `reports-watcher`, and an `xmtp-runtime`.
+
+**Verdict:** adopting upstream's stack would mean importing ~50 PRs / ~40 files for a backend runtime we don't run, then stripping out Connections + Credits + builder/templates/share — deleting ~90% of what we imported. The one reusable *primitive* (make a backend agent join a conversation) we already have.
+
+**Recommended path (own backend, small + self-contained):** design doc + disabled-by-default plumbing landed in `docs/plans/report-agent-llm-venice.md`.
+
+1. **LLM provider: Venice** (https://venice.ai) — privacy-first, **zero-retention**, OpenAI-compatible. Chosen over Claude/OpenAI because we'd be sending client report fragments to a third party, so non-retention is the deciding property.
+2. Plumbing added (inert): `backend/src/llm/venice.ts` (client), `backend/src/agent/report-assistant.ts` (retrieval → prompt → completion), config vars `REPORTS_LLM_ENABLED=false` + `VENICE_*`, and a behavior-preserving gated hook in `ReportsAgent.handleIncomingMessage` (returns the canned reply unless the flag is on **and** a key is set). `generateReportReply` short-circuits before any work when disabled, so runtime is unchanged today.
+3. **Not enabled.** To turn on later: confirm Venice DPA, set a key + model, decide the channel (Advisory/Ask vs. Reports), add an audit ops-event, then flip the flag in staging. PDF text extraction + group-history context are deferred TODOs.
+4. Backend-only, in code we own; **no upstream iOS needed.**
+
+**Worth borrowing from upstream (decoupled, and valuable *because* we're a security product):**
+
+- **Agent attestation / verification** — `AgentAttestationVerifier`, `AgentKeyset` (reads `/.well-known/agents.json`), and the verified-agent badge. Lets the iOS client **cryptographically prove the member posting reports is genuinely the Goldilocks agent, not an impostor.** Independent of Connections/Credits/Contacts. _(Requires the backend to publish an `agents.json` keyset and attest agent membership — scope before committing.)_
+- **`AgentJoinStatusView`** ("Agent is joining…" status line) — small UX nicety if we surface agent joins in-app.
+
+Treat both as optional follow-ons to the backend agent work, not part of the sync waves.
+
+## Approach (unchanged)
+
+Do **not** merge `upstream/dev`. Cherry-pick discrete PRs onto a dedicated branch, in waves, building and testing between waves. Most PRs are squash-merged, so each `(#NNN)` is the whole PR.
+
+```bash
 git fetch upstream
-git checkout goldilocks && git checkout -b upstream-sync
-# cherry-pick PR squash-commits, e.g.:
-git cherry-pick -x 8ae258f9
-# build + swift test after each wave, then gt submit / PR
+git checkout main && git checkout -b upstream-sync-0606
+git cherry-pick -x <sha>          # one per PR
+# build + swift test after each wave
 ```
 
-Most PRs are squash-merged, so each `(#NNN)` commit is the whole PR — one cherry-pick per PR.
+`Scripts/upstream-sync.sh` automates the commit/PR mapping — re-run it against `upstream/dev` to refresh the sha list.
 
-## The conflict zone (35 overlapping files)
+## The conflict zone (the files that force hand-merges)
 
-These hold Goldilocks customizations — any upstream change here needs a hand-merge, not a blind cherry-pick:
+Goldilocks customizations live here; any upstream touch needs a hand-merge, not a blind cherry-pick:
 
-- **API layer** — `ConvosAPIClient.swift`, `ConvosAPIClient+Models.swift`, `MockAPIClient.swift` (all the Goldilocks endpoints + subscription plumbing).
-- **Session** — `SessionManager.swift`, `SessionManagerProtocol.swift` (Goldilocks registration, channel lifecycle, subscription requests).
-- **Conversations** — `ConversationsView.swift`, `ConversationsViewModel.swift`, `Conversation.swift` (role banner, plan chip, staleness filter, empty-placeholder filter).
-- **Consent/sync** — `ConversationConsentWriter.swift`, `ConversationWriter.swift`, `StreamProcessor.swift`, `SessionStateMachine.swift` (agent-trust, no-op consent delete).
-- **UI** — `AppSettingsView.swift`, `DebugView.swift`, `AvatarView.swift`.
-- **Build** — `project.pbxproj`, `.gitignore`, `Local.xcconfig`, `config.local.json`, `Scripts/hooks/{pre-commit,pre-push}`.
+- **Message view stack** — `MessagesViewController.swift`, `MessagesGroupView.swift`, `MessagesGroupItemView.swift`, `MessagesBottomBar.swift`, `MessagesView.swift`, `MessagesViewRepresentable.swift`, `MessageContextMenuOverlay.swift`. (This is where almost all the animation/layout fixes land.)
+- **Conversation** — `ConversationView.swift`, `ConversationViewModel.swift`, `ConversationsView.swift`, `ConversationsViewController.swift`, `NewConversationViewModel.swift`, `Conversation.swift`.
+- **Sync / writers** — `StreamProcessor.swift`, `ConversationWriter.swift`, `ConversationConsentWriter.swift`, `MessagingService.swift`, `SessionStateMachine.swift`, `SessionManager(.swift/Protocol.swift)`.
+- **API** — `ConvosAPIClient.swift`, `MockAPIClient.swift` (Goldilocks endpoints + billing).
+- **UI / settings** — `AppSettingsView.swift`, `DebugView.swift`, `AvatarView.swift`, `HydratedAttachment.swift`.
+- **Build** — `project.pbxproj`, `Local.xcconfig`, `Scripts/hooks/*`.
 
-71 of the 118 upstream commits touch **none** of these — those are the low-risk pulls.
+---
 
-## Wave 1 — Pull now (safe, isolated, clear value)
+## Wave 1 — Clean pulls (no conflict-zone touch; high value)
 
-Clean cherry-picks; none touch the conflict zone. Build + test once at the end of the wave.
+Cherry-pick in this order, then build + `swift test` once at the end.
 
-| PR | What | Why |
-|----|------|-----|
-| #822 | Re-anchor messages list when keyboard appears | Chat UX fix — applies to Advisory/Reports |
-| #772 | Reactions drawer self-sizes to content | UI fix |
-| #818 | Fix drawer title clipping | UI fix |
-| #794 | Fix bodyContent type-check timeout in MessagesBottomBar | Build-health |
-| #773 | CLAUDE.md type-check timeout rules | Docs only |
-| #763 | Invites: split `conversationExpired` into not-found / consent-not-allowed | Correctness |
-| #766 | Quickname: flip per-conversation flag on apply | Correctness |
-| #762 | fix(connections): republish metadata for orphaned grants | Only relevant if Goldilocks uses Cloud Connections |
+| PR | What | Why | Files |
+|----|------|-----|-------|
+| **#1001** | **Bound memory in receive-side image pipeline** (background OOM crash) | **Top priority — real prod crash.** Adds `BoundedImageDecode` + `AsyncSemaphore` with tests; touches `ImageCache`/`EncryptedImageLoader` but **not** in our conflict set. | 7 (incl. tests) |
+| **#1008** | Move keyboard input settling into ConvosCoreiOS to fix archive type-check timeout | Build-health; aligns with our CLAUDE.md type-check rules. New `KeyboardInputSettling.swift` in ConvosCoreiOS. | 2 |
+| **#933** | Switch to Chats tab when tapping a message notification | Correctness; `MainTabView` only. | 1 |
+| **#957** | Keep tab bar visible in the empty/no-convos state | UX fix; isolated. | 1 |
+| **#896** | Don't mark the active conversation unread during batch catch-up | Correctness; check it doesn't depend on the #902 ingest refactor (it's the standalone half). | 3 |
+| **#894** | docs: fix emoji metadata guidance | Docs only; trivial. | 1 |
 
-## Wave 2 — Pull with care (touches the conflict zone — hand-merge)
+> Note #1001's new files (`BoundedImageDecode.swift`, `AsyncSemaphore.swift`) are net-new to us — they apply cleanly. Verify `EncryptedImageLoader.swift` patches apply against our encrypted-image customizations during the cherry-pick.
 
-Do these one at a time, build + test after each.
+## Wave 2 — Hand-merge fixes (conflict zone; one at a time, build + test after each)
 
-- **libxmtp bump** to `ios-4.10.0-nightly.20260516.42c6bd1` (upstream/dev's settled pin). Keeping the XMTP protocol current matters for security and interop. Note upstream churned here (4.9 → 4.10 → revert → 4.10) — take only the final pin. Update the `revision:` in `ConvosCore/Package.swift`, rebuild, and run the **full** `swift test` suite against a local XMTP node.
-- **#815** Don't drop libxmtp DB on `.inactive` launches — real stability fix; touches session/launch code Goldilocks also changed.
-- **#780** Fix invite DM push subscriptions — touches push code.
-- **`978f39a4`** "delete-all gets all tables, not just conversations" — completeness fix for Delete All Data.
-- **#768** pre-commit hook bash 3.2 compatibility — Goldilocks already fixed this independently; reconcile the two (likely just take upstream's version of the hook).
+These are genuinely valuable chat fixes but land in the message/conversation stack we've customized. Apply individually, resolve by hand, test after each.
 
-## Wave 3 — Optional / larger (defer; decide later)
+**Conversation-open flicker / scroll / animation cluster** (apply in chronological order — they build on each other):
 
-- **HTML & file attachments** — #803, #825, #821, #820, #819, #806 (HTML rendering + Chat|Stuff paging), #791 (multi-attachment composer), #790 (send Files). Genuinely useful for the concierge chats (clients sending documents to advisors), but medium effort and touches the message composer. Treat as its own mini-project.
-- **#771** Connections capability resolution v1 — extends Cloud Connections. Pull only if Goldilocks actually uses Connections.
+- **#982** Fix message-list animations: receipts, sends, composer interplay _(6 files — the foundational one)_
+- **#987** Apply bottom-bar insets synchronously outside `performWithoutAnimation`
+- **#998** Snap bar-height re-anchors until the view has appeared
+- **#1010** Keep bottom anchor pinned while the open transition settles
+- **#960** Fix phantom ~200pt top inset above a single new convo _(touches `ConversationsView`/`Controller`)_
+- **#978** Fix sheet keyboard crash: defer `bottomBarHeight` inset one runloop tick _(**crash fix**)_
 
-## Skip (conflicts with Goldilocks direction, or already reverted upstream)
+**Composer / focus:**
 
-- **Contacts MVP** — ~40 commits (#775 PRD, #782 part 1, part 2, #844, …). A full contact-list / contact-picker / blocking / DM-from-contacts system. Off-strategy for a security concierge where clients don't build address books, and it's the single largest conflict source. Skip entirely.
-- **SIWE auth #827 / #846** — upstream built their own SIWE flow for their v2 backend. Goldilocks already has `GoldilocksAuth` + `/v2/auth/challenge` + `/v2/me`. **Keep ours.** But read #846 ("share SIWE signing context across ConvosAPIClient instances") — if it's fixing a real bug where multiple client instances each re-sign, check whether Goldilocks' code has the same flaw. See the decision note below.
-- **Assistants on by default #817** (and #770, #769) — you just removed the Assistants row; don't re-enable.
-- **Backups / iCloud backup #760 / #778 / #725** — upstream reverted all of this (`c74f475b`) to stabilize `dev`. It's not even in `upstream/dev` anymore. Skip.
-- **Firebase / fastlane CI #785** and related — Goldilocks runs its own CI and archived the upstream workflows. Skip.
+- **#977** Fix composer text not clearing after send (keyboard + dictation) — pairs with #1008
+- **#995** Fix reply/attachment not focusing composer when focus value is stale
 
-## Key decision — SIWE auth
+**iPad / layout polish:**
 
-This is the one to think hardest about. Upstream's #827 is a parallel SIWE implementation for *their* backend; Goldilocks shipped its own SIWE against the Goldilocks backend. They will collide in `ConvosAPIClient.swift`. Recommendation: keep the Goldilocks implementation, do **not** cherry-pick #827/#846, but review #846's diff once — it may expose a signing-context bug worth replicating in `GoldilocksAuth`.
+- **#974** Cap Stuff grid at 5 columns; bound bubble/contact-card widths
+- **#1000** Fix iPad photo context-menu preview aspect ratio + rounded corners
+- **#1002** Stop re-presenting the forked-conversation sheet after dismissal
 
-## Housekeeping
+**Other:**
 
-While in here: `convos-ios-safety-20260430-151834.bundle` (a 43k-line migration backup) is committed in the repo. Remove it — `git rm convos-ios-safety-*.bundle` — and add `*.bundle` to `.gitignore`.
+- **#985** Add Support section to conversation info with "Report an issue" email row — useful for a concierge product; touches `AppSettingsView`/`ConversationInfoView`.
+- **#943** Fix reveal/blur toggle showing on non-image attachments — touches `HydratedAttachment` (conflict).
+
+## Wave C — Contacts mini-project (people only; agents stay inert)
+
+The largest item we're choosing to pull, and the most invasive. Treat it as its own branch + PR, not part of the fix waves.
+
+**Why it's a mini-project, not a cherry-pick:** the base Contacts MVP arrived as `#782`, a **merge of ~40 commits** that adds **40 new files** and modifies **52 existing ones** — many squarely in our conflict zone (`SessionManager`, `MessagingService`, `MessagingService+PushNotifications`, `ConversationStateMachine`, `ConversationViewModel`, `ConversationsView/ViewModel/ViewController`, `ConversationView`, `AvatarView`, `AppSettingsView`, `ProfileSettingsViewModel`) plus GRDB model changes (`Conversation`, `ConversationMember`, `Profile`, `DBConversation`, and new `DBContact` / `DBConversationContactsSync`). A blind `cherry-pick -m 1` would explode. Apply the **net `#782` diff** (`git diff 343f0242^1 343f0242`) by hand against our tree.
+
+**The human/agent seam:** in upstream, an agent is just a contact with `agentTemplateId != nil`. The base MVP already filters agents out of the UI ("filter out assistants in contacts ui until they are functional"). So bringing the base + the people-focused follow-ups gives a working **people** Contacts feature; the agent rows/sections simply never populate because we skip the agent-template PRs. No need to rip agent code out — leave it dormant.
+
+**Confirmed clean of skipped infra:** the MVP explicitly dropped its dependency on the reverted inactive-conversation/backups work (#725). It does **not** depend on the message-ingest refactor (#902, merged later).
+
+### Order of operations
+
+1. **Base MVP — `#782`** (`343f0242`). New Contacts package (`Convos/Contacts/*`, `ConvosCore/.../Contacts/*`, `ContactsRepository`, `ContactsWriter`, `ContactSyncCoordinator`, `DBContact`, `InboundConversationFilter`, `QuarantineSweeper`) + the 52 conflict-zone edits. Hand-merge from the net diff. **Watch the GRDB migration ordering** — Goldilocks has its own migrations; the new `DBContact`/`DBConversationContactsSync` tables must slot in after ours without renumbering collisions. Bring the new test files too; get `swift test` green before moving on.
+2. **People-focused follow-ups** (cherry-pick `-x`, build/test after each):
+   - **#844** Contacts UI tweaks
+   - **#850** Route to existing DMs when tapping "Chat"
+   - **#855** Contact detail: shared row framework (human + agent + self) — the framework, agent branch inert
+   - **#883** "Somebody" fallback, hide unnamed from list/picker
+   - **#893** Immediately show prior invites when a new contact is added
+   - **#936** Fix invite chip editability and member-count subtitle _(17 files — large; conflict zone)_
+   - **#944** Add Contacts tab; remove App Settings Contacts row
+   - **#945** Interactive keyboard dismiss + Search return key
+   - **#955** Keep search bar + "Show all" empty state when search matches nothing
+   - **#975** Label chat CTA "Chat" for members (agent label inert)
+   - **#988** Fix tab bar overlapping conversations opened from the contact card
+   - **#1007** Show the global contact name instead of "Somebody" in notification text — **now worth it** because we have contacts (was "skip" while contacts were out).
+3. **Optional:** **#951** All / People / Agents filter — degrades to just "People" with no agents; pull only if you want the segmented control. **#993** copy tweak ("People and agents") — skip unless agents ship.
+
+### Explicitly NOT in this wave (agent-contact PRs — skip)
+
+#854 (agent template phase 2 — agent contacts), #928 / #947 / #981 / #938 / #994 (agent-share cards), #930 (refresh agent contacts UI), #950 (Suggested agents section), #969 (agent card reorder / live convo sections).
+
+## Wave 3 — Review-before-pull (may collide with Goldilocks features)
+
+- **#979** "Default Reveal mode to off" — Goldilocks has its own global photo-reveal / public-info toggle (`ios-236-global-reveal`). **Diff against our implementation first**; the upstream default may contradict ours.
+- **#897 / #902** Unify message-ingest routing across stream + batch catch-up — touches `StreamProcessor`/`ConversationWriter` (heavily customized: agent-trust, no-op consent delete). Pull only if we want the catch-up performance work; high merge cost.
+- **libxmtp bump** — ours is pinned to the `ios-4.10.0` tag; upstream/dev is on `ios-4.10.0-nightly.20260530.065bd0d`. Decide whether to chase nightlies or hold on the stable tag. If bumping: update `revision:` in `ConvosCore/Package.swift`, rebuild, run the **full** `swift test` suite against a local XMTP node.
+- **HTML / file attachments** (#803, #806, #819, #820, #821, #823, #825, #861, #878, #915) — the deferred Wave 3 from the prior plan. Genuinely useful for clients sending documents to advisors, but a mini-project touching the composer. Treat separately if/when wanted. (#790 "send Files" already pulled.)
+
+## Skip (per the decisions table above)
+
+- **Agents / Agent Builder / Templates / Share / agent-contacts** — #830, #841, #854, #855, #876, #877, #881, #888, #890, #891, #899, #902(agent half), #904, #918, #928, #930, #934, #935, #938, #939, #940, #942, #947, #948, #953, #954, #958, #966, #967, #968, #980, #981, #994, #1004, #1006, … (~50 PRs).
+- **Contacts — agents only** — #854, #930, #950, #969 and the agent-share set (#928, #947, #981, #938, #994). _(The people-side Contacts PRs moved to Wave C above; #1007 reclassified into Wave C.)_
+- **IAP / Credits / Subscriptions** — #840, #849, #862, #880, #895, #913, #956, #962, #963, #965.
+- **Observability** — #949 (Sentry + on-device logging), #976 (Sentry init order), #973 (PostHog metrics) and the metrics-hookup commits.
+- **Device pairing / keychain identity recovery** — #863, #887, #898, #903, #971. (Goldilocks did its own single-inbox identity refactor; these will collide. Revisit only if we want multi-device.)
+- **SIWE #827/#846, Backups #725/#760/#778, Firebase/fastlane CI, local-stack tooling** (#921/#927/#929/#996 — we have our own backend dev stack).
+- **Assistants-on-by-default #817 / #769 / #770** — we removed the Assistants row.
+- **Reverts / churn** — #783, #784, #786, #787, #905, #952 (only needed if the features they fix are pulled).
+- **libxmtp renovate bumps** #765/#776/#779/#792/#798/#805/#808/#832/#834/#836/#842/#923 — collapse into the single pin decision in Wave 3.
+
+> `dev/test` and sim-teardown improvements (#999, #997) are infra-neutral and could be cherry-picked opportunistically if our `dev/` scripts have drifted — low priority.
 
 ## Execution checklist
 
-1. `git fetch upstream` (on the Mac) and re-confirm the commit list.
-2. Branch: `git checkout goldilocks && git checkout -b upstream-sync`.
-3. Wave 1 — cherry-pick the 8 PRs, build, `swift test`, lint.
-4. Wave 2 — one PR at a time + the libxmtp bump; build + full test suite after each.
-5. Wave 3 — only if/when you want the attachment features.
-6. PR `upstream-sync` into `goldilocks` once green.
+1. `git fetch upstream` and re-run `Scripts/upstream-sync.sh` to refresh shas (PR numbers in this doc are stable; shas are not).
+2. Branch: `git checkout main && git checkout -b upstream-sync-0606`.
+3. **Wave 1** — cherry-pick the 6 clean PRs (lead with #1001), build, `swift test`, `/lint`.
+4. **Wave 2** — one PR at a time, hand-merge, build + full test suite after each. Start with #982 (the animation foundation), then its dependents.
+5. **Wave C (Contacts)** — its **own branch + PR**. Hand-merge the net #782 diff, get tests green, then cherry-pick the people-focused follow-ups one at a time. Don't bundle it with the fix waves.
+6. **Wave 3** — only after reviewing each against the colliding Goldilocks feature.
+7. PR each branch into `main` once green.
+
+## Verification gate (per CLAUDE.md)
+
+Docker + full suite before any push: `./dev/start && swift test --package-path ConvosCore`. Never push an untested cherry-pick — the message-stack hand-merges in Wave 2 are exactly where a silent regression would hide.

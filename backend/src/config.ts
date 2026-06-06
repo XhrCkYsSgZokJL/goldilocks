@@ -103,6 +103,25 @@ const schema = z.object({
   // in production — anyone with a JWT could grant themselves admin.
   GOLDILOCKS_ALLOW_SELF_PROMOTE: z.coerce.boolean().default(false),
 
+  // --- Report-answering agent (Venice LLM) ---
+  //
+  // Plumbing only — disabled by default. When false (the default) the
+  // reports-agent posts its canned auto-reply exactly as before; no LLM
+  // call is ever made. See docs/plans/report-agent-llm-venice.md.
+  //
+  // Venice (https://venice.ai) is a privacy-first, zero-retention,
+  // OpenAI-compatible inference API — chosen so client report fragments
+  // are not stored by the provider. All vars optional so the server boots
+  // without them; the feature stays inert until a key is set AND the flag
+  // is flipped.
+  REPORTS_LLM_ENABLED: z.coerce.boolean().default(false),
+  VENICE_API_KEY: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  VENICE_BASE_URL: z.string().url().default('https://api.venice.ai/api/v1'),
+  // Model id is configurable because Venice's catalogue rotates; pick one
+  // from GET /api/v1/models. No default model — must be set to enable.
+  VENICE_MODEL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  VENICE_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+
   // --- Payments ---
   //
   // All payment provider vars are optional so the server boots without

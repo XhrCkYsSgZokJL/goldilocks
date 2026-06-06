@@ -14,6 +14,7 @@ import { Client, DecodedMessage, Group, GroupPermissionsOptions, MetadataField, 
 import { db } from '../db/client.js';
 import { clients, clientChannels, reportJobs } from '../db/schema.js';
 import type { AgentIdentity } from './store.js';
+import { generateReportReply } from './report-assistant.js';
 import { WorkQueue } from './work-queue.js';
 import {
   refreshInboxStates,
@@ -345,7 +346,7 @@ export class ReportsAgent {
     // ever a member of Reports groups, but stay strict about where the
     // auto-reply fires.
     const [channel] = await db
-      .select({ clientNumber: clients.clientNumber })
+      .select({ clientId: clients.id, clientNumber: clients.clientNumber })
       .from(clientChannels)
       .innerJoin(clients, eq(clients.id, clientChannels.clientId))
       .where(and(
@@ -362,8 +363,18 @@ export class ReportsAgent {
     const group = await this.tryLoadGroup(message.conversationId);
     if (!group) return;
     this.lastAutoReplyAt.set(message.conversationId, now);
-    await group.sendText(REPORTS_AUTO_REPLY);
-    log(`[reports] auto-replied to a client message in Reports #${channel.clientNumber}`);
+
+    // Report-answering agent (plumbing only — disabled by default). Returns
+    // null unless REPORTS_LLM_ENABLED is true and Venice is configured, so by
+    // default this falls straight through to the canned reply below with no
+    // LLM call. See docs/plans/report-agent-llm-venice.md.
+    const llmReply = await generateReportReply({
+      clientId: channel.clientId,
+      clientNumber: channel.clientNumber,
+      question: message.content ?? '',
+    });
+    await group.sendText(llmReply ?? REPORTS_AUTO_REPLY);
+    log(`[reports] ${llmReply ? 'answered' : 'auto-replied to'} a client message in Reports #${channel.clientNumber}`);
   }
 
   // ---- private helpers -------------------------------------------------
