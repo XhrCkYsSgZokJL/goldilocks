@@ -1,4 +1,3 @@
-import ConvosMetrics
 import Foundation
 
 /// Dedicated entry point for the App Clip. The clip's job is narrow:
@@ -30,17 +29,12 @@ public enum ClipIdentityBootstrap {
     @MainActor
     public static func bootstrap(
         environment: AppEnvironment,
-        platformProviders: PlatformProviders,
-        coreActions: any CoreActions
+        platformProviders: PlatformProviders
     ) -> ClipSession {
         let databaseManager = DatabaseManager(environment: environment)
-        // The clip's auto-registered identity must not be escrowed to
-        // iCloud Keychain -- the user never opted into a backup from this
-        // ephemeral surface. The full app backfills the synced backup on
-        // first authorize once the identity is actually adopted.
         let identityStore = KeychainIdentityStore(
             accessGroup: environment.keychainAccessGroup,
-            syncedBackupEnabled: false
+            keyWrapper: platformProviders.identityKeyWrapper,
         )
         let sessionManager = SessionManager(
             databaseWriter: databaseManager.dbWriter,
@@ -48,8 +42,7 @@ public enum ClipIdentityBootstrap {
             environment: environment,
             identityStore: identityStore,
             platformProviders: platformProviders,
-            mode: .clipBootstrap,
-            coreActions: coreActions
+            mode: .clipBootstrap
         )
 
         // Force the messaging service to materialize so the register
