@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Standalone fallback for running the dev Caddy https proxy in the
+# foreground. Normally you don't need this — `npm run cli -- --dev` (or
+# the dashboard's Systems → Start) starts Caddy as a managed dev process
+# AND installs its root CA into both the macOS System keychain and the
+# booted iOS Simulator keychain automatically. Use this script only if
+# you want to watch Caddy's logs live without the CLI.
+#
+# Ctrl+C to stop.
+set -euo pipefail
+script_dir="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+root_cert="$HOME/Library/Application Support/Caddy/pki/authorities/local/root.crt"
+
+if ! command -v caddy >/dev/null 2>&1; then
+  echo "❌ caddy not installed. Run: brew install caddy"
+  exit 1
+fi
+
+# One-time: install Caddy's local CA root into the macOS System keychain
+# so the iOS Simulator (which inherits the host's System keychain trust
+# anchors) accepts our self-signed cert. Skip if already installed.
+if ! security find-certificate -c "Caddy Local Authority" /Library/Keychains/System.keychain >/dev/null 2>&1; then
+  echo "🔑 Installing Caddy's local root CA into the macOS System keychain…"
+  echo "   (One-time. You'll be prompted for your login password.)"
+  caddy trust
+fi
+
+# Each simulator keychain is separate from the host's System keychain,
+# so add the root there too if a sim is booted. No-op if none is.
+if [[ -f "$root_cert" ]] && xcrun simctl list devices booted -j 2>/dev/null | grep -q '"udid"'; then
+  echo "🔑 Adding Caddy root to the booted iOS Simulator keychain…"
+  xcrun simctl keychain booted add-root-cert "$root_cert" || true
+fi
+
+echo "▶ Starting Caddy on https://localhost:4443 → http://localhost:4000"
+exec caddy run --config "$script_dir/Caddyfile" --adapter caddyfile

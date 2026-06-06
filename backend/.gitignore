@@ -1,0 +1,161 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# ---------------------------------------------------------------------------
+# Environment / secrets — anything matching .env* except the templates.
+#
+# Patterns are intentionally unanchored so they match at any depth (e.g.
+# secrets/.env.dev, secrets/secrets/.env.dev, anything-tree/.env.local).
+# The two .example files are allowlisted back in.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Belt-and-braces: any path containing an .env.<env> file (catches weird
+# names like ".env.dev copy", ".env.dev.bak", etc.) at any depth.
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.production.example
+
+# Agent local state — SQLCipher DBs with admins-agent / reports-agent
+# private keys. NEVER commit. Wipe via `npm run cli` → Dev environment → Reset.
+.agent-data/
+**/.agent-data/
+
+# Dev background-process state — pids + logs for the CLI-managed
+# server:dev / agents:dev processes.
+.dev-run/
+
+# Restic backup repositories. Each environment writes to its own dir.
+# Encrypted at rest, but the on-disk format isn't human-readable anyway
+# and these can be many GB. See docs/encryption-and-backup-plan.md F1.
+backups/
+**/backups/restic-*/
+
+# Restic passphrases. The prod passphrase is the only unrecoverable
+# secret in this design — never commit it. Dev passphrase excluded for
+# parity; the CLI's setup flow generates both. Unanchored so nested
+# duplicates (secrets/secrets/dev/restic-passphrase.dev) are also caught.
+.restic-passphrase*
+**/restic-passphrase*
+
+# SOPS age keys. The private keys (and the .key.pub recipient files,
+# which we also keep local for now) must never land in git. The
+# encrypted secrets/<env>.env.enc files ARE committable and not
+# excluded by these rules.
+.age/
+**/.age/
+*.age
+*.age.key
+
+# Internal TLS material (F5). Per-env CA + postgres leaf, regenerated
+# by scripts/init-tls.sh and captured by the encrypted backup. Not
+# committable — different envs need different keys and the CA private
+# key in particular should never leave the box (it's only ever in
+# secrets/tls/ on the prod box + inside the encrypted restic snapshot).
+secrets/tls/
+**/tls/*.key
+**/tls/*.crt
+**/tls/*.pem
+**/tls/*.csr
+**/tls/*.srl
+
+# Recursive-duplicate trap. `secrets/` is the only legitimate top-level
+# secrets root; the recursive `secrets/secrets/...` chain comes from a
+# script bug copying into itself. Nothing inside the nested copies is
+# ever legitimate to commit, so ignore the whole subtree.
+secrets/secrets/
+**/secrets/secrets/
+
+# Catch-all by extension. Private keys + signing material in any form
+# (PEM, PKCS#12, JKS, openssh) at any path. .pub files are public so
+# they're allowlisted back in.
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_rsa.*
+id_ecdsa
+id_ecdsa.*
+id_ed25519
+id_ed25519.*
+!*.pub
+
+# Anything literally named with "secret" / "credential" in the filename
+# (e.g. service-account.secrets.json, gcp-credentials.json). Use the
+# encrypted .env.enc flow instead.
+*secret*.json
+*credentials*.json
+
+# Under secrets/, ignore EVERYTHING by default — the only files in this
+# directory designed to be committable are the SOPS-encrypted .env.enc
+# bundles. Anything else (private keys, TLS material, accidental copies
+# of dev/* via the recursion bug) is unsafe by default.
+secrets/*
+!secrets/.gitkeep
+
+# Allowlist the encrypted env bundles (and the directory entries needed
+# to reach them, in case the path nests later).
+!secrets/*.env.enc
+!**/*.env.enc
+
+# Logs (often contain JWTs, request bodies, stripe whsec_ secrets in
+# webhook payloads, etc.)
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local SQLite / SQLCipher databases — never commit, may contain
+# encrypted-at-rest material from the agent or app.
+*.db
+*.db3
+*.sqlite
+*.sqlite3
+
+# Reports queue. Inbound PDFs are client deliverables and may contain
+# PII — ignore the whole `reports/` working dir except a tracked README
+# if you decide to add one later.
+reports/
+!reports/README.md
+
+# Local attachment storage (LOCAL_STORAGE_DIR default).
+.attachments/
+
+# Stray stderr / stdout capture files (e.g. `cmd 2> err`).
+/err
+/out
+*.err
+*.stderr
+*.stdout
+
+# Test / coverage output
+coverage/
+.nyc_output/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Caches
+.cache/
+.npm
+.pnpm-store/
+.yarn/cache
+.yarn/install-state.gz
+tmp/
+temp/
