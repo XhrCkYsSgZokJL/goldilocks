@@ -576,6 +576,7 @@ public enum ConvosAPI {
         public let seats: Int
         public let coveredPeople: Int
         public let reportDay: String
+        public let hasPaymentMethod: Bool
 
         public init(
             activeUntil: String?,
@@ -585,7 +586,8 @@ public enum ConvosAPI {
             monthlyRateCents: Int,
             seats: Int,
             coveredPeople: Int = 0,
-            reportDay: String = "1st"
+            reportDay: String = "1st",
+            hasPaymentMethod: Bool = false
         ) {
             self.activeUntil = activeUntil
             self.coverageActive = coverageActive
@@ -595,6 +597,7 @@ public enum ConvosAPI {
             self.seats = seats
             self.coveredPeople = coveredPeople
             self.reportDay = reportDay
+            self.hasPaymentMethod = hasPaymentMethod
         }
 
         public init(from decoder: Decoder) throws {
@@ -607,6 +610,27 @@ public enum ConvosAPI {
             seats = try container.decode(Int.self, forKey: .seats)
             coveredPeople = try container.decodeIfPresent(Int.self, forKey: .coveredPeople) ?? 0
             reportDay = try container.decodeIfPresent(String.self, forKey: .reportDay) ?? "1st"
+            hasPaymentMethod = try container.decodeIfPresent(Bool.self, forKey: .hasPaymentMethod) ?? false
+        }
+    }
+
+    public struct GoldilocksPaymentMethodSetupResponse: Codable, Sendable {
+        /// Hosted Stripe Checkout (setup mode) URL the app opens in the browser.
+        public let checkoutUrl: String
+        /// Stripe Checkout Session id, passed back to confirm the saved card.
+        public let sessionId: String
+
+        public init(checkoutUrl: String, sessionId: String) {
+            self.checkoutUrl = checkoutUrl
+            self.sessionId = sessionId
+        }
+    }
+
+    public struct GoldilocksPaymentMethodConfirmResponse: Codable, Sendable {
+        public let hasPaymentMethod: Bool
+
+        public init(hasPaymentMethod: Bool) {
+            self.hasPaymentMethod = hasPaymentMethod
         }
     }
 

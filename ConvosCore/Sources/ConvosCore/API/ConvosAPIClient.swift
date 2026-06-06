@@ -105,6 +105,8 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func syncGoldilocksSeats(_ request: ConvosAPI.GoldilocksSeatsRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
     func setGoldilocksReportDay(_ request: ConvosAPI.GoldilocksReportDayRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
     func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    func setupGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodSetupResponse
+    func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse
     func claimGoldilocksReferral(code: String) async throws
     func toggleGoldilocksCoverage(_ request: ConvosAPI.GoldilocksCoverageToggleRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
     func toggleGoldilocksPersonCoverage(_ request: ConvosAPI.GoldilocksPersonToggleRequest) async throws -> ConvosAPI.GoldilocksPersonToggleResponse
@@ -143,6 +145,14 @@ extension ConvosAPIClientProtocol {
 
     func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
         ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    func setupGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodSetupResponse {
+        throw APIError.notImplementedInGoldilocks
+    }
+
+    func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        ConvosAPI.GoldilocksPaymentMethodConfirmResponse(hasPaymentMethod: false)
     }
 
     func claimGoldilocksReferral(code: String) async throws {}
@@ -984,6 +994,21 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
 
     func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
         let request = try authenticatedRequest(for: "v2/billing/checkout-status/\(sessionId)", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func setupGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodSetupResponse {
+        var request = try authenticatedRequest(for: "v2/billing/payment-method", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([String: String]())
+        return try await performRequest(request)
+    }
+
+    func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        struct Body: Encodable { let sessionId: String }
+        var request = try authenticatedRequest(for: "v2/billing/payment-method/confirm", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(Body(sessionId: sessionId))
         return try await performRequest(request)
     }
 

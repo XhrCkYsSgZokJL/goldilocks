@@ -13,15 +13,16 @@
 // stripe-webhook.ts is what credits a completed top-up to the balance.
 
 import type { FastifyInstance } from 'fastify';
-import { and, desc, eq, isNotNull } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { db } from '../db/client.js';
 import { billingCheckouts, clients, devices } from '../db/schema.js';
 import { requireJwt } from '../middleware/jwt.js';
 import { getStripe, isStripeConfigured } from '../billing/stripe.js';
-import { activeUntil, isCoverageActive, liveBalanceCents, monthlyRateCents, settle } from '../billing/balance.js';
+import { activeUntil, isCoverageActive, liveBalanceCents, monthlyRateCents } from '../billing/balance.js';
 import { reconcileCheckoutSession } from '../billing/reconcile-checkout.js';
+import { cancelAtPeriodEnd, ensureCustomer } from '../billing/subscriptions.js';
 import { togglePersonCoverage } from '../billing/person-activation.js';
 import { queueSampleReport } from '../billing/sample-report.js';
 import { emitBillingEvent } from '../observability/billing-events.js';
@@ -36,6 +37,10 @@ const CheckoutBody = z.object({
 
 const SeatsBody = z.object({
   seats: z.number().int().min(0).max(999),
+});
+
+const PaymentMethodConfirmBody = z.object({
+  sessionId: z.string(),
 });
 
 export default async function billingRoutes(app: FastifyInstance, opts: { publicBaseUrl: string }) {
@@ -166,6 +171,97 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
   });
 
   // ---------------------------------------------------------------------
+  // POST /v2/billing/payment-method — start a Stripe Checkout in setup mode
+  // so the client can save a card. The card is taken off-session later for
+  // the $100 initial-report fee and the recurring subscription.
+  // returns: { checkoutUrl, sessionId }
+  // ---------------------------------------------------------------------
+  app.post('/v2/billing/payment-method', { preHandler: requireJwt }, async (req, reply) => {
+    if (!isStripeConfigured()) {
+      return reply.code(503).send({ error: 'billing_unavailable', message: 'Stripe is not configured on this server.' });
+    }
+    const client = await resolveClient(req.deviceId!);
+    if (!client) {
+      return reply.code(409).send({ error: 'client_missing' });
+    }
+    const stripe = getStripe();
+    const customerId = await ensureCustomer(client);
+
+    let session: Stripe.Checkout.Session;
+    try {
+      session = await stripe.checkout.sessions.create({
+        mode: 'setup',
+        customer: customerId,
+        client_reference_id: client.id,
+        success_url: successUrl(publicBaseUrl),
+        cancel_url: cancelUrl(publicBaseUrl),
+        metadata: { clientId: client.id, inboxId: client.inboxId, kind: 'payment_method_setup' },
+      });
+    } catch (err) {
+      emitBillingEvent(req.log, {
+        event: 'billing.checkout.initiated',
+        severity: 'error',
+        clientId: client.id,
+        inboxId: client.inboxId,
+        context: { error: (err as Error).message, kind: 'payment_method_setup' },
+      });
+      return reply.code(502).send({ error: 'stripe_error', message: 'Could not start card setup. Please try again.' });
+    }
+    if (!session.url) {
+      return reply.code(502).send({ error: 'stripe_error', message: 'Stripe did not return a setup URL.' });
+    }
+    return reply.code(200).send({ checkoutUrl: session.url, sessionId: session.id });
+  });
+
+  // ---------------------------------------------------------------------
+  // POST /v2/billing/payment-method/confirm — after the setup checkout
+  // completes, attach the saved card as the customer's default and flag the
+  // client as having a payment method. Idempotent.
+  // body: { sessionId }  returns: { hasPaymentMethod }
+  // ---------------------------------------------------------------------
+  app.post('/v2/billing/payment-method/confirm', { preHandler: requireJwt }, async (req, reply) => {
+    if (!isStripeConfigured()) {
+      return reply.code(503).send({ error: 'billing_unavailable' });
+    }
+    const parsed = PaymentMethodConfirmBody.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
+    }
+    const client = await resolveClient(req.deviceId!);
+    if (!client) {
+      return reply.code(409).send({ error: 'client_missing' });
+    }
+    const stripe = getStripe();
+    try {
+      const session = await stripe.checkout.sessions.retrieve(parsed.data.sessionId, { expand: ['setup_intent'] });
+      const setupIntent = session.setup_intent;
+      const pm = setupIntent && typeof setupIntent !== 'string' ? setupIntent.payment_method : null;
+      const pmId = pm ? (typeof pm === 'string' ? pm : pm.id) : null;
+      if (!pmId || !client.stripeCustomerId) {
+        return reply.code(200).send({ hasPaymentMethod: client.hasPaymentMethod });
+      }
+      await stripe.customers.update(client.stripeCustomerId, {
+        invoice_settings: { default_payment_method: pmId },
+      });
+      const [updated] = await db
+        .update(clients)
+        .set({ hasPaymentMethod: true })
+        .where(eq(clients.id, client.id))
+        .returning();
+      emitBillingEvent(req.log, {
+        event: 'billing.customer.created',
+        clientId: client.id,
+        inboxId: client.inboxId,
+        context: { kind: 'payment_method_saved' },
+      });
+      return reply.code(200).send({ hasPaymentMethod: updated?.hasPaymentMethod ?? true });
+    } catch (err) {
+      req.log.warn({ err }, 'payment-method confirm failed');
+      return reply.code(502).send({ error: 'stripe_error', message: 'Could not confirm your card.' });
+    }
+  });
+
+  // ---------------------------------------------------------------------
   // POST /v2/billing/seats — the client edited their people list. Settle
   // the balance at the old rate, then store the new seat count; the
   // cover end date moves with no charge.
@@ -183,15 +279,11 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
       return reply.code(409).send({ error: 'client_missing' });
     }
 
-    // Settle at the current (old) rate, then switch to the new seat count.
-    const settled = settle(client);
+    // Seat changes are billed by Stripe (proration on the subscription),
+    // so this just records the seat count for the rate display.
     const [updated] = await db
       .update(clients)
-      .set({
-        billingBalanceCents: settled.balanceCents,
-        billingBalanceAsOf: settled.asOf,
-        billingSeats: seats,
-      })
+      .set({ billingSeats: seats })
       .where(eq(clients.id, client.id))
       .returning();
     if (!updated) {
@@ -355,6 +447,12 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
       });
     } catch (err: unknown) {
       const message: string = err instanceof Error ? err.message : 'unknown_error';
+      if (message === 'no_payment_method') {
+        return reply.code(402).send({ error: 'no_payment_method', message: 'Add a payment method before enabling people.' });
+      }
+      if (message === 'seat_price_not_configured') {
+        return reply.code(503).send({ error: 'billing_unavailable', message: 'Billing is not fully configured on this server.' });
+      }
       if (message === 'insufficient_balance') {
         return reply.code(402).send({ error: 'insufficient_balance', message: 'Not enough balance to activate this person.' });
       }
@@ -381,82 +479,29 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
       return reply.code(409).send({ error: 'client_missing' });
     }
 
-    const settled = settle(client);
-    let refundedTotal = 0;
-    const rate = monthlyRateCents(client);
-
-    // The current month is non-refundable — services are already being
-    // consumed. Subtract one month's rate from the settled balance so
-    // only future unused months are in the refund budget.
-    const retainedCents: number = Math.min(rate, settled.balanceCents);
-    const refundBudget: number = Math.max(0, settled.balanceCents - rate);
-
-    if (refundBudget > 0) {
-      const stripe = getStripe();
-      const refundable = await db
-        .select()
-        .from(billingCheckouts)
-        .where(and(
-          eq(billingCheckouts.clientId, client.id),
-          eq(billingCheckouts.status, 'completed'),
-          isNotNull(billingCheckouts.stripePaymentIntentId),
-        ))
-        .orderBy(desc(billingCheckouts.createdAt));
-
-      let proRataBudget = refundBudget;
-
-      for (const checkout of refundable) {
-        const remaining = checkout.amountCents - checkout.refundedCents;
-        if (remaining <= 0) continue;
-        if (proRataBudget <= 0) break;
-
-        const amount = Math.min(remaining, proRataBudget);
-
-        try {
-          await stripe.refunds.create({
-            payment_intent: checkout.stripePaymentIntentId as string,
-            amount,
-          });
-          emitBillingEvent(req.log, {
-            event: 'billing.refund.completed',
-            clientId: client.id,
-            inboxId: client.inboxId,
-            context: { amountCents: amount },
-          });
-        } catch (err) {
-          emitBillingEvent(req.log, {
-            event: 'billing.refund.failed',
-            severity: 'error',
-            clientId: client.id,
-            inboxId: client.inboxId,
-            context: { amountCents: amount, error: (err as Error).message },
-          });
-          continue;
-        }
-        await db
-          .update(billingCheckouts)
-          .set({ refundedCents: checkout.refundedCents + amount })
-          .where(eq(billingCheckouts.id, checkout.id));
-        refundedTotal += amount;
-        proRataBudget = Math.max(0, proRataBudget - amount);
-      }
+    // Stop the subscription at the end of the current paid period. The
+    // current period and the $100 initial fees are non-refundable; future
+    // periods are simply not billed. No cash refund in this model.
+    try {
+      await cancelAtPeriodEnd(client);
+    } catch (err) {
+      req.log.warn({ err }, 'subscription cancel failed');
+      return reply.code(502).send({ error: 'stripe_error', message: 'Could not cancel your subscription. Please try again.' });
     }
 
-    // Zero the balance whether or not every cent could be refunded —
-    // cover has ended either way.
     await db
       .update(clients)
-      .set({ billingBalanceCents: 0, billingBalanceAsOf: settled.asOf })
+      .set({ coverageEnabled: false })
       .where(eq(clients.id, client.id));
 
     emitBillingEvent(req.log, {
       event: 'billing.balance.zeroed',
       clientId: client.id,
       inboxId: client.inboxId,
-      context: { refundedCents: refundedTotal, retainedCents, previousBalanceCents: settled.balanceCents },
+      context: { reason: 'subscription_cancelled' },
     });
 
-    return reply.code(200).send({ refundedCents: refundedTotal, retainedCents });
+    return reply.code(200).send({ refundedCents: 0 });
   });
 
   // ---------------------------------------------------------------------
@@ -526,6 +571,7 @@ function billingStatus(client: ClientRow): {
   seats: number;
   coveredPeople: number;
   reportDay: string;
+  hasPaymentMethod: boolean;
 } {
   const until = activeUntil(client);
   return {
@@ -538,6 +584,7 @@ function billingStatus(client: ClientRow): {
     seats: client.billingSeats,
     coveredPeople: client.coveredPeople,
     reportDay: client.reportDay,
+    hasPaymentMethod: client.hasPaymentMethod,
   };
 }
 

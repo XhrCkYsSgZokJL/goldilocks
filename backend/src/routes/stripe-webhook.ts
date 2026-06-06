@@ -1,11 +1,17 @@
 // Stripe webhook — POST /v2/stripe/webhook.
 //
-// This is the source of truth for top-ups. /v2/billing/checkout only
-// *starts* a payment; the balance is credited only when Stripe calls
-// back here and the signature verifies.
+// Source of truth for billing state changes. The app only *starts* flows
+// (card setup, person activation); Stripe calls back here once the
+// signature verifies and we update coverage accordingly.
 //
-// With the prepaid-balance model there are no subscriptions or invoices,
-// so the only event that matters is checkout.session.completed.
+// Handled events:
+//   checkout.session.completed   — setup mode: save the card; payment
+//                                  mode: credit a legacy deposit.
+//   customer.subscription.updated — flip coverage off if the status has
+//                                  lapsed (unpaid / canceled).
+//   customer.subscription.deleted — coverage ended; flip it off.
+//   invoice.payment_failed        — logged; Stripe dunning continues, the
+//                                  subscription.* events drive any lapse.
 //
 // Registered as its own Fastify plugin so its raw-body content-type
 // parser stays encapsulated and doesn't affect JSON-parsing routes.
@@ -15,6 +21,7 @@ import type Stripe from 'stripe';
 import { config } from '../config.js';
 import { getStripe, isStripeConfigured } from '../billing/stripe.js';
 import { reconcileCheckoutSession } from '../billing/reconcile-checkout.js';
+import { handleSetupSessionCompleted, handleSubscriptionLapsed, isLapsedStatus } from '../billing/subscriptions.js';
 import { emitSecurityEvent } from '../observability/security-events.js';
 
 export default async function stripeWebhookRoutes(app: FastifyInstance) {
@@ -70,8 +77,37 @@ export default async function stripeWebhookRoutes(app: FastifyInstance) {
     }
 
     try {
-      if (event.type === 'checkout.session.completed') {
-        await reconcileCheckoutSession(event.data.object as Stripe.Checkout.Session, req.log);
+      switch (event.type) {
+        case 'checkout.session.completed': {
+          const session = event.data.object as Stripe.Checkout.Session;
+          if (session.mode === 'setup') {
+            await handleSetupSessionCompleted(session);
+          } else {
+            await reconcileCheckoutSession(session, req.log);
+          }
+          break;
+        }
+        case 'customer.subscription.updated': {
+          const sub = event.data.object as Stripe.Subscription;
+          if (isLapsedStatus(sub.status)) {
+            await handleSubscriptionLapsed(sub.id);
+          }
+          break;
+        }
+        case 'customer.subscription.deleted': {
+          const sub = event.data.object as Stripe.Subscription;
+          await handleSubscriptionLapsed(sub.id, { clearHandles: true });
+          break;
+        }
+        case 'invoice.payment_failed': {
+          const invoice = event.data.object as Stripe.Invoice;
+          // Stripe dunning keeps retrying; the subscription.* events drive
+          // any actual lapse. Just record the failure here.
+          req.log.warn({ invoiceId: invoice.id, type: event.type }, 'stripe invoice payment failed');
+          break;
+        }
+        default:
+          break;
       }
     } catch (err) {
       req.log.error({ err, type: event.type }, 'stripe webhook handler failed');

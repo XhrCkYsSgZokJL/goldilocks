@@ -108,6 +108,11 @@ struct SeatMember: Codable, Identifiable, Equatable {
     /// unsubscribes them from the third-party service; flipping it back
     /// on resubscribes.
     var enabled: Bool
+    /// SF Symbol name shown as the person's avatar/adornment in the people
+    /// list. Picked (or shuffled) in the person editor.
+    var icon: String
+
+    static let defaultIcon: String = "person.circle.fill"
 
     init(
         id: UUID = UUID(),
@@ -117,7 +122,8 @@ struct SeatMember: Codable, Identifiable, Equatable {
         emails: [LabeledEmail] = [],
         phone: String = "",
         address: PersonAddress = PersonAddress(),
-        enabled: Bool = true
+        enabled: Bool = true,
+        icon: String = SeatMember.defaultIcon
     ) {
         self.id = id
         self.firstName = firstName
@@ -127,6 +133,7 @@ struct SeatMember: Codable, Identifiable, Equatable {
         self.phone = phone
         self.address = address
         self.enabled = enabled
+        self.icon = icon
     }
 
     /// Concatenated first / middle / last, skipping blanks so a
@@ -154,7 +161,7 @@ struct SeatMember: Codable, Identifiable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, firstName, middleName, lastName, emails, phone, address, enabled
+        case id, firstName, middleName, lastName, emails, phone, address, enabled, icon
     }
 
     /// Keys that don't map to a stored property, used only by the decoder
@@ -217,6 +224,8 @@ struct SeatMember: Codable, Identifiable, Equatable {
         } else {
             self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         }
+
+        self.icon = try container.decodeIfPresent(String.self, forKey: .icon) ?? SeatMember.defaultIcon
     }
 
     /// Best-effort split of a legacy single-string name into first /

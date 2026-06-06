@@ -583,6 +583,14 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         try await apiClient.reconcileGoldilocksCheckout(sessionId: sessionId)
     }
 
+    public func setupGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodSetupResponse {
+        try await apiClient.setupGoldilocksPaymentMethod()
+    }
+
+    public func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        try await apiClient.confirmGoldilocksPaymentMethod(sessionId: sessionId)
+    }
+
     public func claimGoldilocksReferral(code: String) async throws {
         try await apiClient.claimGoldilocksReferral(code: code)
     }

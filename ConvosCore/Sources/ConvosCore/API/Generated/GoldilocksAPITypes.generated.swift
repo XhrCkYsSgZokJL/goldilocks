@@ -203,6 +203,19 @@ public struct GoldilocksCheckoutResponse: Codable, Sendable {
     public let sessionId: String
 }
 
+public struct GoldilocksPaymentMethodSetupResponse: Codable, Sendable {
+    public let checkoutUrl: String
+    public let sessionId: String
+}
+
+public struct GoldilocksPaymentMethodConfirmRequest: Codable, Sendable {
+    public let sessionId: String
+}
+
+public struct GoldilocksPaymentMethodConfirmResponse: Codable, Sendable {
+    public let hasPaymentMethod: Bool
+}
+
 public struct GoldilocksSeatsRequest: Codable, Sendable {
     public let seats: Int
 }
@@ -216,6 +229,7 @@ public struct GoldilocksBillingStatusResponse: Codable, Sendable {
     public let seats: Int
     public let coveredPeople: Int
     public let reportDay: String
+    public let hasPaymentMethod: Bool
 
     public init(
         activeUntil: String? = nil,
@@ -225,7 +239,8 @@ public struct GoldilocksBillingStatusResponse: Codable, Sendable {
         monthlyRateCents: Int,
         seats: Int,
         coveredPeople: Int,
-        reportDay: String
+        reportDay: String,
+        hasPaymentMethod: Bool = false
     ) {
         self.activeUntil = activeUntil
         self.coverageActive = coverageActive
@@ -235,6 +250,7 @@ public struct GoldilocksBillingStatusResponse: Codable, Sendable {
         self.seats = seats
         self.coveredPeople = coveredPeople
         self.reportDay = reportDay
+        self.hasPaymentMethod = hasPaymentMethod
     }
 }
 

@@ -255,6 +255,22 @@ export interface CheckoutResponse {
   sessionId: string;
 }
 
+/** @swift GoldilocksPaymentMethodSetupResponse */
+export interface PaymentMethodSetupResponse {
+  checkoutUrl: string;
+  sessionId: string;
+}
+
+/** @swift GoldilocksPaymentMethodConfirmRequest */
+export interface PaymentMethodConfirmRequest {
+  sessionId: string;
+}
+
+/** @swift GoldilocksPaymentMethodConfirmResponse */
+export interface PaymentMethodConfirmResponse {
+  hasPaymentMethod: boolean;
+}
+
 /** @swift GoldilocksSeatsRequest */
 export interface SeatsRequest {
   seats: number;
@@ -271,6 +287,8 @@ export interface BillingStatusResponse {
   seats: number;
   coveredPeople: number;
   reportDay: string;
+  /** @swift default(false) */
+  hasPaymentMethod: boolean;
 }
 
 /** @swift GoldilocksReportDayRequest */

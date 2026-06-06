@@ -149,6 +149,14 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// status (`GET /v2/billing/checkout-status/:sessionId`).
     func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
 
+    /// Start a Stripe Checkout (setup mode) to save a card on file
+    /// (`POST /v2/billing/payment-method`).
+    func setupGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodSetupResponse
+
+    /// Confirm the saved card after the setup checkout completes
+    /// (`POST /v2/billing/payment-method/confirm`).
+    func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse
+
     func claimGoldilocksReferral(code: String) async throws
 
     /// Enable or disable coverage (`POST /v2/billing/coverage`).
@@ -341,6 +349,14 @@ extension SessionManagerProtocol {
 
     public func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
         ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    public func setupGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodSetupResponse {
+        ConvosAPI.GoldilocksPaymentMethodSetupResponse(checkoutUrl: "", sessionId: "")
+    }
+
+    public func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        ConvosAPI.GoldilocksPaymentMethodConfirmResponse(hasPaymentMethod: false)
     }
 
     public func claimGoldilocksReferral(code: String) async throws {}

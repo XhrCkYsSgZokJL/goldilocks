@@ -458,13 +458,14 @@ struct MembershipView: View {
     @State private var billingResultMessage: String?
     @State private var showingBillingResult: Bool = false
     @State private var showingCancelConfirm: Bool = false
-    @State private var paymentMethod: GoldilocksPaymentMethod = .apple
+    @State private var paymentMethod: GoldilocksPaymentMethod = .card
     @State private var billingStatus: ConvosAPI.GoldilocksBillingStatusResponse?
     @State private var isStartingCheckout: Bool = false
     @State private var isCancelling: Bool = false
     @State private var checkoutSessionId: String?
+    @State private var paymentMethodSessionId: String?
+    @State private var isSettingUpPaymentMethod: Bool = false
     @State private var reconcileTask: Task<Void, Never>?
-    @State private var checkoutPeople: Int = 1
     @State private var prepaidDuration: GoldilocksPrepaidDuration = .oneMonth
     @State private var pendingActivation: SeatMember?
     @State private var showingActivationConfirm: Bool = false
@@ -472,12 +473,18 @@ struct MembershipView: View {
     @State private var showingReactivationConfirm: Bool = false
     @State private var activatedPersonIds: Set<UUID> = []
     @State private var showingTierInfo: Bool = false
+    @State private var showingNeedsPaymentMethod: Bool = false
 
     var body: some View {
         listContent
             .onChange(of: scenePhase) { _, newPhase in
-                guard newPhase == .active, checkoutSessionId != nil else { return }
-                Task { await reconcileCheckout() }
+                guard newPhase == .active else { return }
+                if checkoutSessionId != nil {
+                    Task { await reconcileCheckout() }
+                }
+                if paymentMethodSessionId != nil {
+                    Task { await confirmPaymentMethod() }
+                }
             }
             .onChange(of: plan.members) { _, _ in
                 Task { await savePeopleList() }
@@ -522,16 +529,17 @@ struct MembershipView: View {
             } message: {
                 Text("This person will be re-added to your membership for no extra charge.")
             }
-            .alert(cancelAlertTitle, isPresented: $showingCancelConfirm) {
-                if hasBalance {
-                    Button("Keep balance", role: .cancel) {}
-                    let confirmAction: () -> Void = { Task { await cancelCoverage() } }
-                    Button("Refund balance", role: .destructive, action: confirmAction)
-                } else {
-                    Button("OK", role: .cancel) {}
-                }
+            .alert("Cancel coverage?", isPresented: $showingCancelConfirm) {
+                Button("Keep coverage", role: .cancel) {}
+                let confirmAction: () -> Void = { Task { await cancelCoverage() } }
+                Button("Cancel coverage", role: .destructive, action: confirmAction)
             } message: {
-                Text(cancelConfirmMessage)
+                Text("Coverage stops at the end of the current period. The current period and initial report fees are non-refundable.")
+            }
+            .alert("Add a payment method", isPresented: $showingNeedsPaymentMethod) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Add a payment method before enabling someone.")
             }
             .alert("Billing", isPresented: $showingBillingInfo) {
                 Button("OK", role: .cancel) {}
@@ -609,13 +617,17 @@ struct MembershipView: View {
         )
     }
 
+    private static let rowIconWidth: CGFloat = 28.0
+
     private var tierRow: some View {
         let tier: GoldilocksMembershipTier = currentTier
         let tapAction = { showingTierInfo = true }
         return Button(action: tapAction) {
             HStack(spacing: DesignConstants.Spacing.step2x) {
                 Image(systemName: tier.iconName)
+                    .font(.body)
                     .foregroundStyle(tier.accentColor)
+                    .frame(width: Self.rowIconWidth, alignment: .center)
                 Text("\(tier.displayName) member")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.colorTextPrimary)
@@ -632,7 +644,6 @@ struct MembershipView: View {
 
     private var balanceSection: some View {
         Section {
-            balanceRow
             nextChargeRow
             referralCreditRow
         } header: {
@@ -642,23 +653,24 @@ struct MembershipView: View {
 
     @State private var showingReferralSheet: Bool = false
 
-    private var payingReferralCount: Int {
-        GoldilocksSession.shared.identity?.payingReferralCount ?? 0
+    private var referralCreditCents: Int {
+        GoldilocksSession.shared.identity?.referralCreditCents ?? 0
     }
 
     private var referralCreditRow: some View {
         let tapAction = { showingReferralSheet = true }
+        let creditLabel: String = "$\(referralCreditCents / 100)"
         return Button(action: tapAction) {
             HStack {
                 VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
                     Text("Referral credit")
                         .foregroundStyle(.colorTextPrimary)
-                    Text("For every 2 paying clients, get $100 credit.")
+                    Text("Get a $50 credit for every new paying client.")
                         .font(.caption)
                         .foregroundStyle(.colorTextSecondary)
                 }
                 Spacer()
-                Text("\(payingReferralCount)")
+                Text(creditLabel)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.colorTextSecondary)
                 Image(systemName: "chevron.right")
@@ -675,22 +687,79 @@ struct MembershipView: View {
 
     private var paymentSection: some View {
         Section {
-            paymentMethodPicker
-            peoplePicker
-            durationPicker
-            checkoutButton
+            addPaymentMethodRow
+            if billingStatus?.coverageActive == true {
+                cancelCoverageRow
+            }
         } header: {
             Text("Payments")
         }
     }
 
+    private var cancelCoverageRow: some View {
+        let tapAction: () -> Void = { showingCancelConfirm = true }
+        return Button(role: .destructive, action: tapAction) {
+            HStack {
+                Text("Cancel coverage")
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+    }
+
+    private var hasPaymentMethod: Bool {
+        billingStatus?.hasPaymentMethod ?? false
+    }
+
+    @ViewBuilder
+    private var addPaymentMethodRow: some View {
+        let tapAction: () -> Void = { Task { await startPaymentMethodSetup() } }
+        let title: String = hasPaymentMethod ? "Payment method" : "Add payment method"
+        Button(action: tapAction) {
+            HStack(spacing: DesignConstants.Spacing.step2x) {
+                Image(systemName: "creditcard.fill")
+                    .foregroundStyle(.colorFillPrimary)
+                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                    Text(title)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.colorTextPrimary)
+                    if !hasPaymentMethod {
+                        Text("Required before enabling people.")
+                            .font(.caption)
+                            .foregroundStyle(.colorTextSecondary)
+                    }
+                }
+                Spacer()
+                addPaymentMethodTrailing
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isSettingUpPaymentMethod)
+    }
+
+    @ViewBuilder
+    private var addPaymentMethodTrailing: some View {
+        if isSettingUpPaymentMethod {
+            ProgressView()
+        } else if hasPaymentMethod {
+            Text("On file")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.colorTextSecondary)
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        } else {
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.colorTextTertiary)
+        }
+    }
+
     private var balanceRow: some View {
         let balance: Int = billingStatus?.balanceCents ?? 0
-        let balanceLabel: String = {
-            if balance > 0 { return "$\(balance / 100)" }
-            if balance < 0 { return "-$\(abs(balance) / 100)" }
-            return "$0"
-        }()
+        let rate: Int = billingStatus?.monthlyRateCents ?? 0
+        let refundableCents: Int = max(0, balance - rate)
+        let balanceLabel: String = "$\(refundableCents / 100)"
         let tapAction = { showingCancelConfirm = true }
         return Button(action: tapAction) {
             HStack {
@@ -736,43 +805,10 @@ struct MembershipView: View {
         guard let firstOfNextMonth = calendar.date(from: components) else {
             return "$\(chargeDollars)"
         }
-        guard let chargeDate = calendar.date(byAdding: .day, value: -3, to: firstOfNextMonth) else {
-            return "$\(chargeDollars)"
-        }
-        let displayDate: Date = chargeDate <= now
-            ? calendar.date(byAdding: .month, value: 1, to: chargeDate) ?? chargeDate
-            : chargeDate
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d"
-        let dateString: String = formatter.string(from: displayDate)
+        let dateString: String = formatter.string(from: firstOfNextMonth)
         return "\(dateString) · $\(chargeDollars)"
-    }
-
-    private var peoplePicker: some View {
-        let minusDisabled: Bool = checkoutPeople <= 1
-        let minusStyle: Color = minusDisabled ? .colorTextTertiary : .colorFillPrimary
-        let minusAction = { if checkoutPeople > 1 { checkoutPeople -= 1 } }
-        let plusAction = { checkoutPeople += 1 }
-        return HStack {
-            Text("People")
-                .foregroundStyle(.colorTextPrimary)
-            Spacer()
-            Button(action: minusAction) {
-                Image(systemName: "minus.circle.fill")
-                    .foregroundStyle(minusStyle)
-            }
-            .buttonStyle(.plain)
-            .disabled(minusDisabled)
-            Text("\(checkoutPeople)")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.colorTextPrimary)
-                .frame(minWidth: 28)
-            Button(action: plusAction) {
-                Image(systemName: "plus.circle.fill")
-                    .foregroundStyle(.colorFillPrimary)
-            }
-            .buttonStyle(.plain)
-        }
     }
 
     private var durationPicker: some View {
@@ -786,7 +822,7 @@ struct MembershipView: View {
 
     private var paymentMethodPicker: some View {
         Picker("Payment method", selection: $paymentMethod) {
-            ForEach(GoldilocksPaymentMethod.allCases, id: \.self) { method in
+            ForEach(GoldilocksPaymentMethod.selectableCases, id: \.self) { method in
                 if method == .apple {
                     Image(systemName: "apple.logo").tag(method)
                 } else {
@@ -814,16 +850,23 @@ struct MembershipView: View {
         .disabled(!canStartCheckout || isStartingCheckout)
     }
 
+    /// Apple Pay and card payments are recurring subscriptions; crypto is
+    /// a one-time prepaid deposit.
+    private var isSubscriptionCheckout: Bool {
+        paymentMethod == .apple || paymentMethod == .card
+    }
+
     private var chargeTotal: Int {
-        checkoutPeople * GoldilocksPlan.monthlyPricePerPerson * prepaidDuration.months
+        let months: Int = isSubscriptionCheckout ? 1 : prepaidDuration.months
+        return plan.billableSeatCount * GoldilocksPlan.monthlyPricePerPerson * months
     }
 
     private var checkoutButtonLabel: String {
-        "Deposit $\(chargeTotal)"
+        isSubscriptionCheckout ? "Subscribe $\(chargeTotal)/mo" : "Deposit $\(chargeTotal)"
     }
 
     private var canStartCheckout: Bool {
-        checkoutPeople > 0
+        plan.billableSeatCount > 0
     }
 
     private var billingInfoMessage: String {
@@ -831,17 +874,13 @@ struct MembershipView: View {
         let calendar = Calendar.current
         let nextMonth: Date = calendar.date(byAdding: .month, value: 1, to: now) ?? now
         let components: DateComponents = calendar.dateComponents([.year, .month], from: nextMonth)
-        guard let firstOfNextMonth = calendar.date(from: components),
-              let cutoff = calendar.date(byAdding: .day, value: -3, to: firstOfNextMonth) else {
+        guard let firstOfNextMonth = calendar.date(from: components) else {
             return "Disable people in your membership before the billing date to avoid being charged."
         }
-        let displayDate: Date = cutoff <= now
-            ? calendar.date(byAdding: .month, value: 1, to: cutoff) ?? cutoff
-            : cutoff
         let formatter = DateFormatter()
         formatter.dateFormat = "MMMM d"
-        let dateString: String = formatter.string(from: displayDate)
-        return "Disable people in your membership before \(dateString) to not be charged."
+        let dateString: String = formatter.string(from: firstOfNextMonth)
+        return "Billing runs at midnight on \(dateString). Disable people or cancel before then to avoid being charged."
     }
 
     private var hasBalance: Bool {
@@ -898,7 +937,9 @@ struct MembershipView: View {
         return Button(action: tapAction) {
             HStack(spacing: DesignConstants.Spacing.step2x) {
                 Image(systemName: "plus.circle.fill")
+                    .font(.body)
                     .foregroundStyle(.colorFillPrimary)
+                    .frame(width: Self.rowIconWidth, alignment: .center)
                 VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
                     Text("Add someone")
                         .font(.body.weight(.semibold))
@@ -920,6 +961,10 @@ struct MembershipView: View {
         return HStack(spacing: DesignConstants.Spacing.step2x) {
             Button(action: tapAction) {
                 HStack(spacing: DesignConstants.Spacing.step2x) {
+                    Image(systemName: member.icon)
+                        .font(.body)
+                        .foregroundStyle(.colorFillPrimary)
+                        .frame(width: Self.rowIconWidth, alignment: .center)
                     VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
                         Text(rowLabel)
                             .font(.body)
@@ -939,6 +984,10 @@ struct MembershipView: View {
             get: { member.enabled },
             set: { newValue in
                 if newValue {
+                    guard hasPaymentMethod else {
+                        showingNeedsPaymentMethod = true
+                        return
+                    }
                     pendingActivation = member
                     if activatedPersonIds.contains(member.id) {
                         showingReactivationConfirm = true
@@ -1019,6 +1068,46 @@ struct MembershipView: View {
     private func savePeopleList() async {
         await plan.saveToBackend(session: session)
         await syncSeats()
+    }
+
+    /// Open a Stripe Checkout (setup mode) so the client can save a card.
+    /// The card is confirmed when the app returns to the foreground.
+    private func startPaymentMethodSetup() async {
+        isSettingUpPaymentMethod = true
+        do {
+            let response = try await session.setupGoldilocksPaymentMethod()
+            if let url = URL(string: response.checkoutUrl) {
+                paymentMethodSessionId = response.sessionId
+                openURL(url)
+            } else {
+                showBillingResult("Couldn't open the card setup page.")
+            }
+        } catch let apiError as APIError {
+            switch apiError {
+            case .authenticationFailed, .notAuthenticated, .forbidden:
+                showBillingResult("Couldn't authenticate with the server. Reopen the app and try again; if it keeps happening, delete app data in Settings to sign in fresh.")
+            default:
+                showBillingResult("Couldn't start card setup: \(apiError.description)")
+            }
+        } catch {
+            showBillingResult("Couldn't start card setup: \(error.localizedDescription)")
+        }
+        isSettingUpPaymentMethod = false
+    }
+
+    /// After returning from the setup checkout, confirm the saved card and
+    /// refresh billing status so the row shows the card is on file.
+    private func confirmPaymentMethod() async {
+        guard let sessionId = paymentMethodSessionId else { return }
+        do {
+            let result = try await session.confirmGoldilocksPaymentMethod(sessionId: sessionId)
+            guard result.hasPaymentMethod else { return }
+            paymentMethodSessionId = nil
+            billingStatus = try await session.fetchGoldilocksBillingStatus()
+            showBillingResult("Your card has been saved.")
+        } catch {
+            Log.warning("[Goldilocks] Payment method confirm failed: \(error.localizedDescription)")
+        }
     }
 
     /// Start the checkout flow for the selected payment method. Card
@@ -1104,19 +1193,14 @@ struct MembershipView: View {
         }
     }
 
-    /// Stop coverage and refund the unused balance to the card.
+    /// Stop the subscription at the end of the current paid period.
     private func cancelCoverage() async {
         isCancelling = true
         do {
-            let result = try await session.cancelGoldilocksBilling()
+            _ = try await session.cancelGoldilocksBilling()
             billingStatus = try await session.fetchGoldilocksBillingStatus()
             cacheCoverageActive()
-            let refundDollars: Int = result.refundedCents / 100
-            if refundDollars > 0 {
-                showBillingResult("Coverage cancelled. $\(refundDollars) refunded to your card.")
-            } else {
-                showBillingResult("Coverage cancelled. No refund, the current month is non-refundable.")
-            }
+            showBillingResult("Coverage will end at the close of the current period.")
         } catch {
             showBillingResult("Couldn't cancel coverage: \(error.localizedDescription)")
         }
@@ -1164,10 +1248,12 @@ private struct PersonEditorSheet: View {
     let onSave: (SeatMember) -> Void
     let onRemove: (() -> Void)?
 
+    @State private var icon: String
     @State private var firstName: String
     @State private var middleName: String
     @State private var lastName: String
     @State private var phone: String
+    @State private var countryCode: String
     @State private var address: PersonAddress
     @State private var emails: [EditableEmail]
     @State private var showingRemoveConfirm: Bool = false
@@ -1189,20 +1275,25 @@ private struct PersonEditorSheet: View {
         switch mode {
         case .add:
             self.originalMember = nil
+            self._icon = State(initialValue: Self.defaultIconChoice)
             self._firstName = State(initialValue: "")
             self._middleName = State(initialValue: "")
             self._lastName = State(initialValue: "")
             self._phone = State(initialValue: "")
+            self._countryCode = State(initialValue: Self.defaultCountryCode)
             self._address = State(initialValue: PersonAddress())
             // Start with one draft row so the user sees the email
             // section immediately without having to tap "Add email".
             self._emails = State(initialValue: [EditableEmail.draft()])
         case .edit(let member):
             self.originalMember = member
+            self._icon = State(initialValue: member.icon)
             self._firstName = State(initialValue: member.firstName)
             self._middleName = State(initialValue: member.middleName)
             self._lastName = State(initialValue: member.lastName)
-            self._phone = State(initialValue: member.phone)
+            let parsedPhone = Self.parsePhone(member.phone)
+            self._countryCode = State(initialValue: parsedPhone.countryCode)
+            self._phone = State(initialValue: parsedPhone.localNumber)
             self._address = State(initialValue: member.address)
             self._emails = State(initialValue: member.emails.map(EditableEmail.fromLabeled))
         }
@@ -1211,6 +1302,7 @@ private struct PersonEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                iconSection
                 nameSection
                 emailsSection
                 phoneSection
@@ -1311,6 +1403,46 @@ private struct PersonEditorSheet: View {
             Button(saveButtonTitle, action: saveAction)
                 .disabled(!canSave)
         }
+    }
+
+    private static let iconChoices: [String] = [
+        "person.circle.fill", "star.fill", "heart.fill", "bolt.fill",
+        "leaf.fill", "flame.fill", "moon.fill", "sun.max.fill",
+        "pawprint.fill", "crown.fill", "gift.fill", "bell.fill",
+        "cloud.fill", "drop.fill", "sparkles", "bird.fill",
+        "tortoise.fill", "hare.fill", "fish.fill", "diamond.fill"
+    ]
+
+    private static let defaultIconChoice: String = iconChoices.first ?? SeatMember.defaultIcon
+
+    private var iconSection: some View {
+        Section {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: DesignConstants.Spacing.step2x) {
+                    ForEach(Self.iconChoices, id: \.self) { choice in
+                        iconCell(choice)
+                    }
+                }
+                .padding(.vertical, DesignConstants.Spacing.stepX)
+            }
+        } header: {
+            Text("Icon")
+        }
+    }
+
+    private func iconCell(_ choice: String) -> some View {
+        let isSelected: Bool = choice == icon
+        let background: Color = isSelected ? .colorFillPrimary : .colorFillMinimal
+        let foreground: Color = isSelected ? .white : .colorTextPrimary
+        let tapAction: () -> Void = { icon = choice }
+        return Button(action: tapAction) {
+            Image(systemName: choice)
+                .font(.title3)
+                .foregroundStyle(foreground)
+                .frame(width: 44.0, height: 44.0)
+                .background(background, in: Circle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var nameSection: some View {
@@ -1452,9 +1584,27 @@ private struct PersonEditorSheet: View {
 
     private var phoneSection: some View {
         Section {
-            TextField("Phone", text: $phone)
-                .textContentType(.telephoneNumber)
-                .keyboardType(.phonePad)
+            HStack(spacing: DesignConstants.Spacing.step2x) {
+                Picker("Country code", selection: $countryCode) {
+                    ForEach(Self.countryCodes, id: \.self) { code in
+                        Text(code).tag(code)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .onChange(of: countryCode) { _, newCode in
+                    phone = Self.formatPhone(phone, countryCode: newCode)
+                }
+                TextField("Phone", text: $phone)
+                    .textContentType(.telephoneNumber)
+                    .keyboardType(.phonePad)
+                    .onChange(of: phone) { _, newValue in
+                        let formatted: String = Self.formatPhone(newValue, countryCode: countryCode)
+                        if formatted != phone {
+                            phone = formatted
+                        }
+                    }
+            }
         } header: {
             Text("Phone (optional)")
         }
@@ -1523,14 +1673,55 @@ private struct PersonEditorSheet: View {
             country: address.country.trimmingCharacters(in: .whitespaces)
         )
         let verifiedEmails: [LabeledEmail] = emails.compactMap { $0.toLabeled }
-        var member: SeatMember = originalMember ?? SeatMember()
+        // New people start disabled — enabling them later is what charges
+        // the $100 initial-report fee and starts coverage.
+        var member: SeatMember = originalMember ?? SeatMember(enabled: false)
         member.firstName = firstName.trimmingCharacters(in: .whitespaces)
         member.middleName = middleName.trimmingCharacters(in: .whitespaces)
         member.lastName = lastName.trimmingCharacters(in: .whitespaces)
         member.emails = verifiedEmails
-        member.phone = phone.trimmingCharacters(in: .whitespaces)
+        let trimmedPhone: String = phone.trimmingCharacters(in: .whitespaces)
+        member.phone = trimmedPhone.isEmpty ? "" : "\(countryCode) \(trimmedPhone)"
         member.address = trimmedAddress
+        member.icon = icon
         return member
+    }
+
+    private static let defaultCountryCode: String = "+1"
+
+    private static let countryCodes: [String] = [
+        "+1", "+44", "+61", "+91", "+33", "+49", "+81", "+86", "+52", "+55", "+34", "+39", "+7", "+82", "+971"
+    ]
+
+    /// Format a raw phone entry. For US (+1) numbers, group as
+    /// XXX-XXX-XXXX (max 10 digits). For other country codes, keep digits
+    /// only (up to E.164's 15) since dash grouping is region-specific.
+    private static func formatPhone(_ raw: String, countryCode: String) -> String {
+        let digits: String = String(raw.filter { $0.isNumber })
+        guard countryCode == defaultCountryCode else {
+            return String(digits.prefix(15))
+        }
+        let capped: String = String(digits.prefix(10))
+        var result: String = ""
+        for (index, character) in capped.enumerated() {
+            if index == 3 || index == 6 {
+                result.append("-")
+            }
+            result.append(character)
+        }
+        return result
+    }
+
+    /// Split a stored phone ("+1 555-123-4567") back into its country code
+    /// and a freshly-formatted local number. Falls back to the default code.
+    private static func parsePhone(_ stored: String) -> (countryCode: String, localNumber: String) {
+        let trimmed: String = stored.trimmingCharacters(in: .whitespaces)
+        let parts = trimmed.split(separator: " ", maxSplits: 1)
+        guard trimmed.hasPrefix("+"), parts.count == 2 else {
+            return (defaultCountryCode, formatPhone(trimmed, countryCode: defaultCountryCode))
+        }
+        let code: String = String(parts[0])
+        return (code, formatPhone(String(parts[1]), countryCode: code))
     }
 
     private func sendVerificationCodes() {
@@ -1852,6 +2043,39 @@ private struct ReferralCreditSheet: View {
             VStack(spacing: DesignConstants.Spacing.step8x) {
                 Spacer()
 
+                VStack(spacing: DesignConstants.Spacing.step2x) {
+                    Text("Your referral code")
+                        .font(.caption)
+                        .foregroundStyle(.colorTextSecondary)
+                        .textCase(.uppercase)
+                        .kerning(1.0)
+
+                    let copyAction = { UIPasteboard.general.string = myCode }
+                    Button(action: copyAction) {
+                        HStack(spacing: DesignConstants.Spacing.step2x) {
+                            Text(myCode)
+                                .font(.system(size: 36, weight: .bold, design: .monospaced))
+                                .foregroundStyle(.colorTextPrimary)
+                                .kerning(4.0)
+                            Image(systemName: "doc.on.doc")
+                                .font(.body)
+                                .foregroundStyle(.colorTextTertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Copy referral code \(myCode)")
+
+                    Text("Get a $50 credit for every new paying client.")
+                        .font(.footnote)
+                        .foregroundStyle(.colorTextSecondary)
+
+                    if referralCreditCents > 0 {
+                        Text("Referral credit: \(referralCreditFormatted)")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Color.brandIcon)
+                    }
+                }
+
                 if !hasAppliedReferralCode {
                 VStack(spacing: DesignConstants.Spacing.step3x) {
                     Text("Have a referral code?")
@@ -1897,39 +2121,6 @@ private struct ReferralCreditSheet: View {
                     .opacity(referralInput.count == 6 ? 1.0 : 0.5)
                 }
                 .padding(.horizontal, DesignConstants.Spacing.step4x)
-                }
-
-                VStack(spacing: DesignConstants.Spacing.step2x) {
-                    Text("Your referral code")
-                        .font(.caption)
-                        .foregroundStyle(.colorTextSecondary)
-                        .textCase(.uppercase)
-                        .kerning(1.0)
-
-                    let copyAction = { UIPasteboard.general.string = myCode }
-                    Button(action: copyAction) {
-                        HStack(spacing: DesignConstants.Spacing.step2x) {
-                            Text(myCode)
-                                .font(.system(size: 36, weight: .bold, design: .monospaced))
-                                .foregroundStyle(.colorTextPrimary)
-                                .kerning(4.0)
-                            Image(systemName: "doc.on.doc")
-                                .font(.body)
-                                .foregroundStyle(.colorTextTertiary)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Copy referral code \(myCode)")
-
-                    Text("For every 2 paying clients, get $100 credit.")
-                        .font(.footnote)
-                        .foregroundStyle(.colorTextSecondary)
-
-                    if referralCreditCents > 0 {
-                        Text("Referral credit: \(referralCreditFormatted)")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(Color.brandIcon)
-                    }
                 }
 
                 Spacer()

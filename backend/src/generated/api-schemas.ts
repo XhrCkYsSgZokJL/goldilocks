@@ -241,6 +241,25 @@ export const checkoutResponseSchema = z.object({
 
 export type CheckoutResponse = z.infer<typeof checkoutResponseSchema>;
 
+export const paymentMethodSetupResponseSchema = z.object({
+  checkoutUrl: z.string(),
+  sessionId: z.string(),
+});
+
+export type PaymentMethodSetupResponse = z.infer<typeof paymentMethodSetupResponseSchema>;
+
+export const paymentMethodConfirmRequestSchema = z.object({
+  sessionId: z.string(),
+});
+
+export type PaymentMethodConfirmRequest = z.infer<typeof paymentMethodConfirmRequestSchema>;
+
+export const paymentMethodConfirmResponseSchema = z.object({
+  hasPaymentMethod: z.boolean(),
+});
+
+export type PaymentMethodConfirmResponse = z.infer<typeof paymentMethodConfirmResponseSchema>;
+
 export const seatsRequestSchema = z.object({
   seats: z.number(),
 });
@@ -256,6 +275,7 @@ export const billingStatusResponseSchema = z.object({
   seats: z.number(),
   coveredPeople: z.number(),
   reportDay: z.string(),
+  hasPaymentMethod: z.boolean(),
 });
 
 export type BillingStatusResponse = z.infer<typeof billingStatusResponseSchema>;
