@@ -7,7 +7,12 @@ DEVELOPMENT_TEAM = FY4NZR34Z3
 // Swift compiler flags - define DEBUG for conditional compilation (if needed for dev/testflight)
 // Note: SWIFT_ACTIVE_COMPILATION_CONDITIONS propagates to Swift Package dependencies
 // Comment out the line below if you don't want DEBUG in TestFlight builds
-SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG
+//
+// DEBUG_DISABLE_SECURE_WINDOW disables the app-wide screenshot/recording
+// block (see Convos/Window/SecureWindow.swift) so engineers can capture
+// bug-report screenshots from dev builds. Strip this in TestFlight
+// builds intended for security testing.
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG DEBUG_DISABLE_SECURE_WINDOW
 
 // Override Swift Package optimization for debugging
 // This ensures ConvosCore and other Swift Packages are not optimized
@@ -27,10 +32,10 @@ NOTIFICATION_SERVICE_BUNDLE_ID = $(MAIN_BUNDLE_ID).ConvosNSE
 
 // Environment-specific entitlements
 APP_GROUP_IDENTIFIER = group.$(MAIN_BUNDLE_ID)
-ASSOCIATED_DOMAIN = dev.convos.org
-WEB_CREDENTIALS_DOMAIN = dev.convos.org
-SECONDARY_ASSOCIATED_DOMAIN = app-dev.convos.org
-URL_SCHEME = convos-dev
+ASSOCIATED_DOMAIN = dev.goldilocksdigital.xyz
+WEB_CREDENTIALS_DOMAIN = dev.goldilocksdigital.xyz
+SECONDARY_ASSOCIATED_DOMAIN = app-dev.goldilocksdigital.xyz
+URL_SCHEME = goldilocks-dev
 KEYCHAIN_GROUP_IDENTIFIER = $(MAIN_BUNDLE_ID)
 APP_DISPLAY_NAME = Convos Dev
 APNS_ENVIRONMENT = production

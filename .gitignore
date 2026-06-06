@@ -16,6 +16,9 @@
 .convos-task
 .convos-stack
 
+## Codegen dependencies
+shared/codegen/node_modules/
+
 ## User settings
 xcuserdata/
 
@@ -134,6 +137,7 @@ claude-code-resources/
 
 # Claude Code local files
 .claude/.simulator_id
+.dev-sim-id
 .derivedData/
 .derivedData-device/
 **/.build/
@@ -150,6 +154,9 @@ qa/cxdb/qa.sqlite-shm
 
 # Runtime artifacts
 .claude/scheduled_tasks.lock
+
+# Git bundle backups (created during the Goldilocks repo migration)
+*.bundle
 
 # nix local cache
 .direnv

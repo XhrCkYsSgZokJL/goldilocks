@@ -4,14 +4,14 @@
   "xmtpNetwork": "dev",
   "bundleId": "org.convos.ios-local",
   "appGroupIdentifier": "group.org.convos.ios-local",
-  "relyingPartyIdentifier": "local.convos.org",
+  "relyingPartyIdentifier": "local.goldilocksdigital.xyz",
   "associatedDomains": [
-    "local.convos.org",
-    "app-local.convos.org"
+    "local.goldilocksdigital.xyz",
+    "app-local.goldilocksdigital.xyz"
   ],
-  "appUrlScheme": "convos-local",
-  "siweDomain": "dev.convos.org",
-  "siweUri": "https://dev.convos.org",
+  "appUrlScheme": "goldilocks-local",
+  "siweDomain": "local.goldilocksdigital.xyz",
+  "siweUri": "http://localhost:4000/api/v2/me",
   "siweChainId": 1,
   "posthogHost": "https://us.i.posthog.com"
 }

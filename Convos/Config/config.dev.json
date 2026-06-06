@@ -1,17 +1,17 @@
 {
   "environment": "dev",
-  "backendUrl": "https://api.dev.convos.xyz/api",
+  "backendUrl": "https://api.dev.goldilocksdigital.xyz/api",
   "xmtpNetwork": "dev",
   "bundleId": "org.convos.ios-preview",
   "appGroupIdentifier": "group.org.convos.ios-preview",
-  "relyingPartyIdentifier": "dev.convos.org",
+  "relyingPartyIdentifier": "dev.goldilocksdigital.xyz",
   "associatedDomains": [
-    "dev.convos.org",
-    "app-dev.convos.org"
+    "dev.goldilocksdigital.xyz",
+    "app-dev.goldilocksdigital.xyz"
   ],
-  "appUrlScheme": "convos-dev",
-  "siweDomain": "dev.convos.org",
-  "siweUri": "https://dev.convos.org",
+  "appUrlScheme": "goldilocks-dev",
+  "siweDomain": "dev.goldilocksdigital.xyz",
+  "siweUri": "https://dev.goldilocksdigital.xyz",
   "siweChainId": 1,
   "posthogHost": "https://us.i.posthog.com"
 }
