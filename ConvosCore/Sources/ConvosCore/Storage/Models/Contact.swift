@@ -46,6 +46,25 @@ public struct Contact: Hashable, Identifiable, Sendable {
     /// browse row renders it without a live member profile;
     /// `Contact.resolved(member:...)` overlays the freshest per-conversation
     /// emoji when available, matching `MessageAvatarView` in the messages list.
+    /// not carry a template. Not persisted on `DBContact`; it is overlaid
+    /// onto the contact at resolution time from the per-conversation
+    /// member profile metadata (see `Contact.resolved(member:...)`), which
+    /// is the freshest source. Drives the contact card's Chat action.
+    public let agentTemplateId: String?
+    /// The shareable web URL for a template-backed agent (the backend's
+    /// `publishedUrl`). `nil` for human contacts and for agents that do
+    /// not carry a template. Not persisted on `DBContact`; it is overlaid
+    /// onto the contact at resolution time from the per-conversation
+    /// member profile metadata (see `Contact.resolved(member:...)`), which
+    /// is the freshest source. Drives the contact card's Share button.
+    public let agentTemplatePublishedURL: String?
+    /// Emoji glyph the member set on their per-conversation profile.
+    /// Not persisted on `DBContact`; overlaid onto the contact at
+    /// resolution time from the per-conversation member profile metadata
+    /// (see `Contact.resolved(member:...)`) so avatars rendered from a
+    /// resolved `Contact` (e.g. the in-chat contact detail sheet) carry
+    /// the same emoji avatar that `MessageAvatarView` shows in the
+    /// messages list.
     public let profileEmoji: String?
     /// The agent runtime's `instanceId` for a specific provisioned agent.
     /// Not persisted on `DBContact`; overlaid at resolution time from the
@@ -63,6 +82,7 @@ public struct Contact: Hashable, Identifiable, Sendable {
     /// without a network round-trip. `nil` for humans and for saved agent
     /// contacts (which don't persist it); those resolve it on demand.
     public let agentDescription: String?
+    public let isAdminContact: Bool
 
     public init(
         inboxId: String,
@@ -80,7 +100,8 @@ public struct Contact: Hashable, Identifiable, Sendable {
         profileEmoji: String? = nil,
         agentInstanceId: String? = nil,
         agentAttestation: String? = nil,
-        agentDescription: String? = nil
+        agentDescription: String? = nil,
+        isAdminContact: Bool = false
     ) {
         self.inboxId = inboxId
         self.displayName = displayName
@@ -98,6 +119,7 @@ public struct Contact: Hashable, Identifiable, Sendable {
         self.agentInstanceId = agentInstanceId
         self.agentAttestation = agentAttestation
         self.agentDescription = agentDescription
+        self.isAdminContact = isAdminContact
     }
 
     /// True when this contact has the full set of AES-256-GCM material
@@ -136,11 +158,17 @@ public struct Contact: Hashable, Identifiable, Sendable {
     /// inboxId prefix in any user-facing surface reads as a bug. Same
     /// placeholder convention the message-input and profile-settings
     /// surfaces use for unnamed participants.
+    /// Display label that always returns something printable. Falls back
+    /// to "Somebody" rather than a truncated inboxId -- exposing a hex
+    /// prefix in any user-facing surface reads as a bug. Same placeholder
+    /// the message-input and profile-settings surfaces use for unnamed
+    /// participants.
     public var resolvedDisplayName: String {
         if let name = displayName, !name.isEmpty {
             return name
         }
         return isAgent ? "Agent" : "Somebody"
+        return "Somebody"
     }
 
     /// Used for alphabetical sectioning. Returns "#" for contacts whose
@@ -172,7 +200,8 @@ extension Contact {
             agentVerification: dbContact.agentVerification,
             agentTemplateId: dbContact.agentTemplateId,
             agentTemplatePublishedURL: dbContact.agentTemplatePublishedURL,
-            profileEmoji: dbContact.agentTemplateEmoji
+            profileEmoji: dbContact.agentTemplateEmoji,
+            isAdminContact: dbContact.isAdminContact
         )
     }
 }
@@ -215,6 +244,9 @@ extension Contact {
     /// `Contact.resolved(member:...)` to prefer the freshest template id
     /// from a live per-conversation member profile over the value
     /// persisted on the stored contact.
+    /// `Contact.resolved(member:...)` to carry the freshest template id
+    /// from the per-conversation member profile onto a stored contact,
+    /// which has no template column of its own.
     public func with(agentTemplateId: String?) -> Contact {
         Contact(
             inboxId: inboxId,
@@ -231,6 +263,8 @@ extension Contact {
             agentTemplatePublishedURL: agentTemplatePublishedURL,
             profileEmoji: profileEmoji,
             agentInstanceId: agentInstanceId
+            agentInstanceId: agentInstanceId,
+            isAdminContact: isAdminContact
         )
     }
 
@@ -238,6 +272,9 @@ extension Contact {
     /// `Contact.resolved(member:...)` to prefer the freshest template
     /// `publishedUrl` from a live per-conversation member profile over
     /// the value persisted on the stored contact.
+    /// `Contact.resolved(member:...)` to carry the freshest template
+    /// `publishedUrl` from the per-conversation member profile onto a
+    /// stored contact, which has no template column of its own.
     public func with(agentTemplatePublishedURL: String?) -> Contact {
         Contact(
             inboxId: inboxId,
@@ -254,6 +291,8 @@ extension Contact {
             agentTemplatePublishedURL: agentTemplatePublishedURL,
             profileEmoji: profileEmoji,
             agentInstanceId: agentInstanceId
+            agentInstanceId: agentInstanceId,
+            isAdminContact: isAdminContact
         )
     }
 
@@ -281,6 +320,8 @@ extension Contact {
             agentTemplatePublishedURL: agentTemplatePublishedURL,
             profileEmoji: profileEmoji,
             agentInstanceId: agentInstanceId
+            agentInstanceId: agentInstanceId,
+            isAdminContact: isAdminContact
         )
     }
 
@@ -288,6 +329,9 @@ extension Contact {
     /// `Contact.resolved(member:...)` to prefer the freshest emoji glyph
     /// from a live per-conversation member profile over the value
     /// persisted on the stored contact.
+    /// `Contact.resolved(member:...)` to carry the freshest emoji glyph
+    /// from the per-conversation member profile metadata onto a stored
+    /// contact, which has no emoji column of its own.
     public func with(profileEmoji: String?) -> Contact {
         Contact(
             inboxId: inboxId,
@@ -304,6 +348,8 @@ extension Contact {
             agentTemplatePublishedURL: agentTemplatePublishedURL,
             profileEmoji: profileEmoji,
             agentInstanceId: agentInstanceId
+            agentInstanceId: agentInstanceId,
+            isAdminContact: isAdminContact
         )
     }
 
@@ -325,6 +371,8 @@ extension Contact {
             profileEmoji: profileEmoji,
             agentInstanceId: agentInstanceId,
             agentAttestation: agentAttestation
+            agentAttestation: agentAttestation,
+            isAdminContact: isAdminContact
         )
     }
 
@@ -349,6 +397,8 @@ extension Contact {
             profileEmoji: profileEmoji,
             agentInstanceId: agentInstanceId,
             agentAttestation: agentAttestation
+            agentAttestation: agentAttestation,
+            isAdminContact: isAdminContact
         )
     }
 }

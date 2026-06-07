@@ -27,6 +27,7 @@ struct DBContact: Codable, FetchableRecord, PersistableRecord, Hashable, Identif
         static let agentTemplateId: Column = Column(CodingKeys.agentTemplateId)
         static let agentTemplatePublishedURL: Column = Column(CodingKeys.agentTemplatePublishedURL)
         static let agentTemplateEmoji: Column = Column(CodingKeys.agentTemplateEmoji)
+        static let isAdminContact: Column = Column(CodingKeys.isAdminContact)
     }
 
     var id: String { inboxId }
@@ -69,6 +70,7 @@ struct DBContact: Codable, FetchableRecord, PersistableRecord, Hashable, Identif
     /// Template emoji glyph, used as the browse-row avatar fallback when
     /// no live per-conversation profile is available to supply an image.
     var agentTemplateEmoji: String?
+    var isAdminContact: Bool
 
     init(
         inboxId: String,
@@ -84,7 +86,8 @@ struct DBContact: Codable, FetchableRecord, PersistableRecord, Hashable, Identif
         agentVerification: AgentVerification? = nil,
         agentTemplateId: String? = nil,
         agentTemplatePublishedURL: String? = nil,
-        agentTemplateEmoji: String? = nil
+        agentTemplateEmoji: String? = nil,
+        isAdminContact: Bool = false
     ) {
         self.inboxId = inboxId
         self.addedAt = addedAt
@@ -100,6 +103,7 @@ struct DBContact: Codable, FetchableRecord, PersistableRecord, Hashable, Identif
         self.agentTemplateId = agentTemplateId
         self.agentTemplatePublishedURL = agentTemplatePublishedURL
         self.agentTemplateEmoji = agentTemplateEmoji
+        self.isAdminContact = isAdminContact
     }
 }
 
@@ -135,7 +139,8 @@ extension DBContact {
             agentVerification: snapshot.agentVerification,
             agentTemplateId: snapshot.agentTemplateId ?? agentTemplateId,
             agentTemplatePublishedURL: snapshot.agentTemplatePublishedURL ?? agentTemplatePublishedURL,
-            agentTemplateEmoji: snapshot.agentTemplateEmoji ?? agentTemplateEmoji
+            agentTemplateEmoji: snapshot.agentTemplateEmoji ?? agentTemplateEmoji,
+            isAdminContact: isAdminContact
         )
     }
 
@@ -154,7 +159,8 @@ extension DBContact {
             agentVerification: agentVerification,
             agentTemplateId: agentTemplateId,
             agentTemplatePublishedURL: agentTemplatePublishedURL,
-            agentTemplateEmoji: agentTemplateEmoji
+            agentTemplateEmoji: agentTemplateEmoji,
+            isAdminContact: isAdminContact
         )
     }
 }
