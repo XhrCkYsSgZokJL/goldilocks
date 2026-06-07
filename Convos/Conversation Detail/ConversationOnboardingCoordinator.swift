@@ -79,9 +79,6 @@ enum ConversationOnboardingState: Equatable {
 
     static let savedProfileSuccessDuration: CGFloat = 3.0
     static let notificationsEnabledSuccessDuration: CGFloat = 3.0
-    /// Fill duration for the Goldilocks "Tap to chat as …" quickname capsule
-    /// (`AddQuicknameView`'s `DrainingCapsule`).
-    static let addQuicknameViewDuration: CGFloat = 8.0
     // how long we wait before showing the description string
     static let waitingForInviteAcceptanceDelay: CGFloat = 3.0
 

@@ -21,7 +21,7 @@ Grep the conflicting file for these. A hit routes it to a design choice (and usu
 | `isCloudConnectionsEnabled`, `CloudConnectionGrantRequestSheet`, `CloudConnectionManagerProtocol` | [Cloud Connections gated](design-choices/cloud-connections-gated.md) | GATE |
 | `MainTabView` (dropped), `adminBanner`, `goldilocksChip`, `onOpenGoldilocksGroup` | [App shell: direct root](design-choices/app-shell-direct-root.md) | drop / REPLACE-EXTEND |
 | `AgentBuilder*` (gated), `AgentFilesLinks*` (adopted), `hasEverHadVerifiedConvosAgent`, `pendingAgent` | [Gated agents](design-choices/gated-agents.md) | GATE / TAKE-UPSTREAM |
-| `ProfileSettingsViewModel` vs `QuicknameSettingsViewModel`, `quicknameViewModel` | [Profile vs Quickname](design-choices/profile-vs-quickname.md) | prefer TAKE-UPSTREAM (in flux) |
+| `ProfileSettingsViewModel` (Quickname fully removed) | [Profile (formerly Quickname)](design-choices/profile-vs-quickname.md) | TAKE-UPSTREAM (resolved) |
 | `EXCLUDED_ARCHS`, `ImageType`, `ConvosCoreiOS`, "Copy Brand Config" phase | [Platform build constraints](design-choices/platform-build-constraints.md) | MECHANICAL / bridge |
 | paths under `backend/`, `shared/` | [Backend & shared monorepo](design-choices/backend-and-shared-monorepo.md) | OWN (never conflicts) |
 
@@ -38,7 +38,7 @@ Counts are divergent-file counts vs `upstream/dev` at the v2 cutover.
 | `Convos/Config` | 13 | [Roles](design-choices/roles-and-managed-groups.md), [Branding](design-choices/branding.md), [Auth](design-choices/auth-against-goldilocks-backend.md) | OWN / mechanical |
 | `Convos/Conversation Detail` | 11 | [Roles](design-choices/roles-and-managed-groups.md), [Gated agents](design-choices/gated-agents.md), [Billing](design-choices/goldilocks-billing-credits.md) | REPLACE-EXTEND |
 | `Convos/App Settings` | 10 | [Billing](design-choices/goldilocks-billing-credits.md), [Roles](design-choices/roles-and-managed-groups.md), [Profile/Quickname](design-choices/profile-vs-quickname.md) | REPLACE-EXTEND |
-| `Convos/Profile` | 8 | [Profile vs Quickname](design-choices/profile-vs-quickname.md) | prefer TAKE-UPSTREAM |
+| `Convos/Profile` | 8 | [Profile (formerly Quickname)](design-choices/profile-vs-quickname.md) | TAKE-UPSTREAM |
 | `shared/`, `Convos/Window`, `Convos/Contacts`, `Convos/Shared Views`, `Convos/Debug View` | misc | per markers | mixed |
 | `docs/`, `qa/`, `.github/`, `dev/` | misc | mechanical | follow |
 

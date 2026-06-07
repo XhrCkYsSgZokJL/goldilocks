@@ -52,7 +52,7 @@ The single most important principle for keeping syncs cheap:
 | [Gated agents](design-choices/gated-agents.md) | Product | Gate (keep upstream, hide entry) | `MainTabView` dropped, agent-builder gating |
 | [Cloud Connections gated](design-choices/cloud-connections-gated.md) | Security | Gate (locked `false`) | `isCloudConnectionsEnabled` |
 | [App shell: direct root](design-choices/app-shell-direct-root.md) | Product | Replace (we own the root) | `ConvosApp` → `ConversationsView` |
-| [Profile vs Quickname](design-choices/profile-vs-quickname.md) | Product | Converging onto upstream | `ProfileSettingsViewModel`, `QuicknameSettingsViewModel` |
+| [Profile (formerly Quickname)](design-choices/profile-vs-quickname.md) | Product | ✅ resolved — TAKE-UPSTREAM | `ProfileSettingsViewModel` |
 | [Backend & shared monorepo](design-choices/backend-and-shared-monorepo.md) | Platform | Additive (replays clean) | `backend/`, `shared/`, codegen |
 | [Auth against Goldilocks backend](design-choices/auth-against-goldilocks-backend.md) | Product | Replace-extend (don't adopt upstream SIWE) | `ConvosAPIClient`, refresh tokens |
 | [Platform build constraints](design-choices/platform-build-constraints.md) | Platform | Mechanical (re-apply settings) | `EXCLUDED_ARCHS`, `ConvosCoreiOS`, brand build phase |

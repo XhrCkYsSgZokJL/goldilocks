@@ -56,6 +56,7 @@ struct ConvosApp: App {
             try? await AgentVerificationWriter.reverifyUnverifiedAgents(in: dbWriter)
         }
         self.conversationsViewModel = .init(session: convos.session)
+        profileSettingsViewModel.bind(session: convos.session)
         appDelegate.session = convos.session
         appDelegate.pushNotificationRegistrar = convos.platformProviders.pushNotificationRegistrar
     }

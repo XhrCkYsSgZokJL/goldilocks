@@ -1,49 +1,46 @@
-# Profile vs Quickname
+# Profile (formerly Quickname)
 
-**Category:** Product · **Status:** ⚠️ **Converging onto upstream — in flux** · **Primary strategy:** prefer TAKE-UPSTREAM (Profile)
+**Category:** Product · **Status:** ✅ **Resolved — migrated onto upstream Profile** · **Primary strategy:** TAKE-UPSTREAM
 
 ## What
 
-Goldilocks historically branded the per-conversation identity feature as **"Quickname"** (`QuicknameSettingsViewModel`, `QuicknameSettings`, the "What is Quickname" / `AddQuicknameView` flow). Upstream calls the same concept **"Profile"** (`ProfileSettingsViewModel`, `ProfileSettings`). As of the v2 rebase, the app is **mid-migration onto upstream's Profile terminology**, because Profile is the dominant, actively-evolving surface (15 files) and Quickname is a thin wrapper (6 files) that collides with upstream's Profile-based child views.
+Goldilocks historically branded the per-user identity feature "**Quickname**" (`QuicknameSettingsViewModel`, `QuicknameSettings`, a name *randomizer*, and an "Add/Setup/WhatIs Quickname" drawer flow). **As of 2026-06 this is fully migrated onto upstream's `Profile`** — the app now uses `ProfileSettingsViewModel` everywhere, and all Quickname types/views are deleted.
 
 ## Why
 
-Maintaining a parallel "Quickname" vocabulary means every upstream Profile change becomes a rename-reconciliation. Standardizing on **Profile** makes future syncs cheap. The Quickname branding (if still desired) can be a *display-string* concern rather than a separate view-model/type hierarchy.
+The two were not just a rename — they were different architectures:
 
-## Current state (verify during testing)
+| | Quickname (removed) | Profile (current) |
+|---|---|---|
+| Storage | device-local `UserDefaults["QuicknameSettings"]` + disk image | **synced** global profile via `MyGlobalProfileWriter`/`Repository` (GRDB + messaging service) |
+| Extra feature | name *randomizer* (tags: gender-neutral/nature/weird) | — |
+| Binding | self-initializing singleton | **session-bound** (`bind(session:)`) |
 
-- **Shell standardized on Profile** — `ConvosApp` and `ConversationsView` now pass `ProfileSettingsViewModel`; `AppSettingsView`'s "My Info" destination uses the upstream Profile `MyInfoView`.
-- **Quickname still present** where take-ours surfaces use it (`QuicknameSettingsViewModel`, the drawer `AddQuicknameView` flow, `QuicknameSettings`). `AppSettingsView` still reads `quicknameViewModel` for its summary display.
-- `QuicknameSettingsViewModel.save()` now calls upstream's `ConversationOnboardingCoordinator.markProfileEditorShown()` (renamed from `markQuicknameEditorShown`).
+Maintaining a parallel local "Quickname" vocabulary meant every upstream Profile change became a rename-reconciliation, *and* the two could disagree (local default vs synced profile). Standardizing on upstream's synced Profile removes that tax and the split-store risk.
 
-> **⚠️ This is the one design choice that is not settled.** It is a half-migration captured honestly so a future engineer (or the current testing pass) can finish it deliberately rather than be surprised by two vocabularies. **Behavioral risk:** Quickname and Profile may read/write different stores — verify the "My Info" editor and the per-conversation name agree during testing.
+## What the migration did (2026-06)
 
-## Upstream vs Goldilocks
+- **Bound the singleton** — `ConvosApp` now calls `profileSettingsViewModel.bind(session: convos.session)` (this was the missing piece — `ProfileSettingsViewModel.shared` was previously never bound, so the migrated surfaces would have shown/saved nothing).
+- **Migrated the last consumers** — `AppSettingsView` (the "My info" row + summary) and `ConversationsView`'s sheet modifier now use `ProfileSettingsViewModel`.
+- **Deleted all Quickname code** — `QuicknameSettings`, `QuicknameSettingsViewModel`, `AddQuicknameView`, `SetupQuicknameView`, `WhatIsQuicknameView`, and the randomizer view + its randomizer-only component chain (`TagsField`, `ChipView`, `FlowLayoutTextEditor`, `BackspaceTextField`). Kept `FlowLayout` (used by the contacts picker).
+- **Removed the orphaned pill** — `AddQuicknameView` (the "Tap to chat as…" capsule) was already unreachable; the global profile auto-applies to new conversations without prompting (see `qa/tests/14-profile.md`). Deleted the stale `qa/tests/14-quickname.*`.
+- **Preserved returning-user data** — `ConversationOnboardingCoordinator` keeps `legacyHasSetQuicknamePrefix` as a read-only fallback so users who completed setup under the old Quickname keys aren't re-prompted. **Do not remove this** until the legacy install base is gone.
 
-| Aspect | Upstream | Goldilocks (current) |
-|--------|----------|----------------------|
-| Concept name | Profile | mixed: Profile (shell) + Quickname (some take-ours surfaces) |
-| View model | `ProfileSettingsViewModel` (148 LOC) | both; Profile is canonical |
-| Editor view | `MyInfoView` (profile params) | upstream `MyInfoView` (profile) |
-| Onboarding hook | `markProfileEditorShown` | `markProfileEditorShown` (adopted) |
+## Feature note: the name randomizer is gone
 
-## Files affected
+The Quickname *randomizer* (auto-generating pseudonymous names) was removed with the migration. Its UI was already orphaned (unreachable), so this is not a user-visible regression. If name-randomization is wanted again, re-add it as a **`ProfileSettings`-layer feature**, not a separate view model.
 
-- `Convos/Profile/ProfileSettingsViewModel.swift` (canonical) vs `QuicknameSettingsViewModel.swift` (wrapper).
-- `Convos/Profile/MyInfoView.swift` (upstream, profile params).
-- `Convos/ConvosApp.swift`, `Convos/Conversations List/ConversationsView.swift`, `Convos/App Settings/AppSettingsView.swift` — migrated to `profileSettingsViewModel` (kept `quicknameViewModel` only for the AppSettingsView display chain).
-- The drawer Quickname flow (`Add/Setup/WhatIsQuicknameView`, `QuicknameSettings`).
+## Residual markers (intentional keepers)
 
-## Markers
-
-`ProfileSettingsViewModel`, `QuicknameSettingsViewModel`, `QuicknameSettings`, `quicknameViewModel`, `profileSettingsViewModel`, `markProfileEditorShown`.
+- `ConversationOnboardingCoordinator.legacyHasSetQuicknamePrefix` — the returning-user migration. Keep.
+- `MyInfoNavigatorImpl.navigateTo(quicknameRandomizer:)` — a no-op stub required by the `ConvosMetrics` navigator protocol (`QuicknameRandomizerNavigatorArgs` is a dependency type). Harmless; can't remove without forking the dependency.
 
 ## Upstream-sync guidance
 
-- **Prefer TAKE-UPSTREAM (Profile).** When upstream evolves Profile, take it. Don't re-fork it into Quickname.
-- **Recommended end state:** finish the migration — replace remaining `QuicknameSettingsViewModel` usages with `ProfileSettingsViewModel`, and reduce "Quickname" to a `BrandConfig` display string if the branding is still wanted. Then delete this design choice (it becomes "we use upstream Profile, branded via `BrandConfig`").
-- Until then, treat any Quickname↔Profile mismatch in a sync as "move toward Profile."
+- **TAKE-UPSTREAM for Profile.** This is now a non-divergence — we use upstream's `ProfileSettingsViewModel`/`MyInfoView`/`ProfileSettings` directly. Accept upstream's evolution wholesale.
+- **Don't re-introduce Quickname.** If a sync surfaces "Quickname" again, it's stale.
+- If Goldilocks wants the "Quickname" *branding* back, make it a `BrandConfig` display string over the Profile feature — not a fork of the view model.
 
 ## Related
 
-[[branding]] (Quickname-as-brand-string is the clean end state) · [[app-shell-direct-root]] · [[roles-and-managed-groups]]
+[[branding]] (Quickname-as-brand-string is the clean way to keep the name) · [[app-shell-direct-root]] · [[roles-and-managed-groups]]

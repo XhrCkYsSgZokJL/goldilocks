@@ -351,7 +351,6 @@ struct ConversationsView: View {
             presentingAppSettings: $presentingAppSettings,
             appSettingsInitialRoute: appSettingsInitialRoute,
             viewModel: viewModel,
-            quicknameViewModel: QuicknameSettingsViewModel.shared,
             profileSettingsViewModel: profileSettingsViewModel,
             conversationPendingExplosion: $conversationPendingExplosion,
             namespace: namespace
@@ -371,7 +370,6 @@ private struct ConversationsSheetModifier: ViewModifier {
     @Binding var presentingAppSettings: Bool
     let appSettingsInitialRoute: AppSettingsRoute?
     @Bindable var viewModel: ConversationsViewModel
-    let quicknameViewModel: QuicknameSettingsViewModel
     @Bindable var profileSettingsViewModel: ProfileSettingsViewModel
     @Binding var conversationPendingExplosion: Conversation?
     var namespace: Namespace.ID
@@ -386,7 +384,7 @@ private struct ConversationsSheetModifier: ViewModifier {
             .sheet(isPresented: $presentingAppSettings) {
                 AppSettingsView(
                     viewModel: viewModel.appSettingsViewModel,
-                    quicknameViewModel: quicknameViewModel,
+                    profileSettingsViewModel: profileSettingsViewModel,
                     session: viewModel.session,
                     onDeleteAllData: viewModel.deleteAllData,
                     initialRoute: appSettingsInitialRoute

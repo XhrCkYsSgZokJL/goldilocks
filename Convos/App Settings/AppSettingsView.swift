@@ -39,7 +39,7 @@ enum AppSettingsRoute: Hashable {
 
 struct AppSettingsView: View {
     @Bindable var viewModel: AppSettingsViewModel
-    @Bindable var quicknameViewModel: QuicknameSettingsViewModel
+    @Bindable var profileSettingsViewModel: ProfileSettingsViewModel
     let session: any SessionManagerProtocol
     let onDeleteAllData: () -> Void
     var initialRoute: AppSettingsRoute?
@@ -121,12 +121,12 @@ struct AppSettingsView: View {
                     Text("My info")
                         .foregroundStyle(.colorTextPrimary)
                     Spacer()
-                    if !quicknameViewModel.quicknameSettings.isDefault {
-                        Text(quicknameViewModel.editingDisplayName)
+                    if !profileSettingsViewModel.profileSettings.isDefault {
+                        Text(profileSettingsViewModel.editingDisplayName)
                             .foregroundStyle(.colorTextSecondary)
                         ProfileAvatarView(
-                            profile: quicknameViewModel.profile,
-                            profileImage: quicknameViewModel.profileImage,
+                            profile: profileSettingsViewModel.profile,
+                            profileImage: profileSettingsViewModel.profileImage,
                             useSystemPlaceholder: false
                         )
                         .frame(width: 16.0, height: 16.0)
@@ -313,7 +313,7 @@ struct AppSettingsView: View {
                         Text("Delete all app data")
                     }
                     .accessibilityLabel("Delete all app data")
-                    .accessibilityHint("Permanently deletes all conversations and your quickname")
+                    .accessibilityHint("Permanently deletes all conversations and your profile")
                     .accessibilityIdentifier("delete-all-data-button")
                     .selfSizingSheet(isPresented: $showingDeleteAllDataConfirmation) {
                         DeleteAllDataView(
@@ -424,11 +424,11 @@ struct AppSettingsView: View {
 }
 
 #Preview {
-    let quicknameViewModel = QuicknameSettingsViewModel.shared
+    let profileSettingsViewModel = ProfileSettingsViewModel.shared
     NavigationStack {
         AppSettingsView(
             viewModel: .mock,
-            quicknameViewModel: quicknameViewModel,
+            profileSettingsViewModel: profileSettingsViewModel,
             session: MockInboxesService(),
             onDeleteAllData: {}
         )

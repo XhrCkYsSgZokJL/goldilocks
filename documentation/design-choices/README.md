@@ -24,7 +24,7 @@ Each file here documents **one intentional way Goldilocks diverges from upstream
 ### App surface
 - **[App shell: direct root](app-shell-direct-root.md)** — `ConvosApp → ConversationsView` directly; upstream's `MainTabView` tab shell dropped.
 - **[Gated agents](gated-agents.md)** — upstream's Agents/agent-builder/agent-contacts gated; Goldilocks uses its own backend agents.
-- **[Profile vs Quickname](profile-vs-quickname.md)** — status of the Quickname→Profile convergence.
+- **[Profile (formerly Quickname)](profile-vs-quickname.md)** — the Quickname→Profile migration (now complete; we use upstream Profile).
 
 ### Platform
 - **[Backend & shared monorepo](backend-and-shared-monorepo.md)** — the Node backend + shared codegen that upstream has no equivalent of.
