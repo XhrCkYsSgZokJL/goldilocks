@@ -112,13 +112,17 @@ final class HTMLContentPrewarmer {
     /// queue processes one entry at a time; repeat calls for an already-
     /// cached or already-queued attachment are no-ops.
     func prewarm(attachmentKey: String, fileURL: URL) {
-        if cache.contains(where: { $0.key == attachmentKey }) {
+        let isCached: Bool = cache.contains { (entry: (key: String, content: PrewarmedContent)) -> Bool in
+            entry.key == attachmentKey
+        }
+        if isCached {
             promote(attachmentKey: attachmentKey)
             return
         }
         if queuedKeys.contains(attachmentKey) { return }
         queuedKeys.insert(attachmentKey)
-        pendingQueue.append((key: attachmentKey, fileURL: fileURL))
+        let queueItem: (key: String, fileURL: URL) = (key: attachmentKey, fileURL: fileURL)
+        pendingQueue.append(queueItem)
         processQueueIfIdle()
     }
 
