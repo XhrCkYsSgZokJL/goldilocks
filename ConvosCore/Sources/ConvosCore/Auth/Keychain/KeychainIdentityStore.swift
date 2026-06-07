@@ -79,6 +79,63 @@ public struct KeychainIdentity: Codable, Sendable {
     public let keys: KeychainIdentityKeys
 }
 
+/// Identity material mirrored into the iCloud-synced backup slot.
+/// Deliberately excludes the SQLCipher database key: it only decrypts
+/// this device's local database, which never leaves the device, so
+/// escrowing it in iCloud would add exposure without recovery value.
+/// A recovering device generates a fresh database key.
+///
+/// Carries restore-display metadata alongside the key material: the
+/// user-visible name of the device that wrote the backup and the write
+/// date, so a restore picker can show "Alice's iPhone, backed up
+/// June 3" instead of a bare inboxId. Both decode as optional so a
+/// missing metadata field can never make a backup unrecoverable.
+public struct KeychainIdentityBackup: Codable, Sendable {
+    public let inboxId: String
+    public let clientId: String
+    public let privateKey: PrivateKey
+    /// Name of the device that last wrote this backup (mirrors the
+    /// pairing flow's `DeviceInfo.deviceName`), when the writer had one.
+    public let deviceName: String?
+    /// When this backup blob was last written.
+    public let backedUpAt: Date?
+
+    private enum CodingKeys: String, CodingKey {
+        case inboxId
+        case clientId
+        case privateKeyData
+        case deviceName
+        case backedUpAt
+    }
+
+    init(identity: KeychainIdentity, deviceName: String?, backedUpAt: Date) {
+        inboxId = identity.inboxId
+        clientId = identity.clientId
+        privateKey = identity.keys.privateKey
+        self.deviceName = deviceName
+        self.backedUpAt = backedUpAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        inboxId = try container.decode(String.self, forKey: .inboxId)
+        clientId = try container.decode(String.self, forKey: .clientId)
+        let privateKeyData = try container.decode(Data.self, forKey: .privateKeyData)
+        privateKey = try PrivateKey(privateKeyData)
+        deviceName = try container.decodeIfPresent(String.self, forKey: .deviceName)
+        backedUpAt = try container.decodeIfPresent(Date.self, forKey: .backedUpAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(inboxId, forKey: .inboxId)
+        try container.encode(clientId, forKey: .clientId)
+        try container.encode(privateKey.secp256K1.bytes, forKey: .privateKeyData)
+        try container.encodeIfPresent(deviceName, forKey: .deviceName)
+        try container.encodeIfPresent(backedUpAt, forKey: .backedUpAt)
+    }
+}
+
 // MARK: - Errors
 
 public enum KeychainIdentityStoreError: Error, LocalizedError {
@@ -114,8 +171,8 @@ private struct KeychainQuery {
         account: String,
         service: String,
         accessGroup: String,
-        accessible: CFString = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-        synchronizable: Bool = false,
+        accessible: CFString = kSecAttrAccessibleAfterFirstUnlock,
+        synchronizable: Bool = false
     ) {
         self.account = account
         self.service = service
@@ -162,63 +219,103 @@ public protocol KeychainIdentityStoreProtocol: Actor {
     /// directly instead of paying an actor hop.
     nonisolated func loadSync() throws -> KeychainIdentity?
 
-    /// Removes the identity. Idempotent.
+    /// Returns every identity present in the iCloud-synced backup slot.
+    /// Each identity is backed up under its own account (keyed by
+    /// inboxId), so unpaired identities on devices sharing an iCloud
+    /// account coexist instead of overwriting each other. Nothing reads
+    /// this during normal operation; it exists for an explicit recovery
+    /// flow after the user loses their device.
+    func loadSyncedBackups() throws -> [KeychainIdentityBackup]
+
+    /// Mirrors the primary identity into the synced backup slot when its
+    /// backup is missing. Installs that registered before the backup
+    /// slot existed only ever wrote the primary slot; calling this on
+    /// authorize makes them recoverable too. Best-effort: failures are
+    /// logged, never thrown.
+    func backfillSyncedBackupIfNeeded()
+
+    /// Removes the identity from the primary slot and its mirror from
+    /// the synced backup slot. Backups belonging to other identities are
+    /// left untouched. Idempotent.
     func delete() throws
 }
 
 /// Secure storage for the user's XMTP identity keys in the device keychain.
 ///
-/// The app holds one identity per install. After F8.1, the identity is
-/// **device-bound**: the secp256k1 private key bytes are wrapped by a
-/// Secure-Enclave-backed key (via the injected `IdentityKeyWrapper`)
-/// before they ever touch the keychain, and the keychain item itself is
-/// `ThisDeviceOnly` + non-synchronizable. Restoring on a new device
-/// requires re-onboarding via SIWE — a deliberate trade-off so the raw
-/// key bytes never exist in an extractable form on disk.
+/// The app holds one identity per install, kept in two keychain slots:
 ///
-/// The item is still stored in the app-group keychain so the
-/// Notification Service Extension can read the wrapped blob; unwrapping
-/// it requires the SE, which lives on the main device.
+/// - The primary slot is device-local (`kSecAttrSynchronizable = false` +
+///   `kSecAttrAccessibleAfterFirstUnlock`) and is the only slot the app
+///   reads at runtime. Device sync stays an explicit user action: another
+///   device never picks up the identity just by sharing an iCloud account.
+/// - The synced backup slot (`kSecAttrSynchronizable = true`, separate
+///   service) mirrors the identity (minus the database key, see
+///   `KeychainIdentityBackup`) into iCloud Keychain so the user can
+///   recover after losing the device. Each identity is backed up under its
+///   own account (keyed by inboxId), so unpaired identities on devices
+///   sharing an iCloud account back up side by side instead of overwriting
+///   each other. Only an explicit recovery flow reads it.
+///
+/// When a save displaces a different identity (e.g. pairing overwrites the
+/// fresh-install placeholder), the displaced identity's backup is removed:
+/// its key material would otherwise sit in iCloud forever with no owner.
+///
+/// Surfaces that must not escrow keys (the App Clip, whose auto-registered
+/// identity the user never opted to back up) construct the store with
+/// `syncedBackupEnabled: false`, which disables the mirror and backfill
+/// write paths; the full app backfills the identity on first authorize.
+///
+/// Both slots live in the app-group keychain so the Notification Service
+/// Extension can read the primary slot.
 public final actor KeychainIdentityStore: KeychainIdentityStoreProtocol {
     // MARK: - Properties
 
     private let keychainService: String
     private let keychainAccessGroup: String
+    private let syncedBackupEnabled: Bool
+    private let deviceNameProvider: (@Sendable () -> String?)?
+    /// F8.1 — wraps the secp256k1 bytes with a device-bound (Secure
+    /// Enclave) key before they touch the primary slot. The synced backup
+    /// slot stores the raw key (it must restore on another device), so the
+    /// wrap applies to the primary slot only.
     private let keyWrapper: any IdentityKeyWrapper
 
-    static let defaultService: String = "org.convos.ios.KeychainIdentityStore.v3"
+    public static let defaultService: String = "org.convos.ios.KeychainIdentityStore.v3"
 
-    /// Optional suffix appended to the keychain account name. Set by the
-    /// main app at launch (before any SessionManager is constructed) to
-    /// pick which "slot" identities are read from / written to. The dual-
-    /// identity Goldilocks dev model uses this to keep an admin key and a
-    /// client key persisted side-by-side, and toggle which is active.
-    /// Set once per process lifetime; changing requires a relaunch.
-    nonisolated(unsafe) public static var slotSuffix: String?
+    /// Service for the iCloud-synced backup slot. Distinct from
+    /// `defaultService` so queries can never confuse the two slots, and
+    /// listed in `LegacyDataWipe.identityKeychainServices` so generation
+    /// bumps sweep the iCloud copy as well. Items in this service use the
+    /// identity's inboxId as the account, one item per backed-up identity.
+    public static let syncedBackupService: String = "org.convos.ios.KeychainIdentityStore.v3-synced-backup"
 
-    /// Account name for the active slot. With no suffix, "convos-identity".
-    /// With suffix "admin", "convos-identity.admin", and so on.
-    static var identityAccount: String {
-        if let suffix = slotSuffix, !suffix.isEmpty {
-            return "convos-identity.\(suffix)"
-        }
-        return "convos-identity"
-    }
+    /// Fixed account key for the identity in the primary slot.
+    public static let identityAccount: String = "convos-identity"
 
     // MARK: - Initialization
 
-    /// - Parameter accessGroup: Keychain access group shared with the
-    ///   Notification Service Extension.
-    /// - Parameter keyWrapper: SE-backed wrapping layer. Default
-    ///   `PassThroughIdentityKeyWrapper` keeps tests and macOS builds
-    ///   running without an SE — production injects the real one from
-    ///   `ConvosCoreiOS`.
+    /// - Parameters:
+    ///   - syncedBackupEnabled: pass `false` from surfaces whose
+    ///     identities must not be escrowed to iCloud (the App Clip).
+    ///     Gates only the backup write paths (mirror + backfill); reads
+    ///     and the scoped backup delete stay active so cleanup still
+    ///     works.
+    ///   - deviceNameProvider: evaluated lazily at each backup write to
+    ///     stamp the blob with the user-visible device name for the
+    ///     restore picker (the app passes `{ DeviceInfo.deviceName }`).
+    ///     Injected rather than read from `DeviceInfo.shared` directly so
+    ///     contexts that never configure `DeviceInfo` (tests, extensions)
+    ///     can use the store without tripping its configuration check.
     public init(
         accessGroup: String,
-        keyWrapper: any IdentityKeyWrapper = PassThroughIdentityKeyWrapper(),
+        syncedBackupEnabled: Bool = true,
+        deviceNameProvider: (@Sendable () -> String?)? = nil,
+        keyWrapper: any IdentityKeyWrapper = PassThroughIdentityKeyWrapper()
     ) {
         self.keychainAccessGroup = accessGroup
         self.keychainService = Self.defaultService
+        self.syncedBackupEnabled = syncedBackupEnabled
+        self.deviceNameProvider = deviceNameProvider
         self.keyWrapper = keyWrapper
     }
 
@@ -230,52 +327,162 @@ public final actor KeychainIdentityStore: KeychainIdentityStoreProtocol {
 
     public func save(inboxId: String, clientId: String, keys: KeychainIdentityKeys) throws -> KeychainIdentity {
         let identity = KeychainIdentity(inboxId: inboxId, clientId: clientId, keys: keys)
-        let plain = try JSONEncoder().encode(identity)
-        // F8.1 — wrap with the SE-backed key before the bytes ever
-        // touch the keychain. PassThroughIdentityKeyWrapper makes this
-        // a no-op on macOS / tests.
-        let wrapped = try keyWrapper.wrap(plain)
-        let query = KeychainQuery(
-            account: Self.identityAccount,
-            service: keychainService,
-            accessGroup: keychainAccessGroup,
-        )
-        try saveData(wrapped, with: query)
+        let data = try JSONEncoder().encode(identity)
+        // When this save displaces a different identity (pairing over the
+        // fresh-install placeholder), remove the displaced identity's
+        // backup before overwriting the primary: once the primary is gone
+        // its inboxId can't be recovered to scope the deletion. If the
+        // primary write below then fails, the old identity is still in
+        // place and the next authorize's backfill restores its backup.
+        if let displacedInboxId = (try? loadSync())?.inboxId, displacedInboxId != inboxId {
+            removeSyncedBackup(inboxId: displacedInboxId)
+        }
+        // Primary slot is SE-wrapped (F8.1); the synced backup mirror below
+        // stays raw so it can be restored on another device.
+        let wrappedData = try keyWrapper.wrap(data)
+        try saveData(wrappedData, with: identityQuery)
+        mirrorToSyncedBackup(identity)
         return identity
     }
 
     public func load() throws -> KeychainIdentity? {
-        try loadSyncInternal(unwrap: keyWrapper.unwrap)
+        try loadSync()
     }
 
     public nonisolated func loadSync() throws -> KeychainIdentity? {
-        // `keyWrapper` is `let` on a `Sendable` type — Swift treats it
-        // as implicitly nonisolated, so it's safe to read from here.
-        try loadSyncInternal(unwrap: keyWrapper.unwrap)
-    }
-
-    private nonisolated func loadSyncInternal(unwrap: (Data) throws -> Data) throws -> KeychainIdentity? {
-        let query = KeychainQuery(
-            account: Self.identityAccount,
-            service: keychainService,
-            accessGroup: keychainAccessGroup,
-        )
+        // Primary slot is SE-wrapped (F8.1): load the wrapped bytes, unwrap
+        // with the device-bound key, then decode. `keyWrapper` is a `let` on
+        // a `Sendable` type, so this nonisolated access is safe.
         do {
-            let wrapped = try Self.loadKeychainData(with: query.toReadDictionary())
-            let plain = try unwrap(wrapped)
+            let wrapped = try Self.loadKeychainData(with: identityQuery.toReadDictionary())
+            let plain = try keyWrapper.unwrap(wrapped)
             return try JSONDecoder().decode(KeychainIdentity.self, from: plain)
         } catch KeychainIdentityStoreError.identityNotFound {
             return nil
         }
     }
 
+    public func loadSyncedBackups() throws -> [KeychainIdentityBackup] {
+        var query = syncedBackupServiceQuery()
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitAll
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status != errSecItemNotFound else { return [] }
+        guard status == errSecSuccess, let blobs = item as? [Data] else {
+            throw KeychainIdentityStoreError.keychainOperationFailed(status, "loadBackups")
+        }
+        return blobs.compactMap { (data: Data) -> KeychainIdentityBackup? in
+            do {
+                return try JSONDecoder().decode(KeychainIdentityBackup.self, from: data)
+            } catch {
+                Log.error("Skipping undecodable synced backup item: \(error)")
+                return nil
+            }
+        }
+    }
+
+    public func backfillSyncedBackupIfNeeded() {
+        guard syncedBackupEnabled else { return }
+        do {
+            guard let identity = try loadSync() else { return }
+            let readQuery = syncedBackupQuery(inboxId: identity.inboxId).toReadDictionary()
+            do {
+                _ = try Self.loadKeychainData(with: readQuery)
+            } catch KeychainIdentityStoreError.identityNotFound {
+                mirrorToSyncedBackup(identity)
+            }
+        } catch {
+            Log.error("Failed to backfill synced backup slot: \(error)")
+        }
+    }
+
     public func delete() throws {
-        let query = KeychainQuery(
+        // Remove the backup first: if the backup delete fails the primary
+        // is still intact, so a retry can locate the backup again. The
+        // deletion is scoped to this identity's account so backups from
+        // other (unpaired) identities on the same iCloud account survive.
+        // If the primary can't be read the backup can't be located; the
+        // primary is still deleted and the backup is left as an orphan
+        // (reclaimable via LegacyDataWipe on a generation bump).
+        let primary: KeychainIdentity?
+        do {
+            primary = try loadSync()
+        } catch {
+            primary = nil
+            Log.warning("Could not read primary slot during delete; any synced backup is left orphaned: \(error)")
+        }
+        if let inboxId = primary?.inboxId {
+            try deleteData(with: syncedBackupQuery(inboxId: inboxId))
+        }
+        try deleteData(with: identityQuery)
+    }
+
+    // MARK: - Slot Queries
+
+    private nonisolated var identityQuery: KeychainQuery {
+        // Primary slot is device-bound (F8.1): ThisDeviceOnly + non-sync.
+        // The SE wrap already binds the blob to this device; ThisDeviceOnly
+        // also keeps the item itself off iCloud. The synced backup slot is
+        // the only thing that escrows (raw key) to iCloud for recovery.
+        KeychainQuery(
             account: Self.identityAccount,
             service: keychainService,
-            accessGroup: keychainAccessGroup
+            accessGroup: keychainAccessGroup,
+            accessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         )
-        try deleteData(with: query)
+    }
+
+    private nonisolated func syncedBackupQuery(inboxId: String) -> KeychainQuery {
+        KeychainQuery(
+            account: inboxId,
+            service: Self.syncedBackupService,
+            accessGroup: keychainAccessGroup,
+            synchronizable: true
+        )
+    }
+
+    /// Service-wide query matching every item in the synced backup slot,
+    /// regardless of account. Used to enumerate backups for recovery.
+    private func syncedBackupServiceQuery() -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.syncedBackupService,
+            kSecAttrAccessGroup as String: keychainAccessGroup,
+            kSecAttrSynchronizable as String: true
+        ]
+    }
+
+    /// Best-effort write of the identity (as a `KeychainIdentityBackup`)
+    /// into the synced backup slot. Failures are logged, never thrown:
+    /// the primary slot is the source of truth and a failed backup write
+    /// must not block registration or pairing.
+    private func mirrorToSyncedBackup(_ identity: KeychainIdentity) {
+        guard syncedBackupEnabled else { return }
+        do {
+            let backup = KeychainIdentityBackup(
+                identity: identity,
+                deviceName: deviceNameProvider?(),
+                backedUpAt: Date()
+            )
+            let data = try JSONEncoder().encode(backup)
+            try saveData(data, with: syncedBackupQuery(inboxId: identity.inboxId))
+        } catch {
+            Log.error("Failed to write identity to synced backup slot: \(error)")
+        }
+    }
+
+    /// Best-effort removal of one identity's backup item. Used when a
+    /// save displaces a different identity; a failure here only leaves
+    /// the displaced backup as a logged orphan, it must not block the
+    /// incoming save.
+    private func removeSyncedBackup(inboxId: String) {
+        do {
+            try deleteData(with: syncedBackupQuery(inboxId: inboxId))
+        } catch {
+            Log.error("Failed to remove displaced identity's synced backup: \(error)")
+        }
     }
 
     // MARK: - Generic Keychain Operations
@@ -299,10 +506,7 @@ public final actor KeychainIdentityStore: KeychainIdentityStoreProtocol {
         }
     }
 
-    private func loadData(with query: KeychainQuery) throws -> Data {
-        try Self.loadKeychainData(with: query.toReadDictionary())
-    }
-
+    /// Static so `nonisolated` entry points can call it without an actor hop.
     /// Static so `nonisolated` entry points can call it without an actor hop.
     private static func loadKeychainData(with query: [String: Any]) throws -> Data {
         var item: CFTypeRef?

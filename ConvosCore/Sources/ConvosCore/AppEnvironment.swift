@@ -66,24 +66,6 @@ public enum AppEnvironment: Sendable {
         case local, dev, production, tests
     }
 
-    public var firebaseConfigURL: URL? {
-        let resource: String
-        switch self {
-        case .local, .tests:
-            resource = "GoogleService-Info.Local"
-        case .dev:
-            resource = "GoogleService-Info.Dev"
-        case .production:
-            resource = "GoogleService-Info.Prod"
-        }
-
-        if let url = Bundle.main.url(forResource: resource, withExtension: "plist") {
-            return url
-        }
-
-        return nil
-    }
-
     var apiBaseURL: String {
         switch self {
         case .local(let config):
@@ -134,7 +116,7 @@ public enum AppEnvironment: Sendable {
         case .local(config: let config), .dev(config: let config), .production(config: let config):
             return config.relyingPartyIdentifier
         case .tests:
-            return "local.convos.org"
+            return "local.goldilocksdigital.xyz"
         }
     }
 
@@ -247,7 +229,12 @@ public extension AppEnvironment {
         ) else {
             fatalError("Failed getting container URL for group identifier: \(appGroupIdentifier)")
         }
-        return groupUrl.appendingPathComponent("logs", isDirectory: true)
+        // Deliberately "xmtp-logs", not "logs": FileLogHandler already
+        // creates "Logs/" in this same app-group container, and on the
+        // case-insensitive simulator filesystem a "logs" directory
+        // collides with it — which makes libxmtp's persistent log writer
+        // silently fail to create its directory.
+        return groupUrl.appendingPathComponent("xmtp-logs", isDirectory: true)
     }
 
     var defaultDatabasesDirectoryURL: URL {

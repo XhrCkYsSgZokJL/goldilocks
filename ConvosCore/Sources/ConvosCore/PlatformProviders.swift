@@ -52,6 +52,12 @@ public struct PlatformProviders: Sendable {
     /// CoreLocation / EventKit / etc. symbols into the binary.
     public let deviceConnections: DeviceConnectionsBundle
 
+    /// Wraps the identity's private key bytes with a device-bound key
+    /// before they reach the keychain. iOS injects an SE-backed wrapper;
+    /// tests + the macOS build default to a pass-through. F8.1 in
+    /// docs/operations/encryption-and-backup.md.
+    public let identityKeyWrapper: any IdentityKeyWrapper
+
     public init(
         appLifecycle: any AppLifecycleProviding,
         deviceInfo: any DeviceInfoProviding,
@@ -59,7 +65,8 @@ public struct PlatformProviders: Sendable {
         notificationCenter: any UserNotificationCenterProtocol,
         backgroundUploadManager: any BackgroundUploadManagerProtocol = UnavailableBackgroundUploadManager(),
         oauthSessionProvider: any OAuthSessionProvider = UnavailableOAuthSessionProvider(),
-        deviceConnections: DeviceConnectionsBundle = .none
+        deviceConnections: DeviceConnectionsBundle = .none,
+        identityKeyWrapper: any IdentityKeyWrapper = PassThroughIdentityKeyWrapper()
     ) {
         self.appLifecycle = appLifecycle
         self.deviceInfo = deviceInfo
@@ -68,6 +75,7 @@ public struct PlatformProviders: Sendable {
         self.backgroundUploadManager = backgroundUploadManager
         self.oauthSessionProvider = oauthSessionProvider
         self.deviceConnections = deviceConnections
+        self.identityKeyWrapper = identityKeyWrapper
     }
 }
 
