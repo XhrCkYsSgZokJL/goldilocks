@@ -3978,8 +3978,4 @@ extension ConversationViewModel {
         }
     }
 
-    func addMembersFromContacts(_ inboxIds: [String]) async throws {
-        guard !inboxIds.isEmpty else { return }
-        try await metadataWriter.addMembers(inboxIds, to: conversation.id)
-    }
 }
