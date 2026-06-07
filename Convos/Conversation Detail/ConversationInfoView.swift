@@ -1,5 +1,5 @@
 import ConvosCore
-import ConvosMetrics
+import Foundation
 import SwiftUI
 
 struct FeatureRowItem<AccessoryView: View>: View {
@@ -77,48 +77,20 @@ struct ConversationInfoView: View {
     @State private var connectionsViewModel: ConversationConnectionsViewModel?
 
     @Environment(\.dismiss) private var dismiss: DismissAction
-    @Environment(\.openURL) private var openURL: OpenURLAction
     @State private var showingExplodeSheet: Bool = false
-    @State private var presentingMailCompose: Bool = false
-    @State private var preparingReportIssueEmail: Bool = false
-    @State private var reportIssueAttachment: MailComposeView.Attachment?
-    @State private var exportLogsTask: Task<URL?, Never>?
     @State private var presentingEditView: Bool = false
     @State private var showingLockedInfo: Bool = false
     @State private var showingFullInfo: Bool = false
     @State private var presentingShareView: Bool = false
-    @State private var presentingAddFromContactsPicker: Bool = false
     @State private var exportedLogsURL: URL?
     @State private var metadataDebugText: String = "Loading…"
     @State private var showingRestoreInviteTagAlert: Bool = false
     @State private var restoreInviteTagText: String = ""
-    /// "New Agent" builder, presented from here so it stacks on top of the
-    /// Info sheet rather than racing the chat view's own builder sheet.
-    @State private var presentingAgentBuilder: AgentBuilderViewModel?
-    /// First-run agents explainer shown before the builder; its "Make an agent"
-    /// button sets `pendingAgentBuilderAfterIntro` and the sheet's onDismiss
-    /// then opens the builder.
-    @State private var presentingAgentsIntro: Bool = false
-    @State private var pendingAgentBuilderAfterIntro: Bool = false
-    @State private var navState: ConversationInfoNavigatorImpl = .init()
-    @State private var navigator: ConversationInfoCollector?
-
-    private func ensureNavigator() {
-        guard navigator == nil else { return }
-        navigator = ConversationInfoCollector(
-            instance: navState,
-            delegate: PostHogConfiguration.sharedMetricsDelegate ?? CollectorDelegate()
-        )
-    }
-
-    private func handleEditViewChanged(from oldValue: Bool, to newValue: Bool) {
-        guard !oldValue, newValue else { return }
-        navigator?.navigateTo(edit: ConversationInfoEditNavigatorArgs(conversationId: viewModel.conversation.id))
-    }
-
+    @State private var selectedPerson: SeatMember?
+    @State private var emeraldChannel: ConvosAPI.GoldilocksAdminChannel?
     private let maxMembersToShow: Int = 6
     private var displayedMembers: [ConversationMember] {
-        let sortedMembers = viewModel.conversation.members.sortedByRole()
+        let sortedMembers = viewModel.conversation.members.sortedByRole(creatorInboxId: viewModel.conversation.creator.profile.inboxId)
         return Array(sortedMembers.prefix(maxMembersToShow))
     }
     private var showViewAllMembers: Bool {
@@ -126,8 +98,8 @@ struct ConversationInfoView: View {
     }
 
     @ViewBuilder
-    private var agentSection: some View {
-        if viewModel.conversation.hasEverHadVerifiedConvosAgent {
+    private var assistantSection: some View {
+        if viewModel.conversation.hasEverHadVerifiedAssistant {
             Section {
                 filesAndLinksRow
             }
@@ -145,20 +117,15 @@ struct ConversationInfoView: View {
     @ViewBuilder
     private var filesAndLinksRow: some View {
         NavigationLink {
-            AgentFilesLinksView(
-                conversationId: viewModel.conversation.id,
-                repository: viewModel.makeAgentFilesLinksRepository(),
-                members: viewModel.conversation.members,
-                profileSheetContent: { member in
-                    AnyView(MemberContactDetailSheetContent(viewModel: viewModel, member: member, profileSettingsViewModel: .shared))
-                }
+            AssistantFilesLinksView(
+                repository: viewModel.makeAssistantFilesLinksRepository()
             )
         } label: {
             FeatureRowItem(
                 imageName: nil,
                 symbolName: "folder",
                 title: "Files & Links",
-                subtitle: "Managed by Agents",
+                subtitle: "Managed by Assistants",
                 iconBackgroundColor: .colorFillMinimal,
                 iconForegroundColor: .colorTextPrimary
             ) {
@@ -217,7 +184,7 @@ struct ConversationInfoView: View {
             )
 
             VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
-                Text("Convo code")
+                Text("Gold code")
                     .font(.body)
                     .foregroundStyle(.colorTextPrimary)
                 Text(subtitle)
@@ -272,7 +239,7 @@ struct ConversationInfoView: View {
                     .frame(width: 160.0, height: 160.0)
 
                     VStack(spacing: DesignConstants.Spacing.step2x) {
-                        Text(viewModel.untitledConversationPlaceholder)
+                        Text(viewModel.conversation.computedDisplayName)
                             .font(.largeTitle.weight(.semibold))
                             .foregroundStyle(.colorTextPrimary)
                             .multilineTextAlignment(.center)
@@ -327,7 +294,373 @@ struct ConversationInfoView: View {
         }
     }
 
-    private var preferencesSection: some View {
+    private var convoRulesSection: some View {
+        Section {
+            FeatureRowItem(
+                imageName: nil,
+                symbolName: "timer",
+                title: "Disappear",
+                subtitle: "Messages"
+            ) {
+                SoonLabel()
+            }
+        } header: {
+            Text("Convo rules")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.colorTextSecondary)
+        }
+    }
+
+    var body: some View {
+        infoContent
+    }
+
+    private var vanishSection: some View {
+        Section {
+            HStack {
+                Text("Vanish")
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+                SoonLabel()
+            }
+        } footer: {
+            Text("Choose when this convo disappears from your device")
+                .foregroundStyle(.colorTextSecondary)
+        }
+        .disabled(true)
+    }
+
+    private var permissionsSection: some View {
+        Section {
+            NavigationLink {
+                EmptyView()
+            } label: {
+                HStack {
+                    Text("Permissions")
+                        .foregroundStyle(.colorTextPrimary)
+                    Spacer()
+                    SoonLabel()
+                }
+            }
+            .disabled(true)
+        } footer: {
+            Text("Choose who can manage the group")
+                .foregroundStyle(.colorTextSecondary)
+        }
+    }
+
+    private var infoList: some View {
+        List {
+            headerSection
+
+            membersSection
+
+            PeopleAndCoverageSection(viewModel: viewModel, selectedPerson: $selectedPerson)
+
+            AdminEmeraldTierSection(viewModel: viewModel, channel: $emeraldChannel)
+
+            assistantSection
+
+            if FeatureFlags.shared.isCloudConnectionsEnabled,
+               let connectionsViewModel,
+               connectionsViewModel.hasConnections {
+                ConversationConnectionsSection(viewModel: connectionsViewModel)
+            }
+
+            convoCodeSection
+
+            if viewModel.canRemoveMembers {
+                Section {
+                    ExplodeInfoRow(
+                        scheduledExplosionDate: viewModel.scheduledExplosionDate,
+                        onTap: { showingExplodeSheet = true },
+                        onExplodeNow: { viewModel.explodeConvo() }
+                    )
+                }
+            }
+
+            ConversationPreferencesSection(viewModel: viewModel)
+
+            convoRulesSection
+
+            vanishSection
+
+            permissionsSection
+
+            debugInfoSection
+        }
+        .sheet(item: $selectedPerson) { member in
+            AdvisoryPersonSheet(
+                member: member,
+                enabled: personEnabledBinding(for: member.id)
+            )
+        }
+    }
+
+    private func personEnabledBinding(for id: UUID) -> Binding<Bool> {
+        let seatPlan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
+        return Binding(
+            get: { seatPlan.members.first(where: { $0.id == id })?.enabled ?? false },
+            set: { newValue in
+                guard let index = seatPlan.members.firstIndex(where: { $0.id == id }) else { return }
+                seatPlan.members[index].enabled = newValue
+                Task { await viewModel.saveGoldilocksPeopleList() }
+            }
+        )
+    }
+
+    private func loadEmeraldChannelIfNeeded() async {
+        guard GoldilocksConfig.role == .admin else {
+            Log.info("[Emerald] skipped: role is not admin (role=\(GoldilocksConfig.role))")
+            return
+        }
+        let name: String = viewModel.conversation.name ?? ""
+        guard name.hasPrefix("Advisory") else {
+            Log.info("[Emerald] skipped: conversation name '\(name)' does not start with Advisory")
+            return
+        }
+        Log.info("[Emerald] parent loading admin channel for conversation \(viewModel.conversation.id)")
+        emeraldChannel = await viewModel.loadAdminChannelForCurrentConversation()
+        if let emeraldChannel {
+            Log.info("[Emerald] loaded channel: clientNumber=\(emeraldChannel.clientNumber) emerald=\(emeraldChannel.emeraldMembershipEnabled)")
+        } else {
+            Log.warning("[Emerald] no matching admin channel found for conversation \(viewModel.conversation.id)")
+        }
+    }
+
+    @ViewBuilder
+    private var debugInfoSection: some View {
+        if !ConfigManager.shared.currentEnvironment.isProduction {
+            Section {
+                HStack {
+                    Text("Fork status")
+                    Spacer()
+                    Text(viewModel.conversation.debugInfo.commitLogForkStatus.rawValue)
+                        .foregroundStyle(.colorTextSecondary)
+                }
+                HStack {
+                    Text("Epoch")
+                    Spacer()
+                    Text("\(viewModel.conversation.debugInfo.epoch)")
+                        .foregroundStyle(.colorTextSecondary)
+                }
+                NavigationLink {
+                    DebugLogsTextView(logs: viewModel.conversation.debugInfo.forkDetails)
+                } label: {
+                    Text("Fork details")
+                }
+                NavigationLink {
+                    DebugLogsTextView(logs: viewModel.conversation.debugInfo.localCommitLog)
+                } label: {
+                    Text("Local commit log")
+                }
+                NavigationLink {
+                    DebugLogsTextView(logs: viewModel.conversation.debugInfo.remoteCommitLog)
+                } label: {
+                    Text("Remote commit log")
+                }
+                NavigationLink {
+                    DebugLogsTextView(logs: metadataDebugText)
+                        .task {
+                            metadataDebugText = await viewModel.conversationMetadataDebugText()
+                        }
+                } label: {
+                    Text("Metadata")
+                }
+                Button {
+                    showingRestoreInviteTagAlert = true
+                } label: {
+                    Text("Restore invite tag")
+                }
+                if let url = exportedLogsURL {
+                    ShareLink(item: url) {
+                        HStack {
+                            Text("Share logs")
+                            Spacer()
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                    }
+                } else {
+                    HStack {
+                        Text("Preparing logs…")
+                        Spacer()
+                        ProgressView()
+                    }
+                    .foregroundStyle(.colorTextSecondary)
+                }
+            } header: {
+                Text("Debug info")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.colorTextSecondary)
+            }
+            .task {
+                do {
+                    exportedLogsURL = try await viewModel.exportDebugLogs()
+                } catch {
+                    Log.error("Failed to export logs for conversation: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private var navigationBarContent: some ToolbarContent {
+        Group {
+            ToolbarItem(placement: .topBarLeading) {
+                Button(role: .cancel) {
+                    dismiss()
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                if viewModel.isLocked {
+                    Button {
+                        showingLockedInfo = true
+                    } label: {
+                        Image(systemName: "lock.fill")
+                            .foregroundStyle(.colorTextSecondary)
+                    }
+                    .accessibilityLabel("Conversation locked")
+                    .accessibilityIdentifier("info-lock-button")
+                } else {
+                    AddToConversationMenu(
+                        isFull: viewModel.isFull,
+                        hasAssistant: viewModel.conversation.hasAgent,
+                        isEnabled: true,
+                        onConvoCode: {
+                            if viewModel.isFull {
+                                showingFullInfo = true
+                            } else {
+                                presentingShareView = true
+                            }
+                        },
+                        onCopyLink: {
+                            viewModel.copyInviteLink()
+                        },
+                        onInviteAssistant: {
+                            viewModel.requestAssistantJoin()
+                        }
+                    )
+                    .accessibilityIdentifier("info-add-button")
+                }
+            }
+        }
+    }
+
+    private var infoContent: some View {
+        NavigationStack {
+            infoList
+                .task {
+                    if FeatureFlags.shared.isCloudConnectionsEnabled, connectionsViewModel == nil {
+                        connectionsViewModel = viewModel.makeConversationConnectionsViewModel()
+                    }
+                    await loadEmeraldChannelIfNeeded()
+                }
+                .alert("Restore invite tag", isPresented: $showingRestoreInviteTagAlert) {
+                    TextField("Invite tag", text: $restoreInviteTagText)
+                    Button("Cancel", role: .cancel) {
+                        restoreInviteTagText = ""
+                    }
+                    Button("Restore") {
+                        let expectedTag = restoreInviteTagText
+                        restoreInviteTagText = ""
+                        Task {
+                            do {
+                                try await viewModel.restoreInviteTagIfMissing(expectedTag)
+                                metadataDebugText = await viewModel.conversationMetadataDebugText()
+                            } catch {
+                                let refreshedDebugText = await viewModel.conversationMetadataDebugText()
+                                metadataDebugText = "Restore failed: \(error.localizedDescription)\n\n\(refreshedDebugText)"
+                            }
+                        }
+                    }
+                } message: {
+                    Text("Only use this if you know the expected invite tag for this convo.")
+                }
+                .scrollContentBackground(.hidden)
+                .background(.colorBackgroundRaisedSecondary)
+                .toolbarTitleDisplayMode(.inline)
+                .toolbar { navigationBarContent }
+                .selfSizingSheet(isPresented: $showingLockedInfo) {
+                    LockedConvoInfoView(
+                        isCurrentUserSuperAdmin: viewModel.isCurrentUserSuperAdmin,
+                        isLocked: viewModel.isLocked,
+                        onLock: {
+                            viewModel.toggleLock()
+                            showingLockedInfo = false
+                        },
+                        onDismiss: {
+                            showingLockedInfo = false
+                        }
+                    )
+                }
+                .selfSizingSheet(isPresented: $showingFullInfo) {
+                    FullConvoInfoView(onDismiss: {
+                        showingFullInfo = false
+                    })
+                }
+                .overlay {
+                    if presentingShareView {
+                        ConversationShareOverlay(
+                            conversation: viewModel.conversation,
+                            invite: viewModel.invite,
+                            isPresented: $presentingShareView,
+                            topSafeAreaInset: 0
+                        )
+                    }
+                }
+                .background {
+                    Color.clear
+                        .fullScreenCover(isPresented: $showingExplodeSheet) {
+                            ExplodeConvoSheet(
+                                isScheduled: viewModel.scheduledExplosionDate != nil,
+                                onSchedule: { date in
+                                    viewModel.scheduleExplosion(at: date)
+                                    showingExplodeSheet = false
+                                },
+                                onExplodeNow: {
+                                    viewModel.explodeConvo()
+                                },
+                                onDismiss: {
+                                    showingExplodeSheet = false
+                                }
+                            )
+                            .presentationBackground(.clear)
+                        }
+                        .transaction { transaction in
+                            transaction.disablesAnimations = true
+                        }
+                }
+        }
+    }
+}
+
+struct DebugLogsTextView: View {
+    let logs: String
+    var body: some View {
+        VStack {
+            ScrollView {
+                ScrollViewReader { proxy in
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        Text(logs)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.primary)
+                            .padding()
+                            .id("logs")
+                    }
+                    .onChange(of: logs) {
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            proxy.scrollTo("logs", anchor: .bottom)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct ConversationPreferencesSection: View {
+    @Bindable var viewModel: ConversationViewModel
+
+    var body: some View {
         Section {
             FeatureRowItem(
                 imageName: nil,
@@ -410,472 +743,339 @@ struct ConversationInfoView: View {
                 .foregroundStyle(.colorTextSecondary)
         }
     }
+}
 
-    private var convoRulesSection: some View {
-        Section {
-            FeatureRowItem(
-                imageName: nil,
-                symbolName: "timer",
-                title: "Disappear",
-                subtitle: "Messages"
-            ) {
-                SoonLabel()
-            }
-        } header: {
-            Text("Convo rules")
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.colorTextSecondary)
-        }
-    }
+/// Admin-side companion to the client's `PersonEditorSheet`. Name and
+/// email are owned by the client (set when they verify the person), so
+/// both are read-only here. The one admin lever is the enabled toggle,
+/// which acts as a kill switch on the third-party subscription and the
+/// per-client billing rate.
+private struct AdvisoryPersonSheet: View {
+    @Environment(\.dismiss) private var dismiss: DismissAction
+
+    let member: SeatMember
+    @Binding var enabled: Bool
 
     var body: some View {
-        infoContent
-            .addFromContactsPicker(
-                viewModel: viewModel,
-                isPresented: $presentingAddFromContactsPicker
-            )
-            .onAppear {
-                ensureNavigator()
-                navState.markScreenAppeared()
-            }
-            .onDisappear {
-                navigator?.closed(context: navState.closeContext())
-            }
-            .onChange(of: presentingEditView) { oldValue, newValue in
-                handleEditViewChanged(from: oldValue, to: newValue)
-            }
-    }
-
-    private var vanishSection: some View {
-        Section {
-            HStack {
-                Text("Vanish")
-                    .foregroundStyle(.colorTextPrimary)
-                Spacer()
-                SoonLabel()
-            }
-        } footer: {
-            Text("Choose when this convo disappears from your device")
-                .foregroundStyle(.colorTextSecondary)
-        }
-        .disabled(true)
-    }
-
-    private var permissionsSection: some View {
-        Section {
-            NavigationLink {
-                EmptyView()
-            } label: {
-                HStack {
-                    Text("Permissions")
-                        .foregroundStyle(.colorTextPrimary)
-                    Spacer()
-                    SoonLabel()
-                }
-            }
-            .disabled(true)
-        } footer: {
-            Text("Choose who can manage the group")
-                .foregroundStyle(.colorTextSecondary)
-        }
-    }
-
-    private var infoList: some View {
-        List {
-            headerSection
-
-            membersSection
-
-            agentSection
-
-            convoCodeSection
-
-            if viewModel.canRemoveMembers {
-                Section {
-                    ExplodeInfoRow(
-                        scheduledExplosionDate: viewModel.scheduledExplosionDate,
-                        onTap: { showingExplodeSheet = true },
-                        onExplodeNow: { viewModel.explodeConvo() }
-                    )
-                }
-            }
-
-            preferencesSection
-
-            if viewModel.conversation.hasAgent,
-               let connectionsViewModel {
-                ConversationConnectionsSection(viewModel: connectionsViewModel)
-            }
-
-            convoRulesSection
-
-            vanishSection
-
-            permissionsSection
-
-            debugInfoSection
-        }
-    }
-
-    private var navigationBarContent: some ToolbarContent {
-        Group {
-            ToolbarItem(placement: .topBarLeading) {
-                Button(role: .cancel) {
-                    dismiss()
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                if viewModel.isLocked {
-                    Button {
-                        showingLockedInfo = true
-                    } label: {
-                        Image(systemName: "lock.fill")
-                            .foregroundStyle(.colorTextSecondary)
-                    }
-                    .accessibilityLabel("Conversation locked")
-                    .accessibilityIdentifier("info-lock-button")
-                } else {
-                    AddToConversationMenu(
-                        isFull: viewModel.isFull,
-                        isEnabled: true,
-                        onConvoCode: {
-                            if viewModel.isFull {
-                                showingFullInfo = true
-                            } else {
-                                presentingShareView = true
-                            }
-                        },
-                        onCopyLink: {
-                            viewModel.copyInviteLink()
-                        },
-                        onInviteAgent: {
-                            if viewModel.consumeAgentsIntroGate() {
-                                presentingAgentsIntro = true
-                            } else {
-                                presentingAgentBuilder = viewModel.makeAgentBuilderViewModel()
-                            }
-                        },
-                        onAddFromContacts: {
-                            presentingAddFromContactsPicker = true
-                        }
-                    )
-                    .accessibilityIdentifier("info-add-button")
-                }
-            }
-        }
-    }
-
-    private var infoContent: some View {
         NavigationStack {
-            infoList
-                .task {
-                    if viewModel.conversation.hasAgent, connectionsViewModel == nil {
-                        connectionsViewModel = viewModel.makeConversationConnectionsViewModel()
-                    }
+            Form {
+                identitySection
+                emailsSection
+                if !member.phone.isEmpty {
+                    phoneSection
                 }
-                .alert("Restore invite tag", isPresented: $showingRestoreInviteTagAlert) {
-                    TextField("Invite tag", text: $restoreInviteTagText)
-                    Button("Cancel", role: .cancel) {
-                        restoreInviteTagText = ""
-                    }
-                    Button("Restore") {
-                        let expectedTag = restoreInviteTagText
-                        restoreInviteTagText = ""
-                        Task {
-                            do {
-                                try await viewModel.restoreInviteTagIfMissing(expectedTag)
-                                metadataDebugText = await viewModel.conversationMetadataDebugText()
-                            } catch {
-                                let refreshedDebugText = await viewModel.conversationMetadataDebugText()
-                                metadataDebugText = "Restore failed: \(error.localizedDescription)\n\n\(refreshedDebugText)"
-                            }
-                        }
-                    }
-                } message: {
-                    Text("Only use this if you know the expected invite tag for this convo.")
+                if !member.address.isEmpty {
+                    addressSection
                 }
-                .scrollContentBackground(.hidden)
-                .background(.colorBackgroundRaisedSecondary)
-                .toolbarTitleDisplayMode(.inline)
-                .toolbar { navigationBarContent }
-                .selfSizingSheet(isPresented: $showingLockedInfo) {
-                    LockedConvoInfoView(
-                        isCurrentUserSuperAdmin: viewModel.isCurrentUserSuperAdmin,
-                        isLocked: viewModel.isLocked,
-                        onLock: {
-                            viewModel.toggleLock()
-                            showingLockedInfo = false
-                        },
-                        onDismiss: {
-                            showingLockedInfo = false
-                        }
-                    )
+                enabledSection
+            }
+            .scrollContentBackground(.hidden)
+            .background(.colorBackgroundRaisedSecondary)
+            .navigationTitle("Person")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    let doneAction = { dismiss() }
+                    Button("Done", action: doneAction)
                 }
-                .selfSizingSheet(isPresented: $showingFullInfo) {
-                    FullConvoInfoView(onDismiss: {
-                        showingFullInfo = false
-                    })
-                }
-                .sheet(item: $presentingAgentBuilder) { builderViewModel in
-                    AgentBuilderView(
-                        viewModel: builderViewModel,
-                        profileSettingsViewModel: .shared
-                    )
-                }
-                .selfSizingSheet(isPresented: $presentingAgentsIntro, onDismiss: {
-                    guard pendingAgentBuilderAfterIntro else { return }
-                    pendingAgentBuilderAfterIntro = false
-                    presentingAgentBuilder = viewModel.makeAgentBuilderViewModel()
-                }, content: {
-                    AgentsInfoView(onMakeAgent: { pendingAgentBuilderAfterIntro = true })
-                        .padding(.top, 20)
-                })
-                .overlay {
-                    if presentingShareView {
-                        ConversationShareOverlay(
-                            conversation: viewModel.conversation,
-                            invite: viewModel.invite,
-                            isPresented: $presentingShareView,
-                            topSafeAreaInset: 0,
-                            coreActions: viewModel.coreActions
-                        )
-                    }
-                }
-                .background {
-                    Color.clear
-                        .fullScreenCover(isPresented: $showingExplodeSheet) {
-                            ExplodeConvoSheet(
-                                isScheduled: viewModel.scheduledExplosionDate != nil,
-                                onSchedule: { date in
-                                    viewModel.scheduleExplosion(at: date)
-                                    showingExplodeSheet = false
-                                },
-                                onExplodeNow: {
-                                    viewModel.explodeConvo()
-                                },
-                                onDismiss: {
-                                    showingExplodeSheet = false
-                                }
-                            )
-                            .presentationBackground(.clear)
-                        }
-                        .transaction { transaction in
-                            transaction.disablesAnimations = true
-                        }
-                }
+            }
         }
     }
-}
 
-// MARK: - Support and debug section
-
-extension ConversationInfoView {
-    // The support rows ship in every environment so production users can
-    // send on-device diagnostics to support; the remaining rows are internal
-    // debugging tools and stay out of production builds.
-    @ViewBuilder
-    private var debugInfoSection: some View {
-        let isProduction = ConfigManager.shared.currentEnvironment.isProduction
+    private var identitySection: some View {
         Section {
-            if !isProduction {
-                internalDebugRows
+            LabeledContent("First name") {
+                Text(member.firstName.isEmpty ? "—" : member.firstName)
+                    .foregroundStyle(.colorTextSecondary)
             }
-            reportIssueRow
-            shareLogsRow
+            if !member.middleName.isEmpty {
+                LabeledContent("Middle name") {
+                    Text(member.middleName)
+                        .foregroundStyle(.colorTextSecondary)
+                }
+            }
+            LabeledContent("Last name") {
+                Text(member.lastName.isEmpty ? "—" : member.lastName)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+        } footer: {
+            Text("The client owns this person's name and contact info. Reach out to them if anything needs to change.")
+        }
+    }
+
+    private var emailsSection: some View {
+        Section {
+            if member.emails.isEmpty {
+                Text("No emails on file")
+                    .foregroundStyle(.colorTextSecondary)
+            } else {
+                ForEach(member.emails) { email in
+                    emailRow(email)
+                }
+            }
         } header: {
-            Text("Support")
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.colorTextSecondary)
-        }
-        .task {
-            await prepareExportedLogs()
+            Text("Emails")
         }
     }
 
-    @ViewBuilder
-    private var internalDebugRows: some View {
+    private func emailRow(_ email: LabeledEmail) -> some View {
         HStack {
-            Text("Fork status")
-            Spacer()
-            Text(viewModel.conversation.debugInfo.commitLogForkStatus.rawValue)
-                .foregroundStyle(.colorTextSecondary)
-        }
-        HStack {
-            Text("Epoch")
-            Spacer()
-            Text("\(viewModel.conversation.debugInfo.epoch)")
-                .foregroundStyle(.colorTextSecondary)
-        }
-        NavigationLink {
-            DebugLogsTextView(logs: viewModel.conversation.debugInfo.forkDetails)
-        } label: {
-            Text("Fork details")
-        }
-        NavigationLink {
-            DebugLogsTextView(logs: viewModel.conversation.debugInfo.localCommitLog)
-        } label: {
-            Text("Local commit log")
-        }
-        NavigationLink {
-            DebugLogsTextView(logs: viewModel.conversation.debugInfo.remoteCommitLog)
-        } label: {
-            Text("Remote commit log")
-        }
-        NavigationLink {
-            DebugLogsTextView(logs: metadataDebugText)
-                .task {
-                    metadataDebugText = await viewModel.conversationMetadataDebugText()
-                }
-        } label: {
-            Text("Metadata")
-        }
-        NavigationLink {
-            HiddenMessagesView { try await viewModel.hiddenMessagesDebugInfo() }
-        } label: {
-            Text("Hidden messages")
-        }
-        Button {
-            showingRestoreInviteTagAlert = true
-        } label: {
-            Text("Restore invite tag")
-        }
-    }
-
-    @ViewBuilder
-    private var reportIssueRow: some View {
-        Button {
-            reportIssue()
-        } label: {
-            HStack {
-                Text("Report an issue")
+            VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                Text(email.address)
                     .foregroundStyle(.colorTextPrimary)
-                Spacer()
-                if preparingReportIssueEmail {
-                    ProgressView()
-                } else {
-                    Image(systemName: "envelope")
-                        .foregroundStyle(.colorTextSecondary)
-                }
+                Text(email.label.displayName)
+                    .font(.caption)
+                    .foregroundStyle(.colorTextSecondary)
             }
-        }
-        .accessibilityIdentifier("report-issue-button")
-        .sheet(isPresented: $presentingMailCompose) {
-            MailComposeView(
-                recipients: [Constant.supportEmail],
-                subject: Constant.supportEmailSubject,
-                attachment: reportIssueAttachment
-            )
-            .ignoresSafeArea()
-        }
-    }
-
-    @ViewBuilder
-    private var shareLogsRow: some View {
-        if let url = exportedLogsURL {
-            ShareLink(item: url) {
-                HStack {
-                    Text("Share logs")
-                        .foregroundStyle(.colorTextPrimary)
-                    Spacer()
-                    Image(systemName: "square.and.arrow.up")
-                        .foregroundStyle(.colorTextSecondary)
-                }
-            }
-            .buttonStyle(.plain)
-        } else {
-            HStack {
-                Text("Preparing logs…")
-                Spacer()
-                ProgressView()
-            }
-            .foregroundStyle(.colorTextSecondary)
-        }
-    }
-
-    private func reportIssue() {
-        guard !preparingReportIssueEmail else { return }
-        guard MailComposeView.canSendMail else {
-            // No mail account configured for the system compose sheet: fall
-            // back to a mailto: draft, which cannot carry the logs attachment.
-            let subject = Constant.supportEmailSubject
-            let encodedSubject = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? subject
-            guard let url = URL(string: "mailto:\(Constant.supportEmail)?subject=\(encodedSubject)") else { return }
-            openURL(url)
-            return
-        }
-        preparingReportIssueEmail = true
-        Task {
-            reportIssueAttachment = await loadReportIssueAttachment()
-            preparingReportIssueEmail = false
-            presentingMailCompose = true
-        }
-    }
-
-    /// Waits for the log export if it is still running, then reads the
-    /// bundle into memory off the main thread so presenting the compose
-    /// sheet doesn't stall on a large file read.
-    private func loadReportIssueAttachment() async -> MailComposeView.Attachment? {
-        guard let url = await exportedLogsURLAwaitingExport() else { return nil }
-        let task = Task.detached { MailComposeView.Attachment(contentsOf: url) }
-        return await task.value
-    }
-
-    private func exportedLogsURLAwaitingExport() async -> URL? {
-        if let exportedLogsURL { return exportedLogsURL }
-        if let exportLogsTask { return await exportLogsTask.value }
-        // The section's export task hasn't started yet; run it directly.
-        return try? await viewModel.exportDebugLogs()
-    }
-
-    private func prepareExportedLogs() async {
-        let task = Task { () -> URL? in
-            do {
-                return try await viewModel.exportDebugLogs()
-            } catch {
-                Log.error("Failed to export logs for conversation: \(error.localizedDescription)")
-                return nil
-            }
-        }
-        exportLogsTask = task
-        exportedLogsURL = await task.value
-    }
-
-    private enum Constant {
-        static let supportEmail: String = "hi@convos.org"
-        static let supportEmailSubject: String = "I'm reporting an issue"
-    }
-}
-
-struct DebugLogsTextView: View {
-    let logs: String
-    var body: some View {
-        VStack {
-            ScrollView {
-                ScrollViewReader { proxy in
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        Text(logs)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundColor(.primary)
-                            .padding()
-                            .id("logs")
-                    }
-                    .onChange(of: logs) {
-                        withAnimation(.easeOut(duration: 0.3)) {
-                            proxy.scrollTo("logs", anchor: .bottom)
-                        }
-                    }
-                }
+            Spacer()
+            if email.verified {
+                Text("Verified")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.colorTextSecondary)
+            } else {
+                Text("Unverified")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.colorTextTertiary)
             }
         }
     }
-}
 
-@MainActor
-private func makeConversationInfoPreviewViewModel() -> ConversationViewModel {
-    .mock
+    private var phoneSection: some View {
+        Section {
+            LabeledContent("Phone") {
+                Text(member.phone)
+                    .foregroundStyle(.colorTextSecondary)
+            }
+        }
+    }
+
+    private var addressSection: some View {
+        Section {
+            Text(member.address.singleLine)
+                .foregroundStyle(.colorTextSecondary)
+        } header: {
+            Text("Address")
+        }
+    }
+
+    private var enabledSection: some View {
+        Section {
+            Toggle("Enabled", isOn: $enabled)
+        } footer: {
+            Text("Enabled people are subscribed to the service and count toward this client's monthly rate.")
+        }
+    }
 }
 
 #Preview {
+    @Previewable @State var viewModel: ConversationViewModel = .mock
     @Previewable @State var focusCoordinator: FocusCoordinator = FocusCoordinator(horizontalSizeClass: nil)
-    ConversationInfoView(viewModel: makeConversationInfoPreviewViewModel(), focusCoordinator: focusCoordinator)
+    ConversationInfoView(viewModel: viewModel, focusCoordinator: focusCoordinator)
+}
+
+/// Admin-only Emerald toggle that appears at the top of a client
+/// Advisory chat's info screen. Extracted into its own view so
+/// `ConversationInfoView` stays under SwiftLint's type-body-length
+/// cap, and so the section's state (the fetched admin-channel row +
+/// the toggle's in-flight saving / error flags) doesn't pollute the
+/// parent's already-large state surface. Self-loads its data on
+/// appear and self-refetches after every toggle.
+private struct AdminEmeraldTierSection: View {
+    let viewModel: ConversationViewModel
+    @Binding var channel: ConvosAPI.GoldilocksAdminChannel?
+
+    @State private var saving: Bool = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if GoldilocksConfig.role == .admin, let channel {
+                Section {
+                    toggleRow(for: channel)
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                } header: {
+                    Text("Tier override")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.colorTextSecondary)
+                } footer: {
+                    Text("Emerald overrides automatic tier selection.")
+                        .font(.caption)
+                        .foregroundStyle(.colorTextSecondary)
+                }
+            }
+        }
+        .task { await loadChannelIfAdmin() }
+    }
+
+    private func toggleRow(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
+        HStack {
+            Text("Emerald membership")
+                .foregroundStyle(.colorTextPrimary)
+            Spacer()
+            Toggle("", isOn: binding(for: channel))
+                .labelsHidden()
+                .disabled(saving)
+                .opacity(saving ? 0.4 : 1.0)
+        }
+    }
+
+    private func binding(for channel: ConvosAPI.GoldilocksAdminChannel) -> Binding<Bool> {
+        Binding(
+            get: { channel.emeraldMembershipEnabled },
+            set: { newValue in
+                Task { await setEmerald(to: newValue, for: channel) }
+            }
+        )
+    }
+
+    private func loadChannelIfAdmin() async {
+        guard GoldilocksConfig.role == .admin else {
+            Log.info("[Emerald] skipped: role is not admin (role=\(GoldilocksConfig.role))")
+            return
+        }
+        let name: String = viewModel.conversation.name ?? ""
+        guard name.hasPrefix("Advisory") else {
+            Log.info("[Emerald] skipped: conversation name '\(name)' does not start with Advisory")
+            return
+        }
+        Log.info("[Emerald] loading admin channel for conversation \(viewModel.conversation.id)")
+        let loaded: ConvosAPI.GoldilocksAdminChannel? = await viewModel.loadAdminChannelForCurrentConversation()
+        channel = loaded
+        if let loaded {
+            Log.info("[Emerald] loaded channel: clientNumber=\(loaded.clientNumber) emerald=\(loaded.emeraldMembershipEnabled)")
+        } else {
+            Log.warning("[Emerald] no matching admin channel found for conversation \(viewModel.conversation.id)")
+        }
+    }
+
+    private func setEmerald(
+        to newValue: Bool,
+        for channel: ConvosAPI.GoldilocksAdminChannel
+    ) async {
+        saving = true
+        errorMessage = nil
+        let result: Bool? = await viewModel.setAdvisoryEmeraldMembership(
+            clientInboxId: channel.clientInboxId,
+            enabled: newValue
+        )
+        if result != nil {
+            self.channel = await viewModel.loadAdminChannelForCurrentConversation()
+            await viewModel.refreshGoldilocksIdentity()
+        } else {
+            errorMessage = "Couldn't update Emerald membership."
+        }
+        saving = false
+    }
+}
+
+/// Coverage end-date + decrypted-people-list section that appears in
+/// an admin's view of their own Advisory or Reports chat. Extracted
+/// from `ConversationInfoView` so the parent struct stays under the
+/// type-body-length cap and the section's transient state
+/// (the loaded billing snapshot + the in-flight person sheet) stops
+/// polluting the parent's already-large @State surface.
+///
+/// Limited to the viewer's own client channels because that's the
+/// only people list we hold the decryption key for locally — an
+/// admin who wants to manage a different client goes through
+/// `AdminChannelsView` → `AdminClientPeopleListView`.
+private struct PeopleAndCoverageSection: View {
+    let viewModel: ConversationViewModel
+    @Binding var selectedPerson: SeatMember?
+
+    @State private var seatPlan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
+    @State private var coverage: ConvosAPI.GoldilocksBillingStatusResponse?
+
+    private static let coverageDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    var body: some View {
+        Group {
+            if shouldShow {
+                Section {
+                    coverageRow
+                    if seatPlan.members.isEmpty {
+                        Text("No people added yet.")
+                            .foregroundStyle(.colorTextSecondary)
+                    } else {
+                        ForEach(seatPlan.members) { member in
+                            personRow(member)
+                        }
+                    }
+                } header: {
+                    Text("People & coverage")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.colorTextSecondary)
+                } footer: {
+                    Text("Tap a person to view their info or toggle their coverage.")
+                        .font(.caption)
+                        .foregroundStyle(.colorTextSecondary)
+                }
+            }
+        }
+        .task {
+            if shouldShow {
+                coverage = await viewModel.loadGoldilocksAdvisoryInfo()
+            }
+        }
+    }
+
+    private var shouldShow: Bool {
+        guard GoldilocksConfig.role == .admin else { return false }
+        guard viewModel.conversation.goldilocksPinnedSection == .client else { return false }
+        let name: String = viewModel.conversation.name ?? ""
+        return name.hasPrefix("Advisory") || name.hasPrefix("Back Office")
+    }
+
+    private var coverageRow: some View {
+        HStack {
+            Text("Coverage")
+                .foregroundStyle(.colorTextPrimary)
+            Spacer()
+            Text(coverageSummary)
+                .font(.footnote)
+                .foregroundStyle(.colorTextSecondary)
+        }
+    }
+
+    private var coverageSummary: String {
+        guard let coverage else { return "Loading…" }
+        guard let activeUntil = coverage.activeUntil,
+              let date = Self.coverageDateFormatter.date(from: activeUntil) else {
+            return "No active coverage"
+        }
+        return "Active until \(date.formatted(date: .abbreviated, time: .omitted))"
+    }
+
+    private func personRow(_ member: SeatMember) -> some View {
+        let name: String = member.firstName.isEmpty ? member.displayName : member.firstName
+        let tapAction = { selectedPerson = member }
+        return Button(action: tapAction) {
+            HStack(spacing: DesignConstants.Spacing.step2x) {
+                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                    Text(name)
+                        .font(.body)
+                        .foregroundStyle(.colorTextPrimary)
+                    if !member.enabled {
+                        Text("Disabled")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.colorTextTertiary)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.colorTextTertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 }

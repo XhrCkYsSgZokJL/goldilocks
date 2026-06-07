@@ -9,11 +9,35 @@ import UserNotifications
 @MainActor
 class ConvosAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUserNotificationCenterDelegate {
     var session: (any SessionManagerProtocol)?
+    var pushNotificationRegistrar: (any PushNotificationRegistrarProtocol)?
     private var leftConversationObserver: Any?
     private var foregroundObserver: Any?
+    /// Public so the SwiftUI scene can drive the in-app capture overlay
+    /// (`.captureProtected(monitor:)`) from the same shared instance.
+    let captureMonitor: CaptureMonitor = .init()
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        PostHogConfiguration.configure()
+        let brand = BrandConfig.shared
+        GoldilocksMembershipTier.configure(
+            silverThreshold: brand.tiers.thresholds.silver,
+            goldThreshold: brand.tiers.thresholds.gold,
+            descriptions: brand.tiers.descriptions
+        )
+        GoldilocksPlan.configure(
+            monthlyPricePerPersonCents: brand.pricing.monthlyPricePerPersonCents,
+            priceLabel: brand.pricing.priceLabel
+        )
+        if brand.theme?.mode == "dark" {
+            let cellBg = UIColor(named: "colorFillMinimal") ?? .secondarySystemGroupedBackground
+            UITableViewCell.appearance().backgroundColor = cellBg
+            UICollectionView.appearance().backgroundColor = .clear
+            let footerColor = UIColor(named: "colorTextSecondary") ?? .secondaryLabel
+            UITableViewHeaderFooterView.appearance().tintColor = footerColor
+            UILabel.appearance(whenContainedInInstancesOf: [UITableViewHeaderFooterView.self]).textColor = footerColor
+        }
+        SentryConfiguration.configure()
+        SecureWindow.installWhenWindowAppears()
+        captureMonitor.start()
         UNUserNotificationCenter.current().delegate = self
         application.registerForRemoteNotifications()
         leftConversationObserver = NotificationCenter.default.addObserver(
@@ -31,40 +55,13 @@ class ConvosAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUser
         return true
     }
 
-    // Lifecycle ordering invariant for the singleton-based token handoff:
-    //
-    //   ConvosApp.init
-    //     |
-    //     +--> PlatformProviders.iOS
-    //     |       |
-    //     |       +--> PushNotificationRegistrar.configure(IOSPushNotificationRegistrar())
-    //     |                            (singleton _shared is set HERE)
-    //     v
-    //   UIKit lifecycle starts
-    //     |
-    //     +--> application(_:didFinishLaunchingWithOptions:)
-    //     |       |
-    //     |       +--> UIApplication.registerForRemoteNotifications()
-    //     v
-    //   APNS callback
-    //     |
-    //     +--> didRegisterForRemoteNotificationsWithDeviceToken
-    //             |
-    //             +--> PushNotificationRegistrar.save(token:)
-    //                     |
-    //                     +-- _shared != nil (normal lifecycle) -> save + post notification
-    //                     +-- _shared == nil (test / extension)  -> Log.error + no-op (D10)
-    //
-    // The singleton is configured before UIKit fires didFinishLaunching, so the
-    // happy path is race-free by construction. The graceful no-op covers UI tests
-    // and any future lifecycle change without crashing the process.
     func application(_ application: UIApplication,
                      didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         let tokenParts = deviceToken.map { data in String(format: "%02.2hhx", data) }
         let token = tokenParts.joined()
 
         Log.info("Received device token from APNS")
-        PushNotificationRegistrar.save(token: token)
+        pushNotificationRegistrar?.save(token: token)
     }
 
     func application(_ application: UIApplication,

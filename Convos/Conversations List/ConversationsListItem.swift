@@ -3,21 +3,11 @@ import SwiftUI
 
 extension Conversation {
     var title: String {
-        title(memberNameOverride: { _ in nil })
-    }
-
-    /// Resolves the conversation list cell title with an inbox → contact-name
-    /// override applied to auto-generated DM/group titles. When the
-    /// conversation has an explicit `name`, that's returned verbatim — the
-    /// override only affects auto-generated titles built from member names.
-    /// See `Conversation.computedDisplayName(memberNameOverride:)`.
-    func title(memberNameOverride: (String) -> String?) -> String {
         switch kind {
         case .dm:
-            guard let other = otherMember else { return "" }
-            return other.displayName(memberNameOverride: memberNameOverride)
+            return otherMember?.profile.displayName ?? ""
         case .group:
-            return computedDisplayName(memberNameOverride: memberNameOverride)
+            return goldilocksDisplayName ?? displayName
         }
     }
 }
@@ -38,8 +28,8 @@ struct ListItemView<LeadingContent: View, SubtitleContent: View, AccessoryConten
 
             VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepX) {
                 Text(title)
-                    .font(isUnread ? .body.weight(.medium) : .body)
-                    .foregroundStyle(.colorTextPrimary)
+                    .font(isUnread ? .body.weight(.bold) : .body.weight(.semibold))
+                    .foregroundStyle(Color.brandText)
                     .truncationMode(.tail)
                     .lineLimit(1)
 
@@ -62,8 +52,8 @@ struct ListItemView<LeadingContent: View, SubtitleContent: View, AccessoryConten
 
             if isUnread {
                 Circle()
-                    .fill(Color.primary)
-                    .frame(width: 16, height: 16)
+                    .fill(Color.colorFillPrimary)
+                    .frame(width: 10, height: 10)
                     .accessibilityHidden(true)
                     .transition(.scale.combined(with: .opacity))
             }
@@ -79,10 +69,8 @@ struct ListItemView<LeadingContent: View, SubtitleContent: View, AccessoryConten
 struct ConversationsListItem: View {
     let conversation: Conversation
 
-    @Environment(\.memberNameOverride) private var memberNameOverride: @Sendable (String) -> String?
-
     // Extract computed values to prevent unnecessary recalculations
-    private var title: String { conversation.title(memberNameOverride: memberNameOverride) }
+    private var title: String { conversation.title }
     private var isMuted: Bool { conversation.isMuted }
     private var isUnread: Bool { conversation.isUnread }
     private var lastMessage: MessagePreview? { conversation.lastMessage }

@@ -3302,10 +3302,7 @@ extension ConversationViewModel {
     }
 
     func leaveConvo() {
-        // Note: the old per-conversation `session.deleteInbox` call is a no-op
-        // post-hotfix. A proper group-leave path (group.leaveGroup() + local
-        // row delete) is tracked as a follow-up to C11. Notification post
-        // keeps the list UI in sync for now.
+        guard !conversation.isPinnedGoldilocksGroup else { return }
         Task { [weak self] in
             guard let self else { return }
             await MainActor.run {
@@ -3493,6 +3490,63 @@ extension ConversationViewModel {
             group.cancelAll()
             return result
         }
+    }
+
+    /// Goldilocks: refresh the encrypted people list and return the
+    /// caller's coverage status, for the Advisory chat info section.
+    func loadGoldilocksAdvisoryInfo() async -> ConvosAPI.GoldilocksBillingStatusResponse? {
+        await GoldilocksSeatPlan.shared.loadFromBackend(session: session)
+        return try? await session.fetchGoldilocksBillingStatus()
+    }
+
+    /// Goldilocks: persist the current people list. Wraps the
+    /// `GoldilocksSeatPlan.saveToBackend` call so the chat info view
+    /// doesn't need its own handle on the session.
+    func saveGoldilocksPeopleList() async {
+        await GoldilocksSeatPlan.shared.saveToBackend(session: session)
+    }
+
+    /// Goldilocks (admin): fetch the admin's view of a single client's
+    /// channel matching this conversation's xmtp group id. Used by the
+    /// chat info view's Emerald toggle so it can read the current
+    /// state + resolve the target client's inbox id.
+    func loadAdminChannelForCurrentConversation() async -> ConvosAPI.GoldilocksAdminChannel? {
+        let conversationId: String = conversation.id
+        do {
+            let channels: [ConvosAPI.GoldilocksAdminChannel] = try await session.fetchAdminChannels()
+            Log.info("[Emerald] fetched \(channels.count) admin channels, looking for xmtpGroupId=\(conversationId)")
+            let match = channels.first(where: { $0.xmtpGroupId == conversationId })
+            if match == nil {
+                let groupIds: [String] = channels.map { $0.xmtpGroupId ?? "nil" }
+                Log.info("[Emerald] available xmtpGroupIds: \(groupIds)")
+            }
+            return match
+        } catch {
+            Log.error("[Emerald] fetchAdminChannels failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Goldilocks (admin): flip the Emerald flag on a client. Wraps
+    /// the session call so the chat info view doesn't need its own
+    /// session handle. Returns the new state, or nil on failure.
+    func setAdvisoryEmeraldMembership(
+        clientInboxId: String,
+        enabled: Bool
+    ) async -> Bool? {
+        do {
+            let response = try await session.setEmeraldMembership(
+                clientInboxId: clientInboxId,
+                enabled: enabled
+            )
+            return response.emeraldMembershipEnabled
+        } catch {
+            return nil
+        }
+    }
+
+    func refreshGoldilocksIdentity() async {
+        await GoldilocksSession.shared.refreshIdentity(session: session)
     }
 }
 
@@ -3922,5 +3976,10 @@ extension ConversationViewModel {
                     self.setInviteExplodeDuration(.twentyFourHours)
                 }
         }
+    }
+
+    func addMembersFromContacts(_ inboxIds: [String]) async throws {
+        guard !inboxIds.isEmpty else { return }
+        try await metadataWriter.addMembers(inboxIds, to: conversation.id)
     }
 }

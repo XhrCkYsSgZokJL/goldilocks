@@ -16,12 +16,8 @@ struct ConvosAppClipApp: App {
         ConvosLog.configure(environment: environment)
         ConvosLog.info("App Clip starting with environment: \(environment)", namespace: "ConvosAppClip")
 
-        if let url = environment.firebaseConfigURL {
-            let debugToken: String? = environment.isProduction ? nil : Secrets.FIREBASE_APP_CHECK_DEBUG_TOKEN
-            FirebaseHelperCore.configure(with: url, debugToken: debugToken)
-        } else {
-            ConvosLog.error("Missing Firebase plist URL for current environment", namespace: "ConvosAppClip")
-        }
+        // Firebase App Check removed — see Convos/ConvosApp.swift for the
+        // rationale (Path B of security plan item 7).
 
         // Dedicated clip bootstrap: seeds the shared-app-group keychain with
         // a single-inbox identity so the main app install skips onboarding.
@@ -30,10 +26,11 @@ struct ConvosAppClipApp: App {
         // the clip's ephemeral runtime.
         clipSession = MainActor.assumeIsolated {
             // App Clip has no PostHog SDK or user session — explicit no-op
-            // sink rather than threading a real CoreActions across processes.
+            // sink. Goldilocks also scopes the clip identity to its keychain
+            // access group.
             ClipIdentityBootstrap.bootstrap(
                 environment: environment,
-                platformProviders: .iOS,
+                platformProviders: .iOS(accessGroup: environment.keychainAccessGroup),
                 coreActions: NoOpCoreActions()
             )
         }

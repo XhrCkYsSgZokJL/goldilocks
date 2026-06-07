@@ -13,7 +13,14 @@ final class ConversationsViewController: UIViewController {
         var selectedConversationId: String?
         var isFilteredResultEmpty: Bool
         var filterEmptyMessage: String
+        var hasCreatedMoreThanOneConvo: Bool
         var horizontalSizeClass: UserInterfaceSizeClass?
+
+        @MainActor var shouldShowEmptyCTA: Bool {
+            unpinnedConversations.count == 1 &&
+            !hasCreatedMoreThanOneConvo &&
+            UIDevice.current.userInterfaceIdiom == .phone
+        }
 
         static let empty: State = State(
             pinnedConversations: [],
@@ -21,6 +28,7 @@ final class ConversationsViewController: UIViewController {
             selectedConversationId: nil,
             isFilteredResultEmpty: false,
             filterEmptyMessage: "",
+            hasCreatedMoreThanOneConvo: false,
             horizontalSizeClass: nil
         )
     }
@@ -28,6 +36,8 @@ final class ConversationsViewController: UIViewController {
     enum Item: Hashable {
         case pinned(Conversation)
         case conversation(Conversation)
+        case sectionDivider(ConversationListGroup)
+        case emptyCTA
         case filteredEmpty(String)
 
         func hash(into hasher: inout Hasher) {
@@ -38,6 +48,11 @@ final class ConversationsViewController: UIViewController {
             case .conversation(let conversation):
                 hasher.combine("conversation")
                 hasher.combine(conversation.id)
+            case .sectionDivider(let group):
+                hasher.combine("sectionDivider")
+                hasher.combine(group)
+            case .emptyCTA:
+                hasher.combine("emptyCTA")
             case .filteredEmpty(let message):
                 hasher.combine("filteredEmpty")
                 hasher.combine(message)
@@ -50,6 +65,10 @@ final class ConversationsViewController: UIViewController {
                 return lConv.id == rConv.id
             case let (.conversation(lConv), .conversation(rConv)):
                 return lConv.id == rConv.id
+            case let (.sectionDivider(lGroup), .sectionDivider(rGroup)):
+                return lGroup == rGroup
+            case (.emptyCTA, .emptyCTA):
+                return true
             case let (.filteredEmpty(lMsg), .filteredEmpty(rMsg)):
                 return lMsg == rMsg
             default:
@@ -76,14 +95,11 @@ final class ConversationsViewController: UIViewController {
     private lazy var dataSource: UICollectionViewDiffableDataSource<ConversationsSection, Item> = makeDataSource()
     private var currentState: State = .empty
 
-    /// Inbox → user-contact override applied to auto-generated cell
-    /// titles and avatar substitution. Set by the SwiftUI parent
-    /// via `ConversationsViewRepresentable`. `@Sendable` to match the
-    /// SwiftUI environment value's contract — the closure ends up stored
-    /// inside `UIHostingConfiguration` blocks where it crosses isolation
-    /// boundaries. Defaults to a no-op so cells render with the per-
-    /// conversation profile when no resolver is available (previews).
-    var memberContactOverride: @Sendable (String) -> Contact? = { _ in nil }
+    /// Conversation-list sections the user has collapsed. Persisted so the
+    /// choice survives app relaunches.
+    private var collapsedGroups: Set<ConversationListGroup> = SectionCollapseStore.load() {
+        didSet { SectionCollapseStore.save(collapsedGroups) }
+    }
 
     // MARK: - Callbacks
 
@@ -93,49 +109,15 @@ final class ConversationsViewController: UIViewController {
     var onToggleMute: ((Conversation) -> Void)?
     var onToggleReadState: ((Conversation) -> Void)?
     var onTogglePin: ((Conversation) -> Void)?
+    var onStartConvo: (() -> Void)?
+    var onJoinConvo: (() -> Void)?
     var onShowAllFilter: (() -> Void)?
-    /// Fired on every scroll tick with the latest content offset Y. Used
-    /// by the host SwiftUI shell (`MainTabView`) to flip the agent
-    /// builder bar between expanded and collapsed states based on whether
-    /// the list is at the top.
-    var onScrollOffsetChange: ((CGFloat) -> Void)?
-
-    /// Extra top inset to clear the SwiftUI top chrome (the agent builder
-    /// bar that lives under the nav bar in the host's safe-area inset
-    /// chain). The chain doesn't always propagate to UIKit-hosted
-    /// collection views, so the SwiftUI host pushes this value down and
-    /// we apply it via `additionalSafeAreaInsets`.
-    var topChromeInset: CGFloat = 0 {
-        didSet {
-            guard isViewLoaded, oldValue != topChromeInset else { return }
-            additionalSafeAreaInsets.top = topChromeInset
-        }
-    }
-
-    /// Bottom counterpart to `topChromeInset`, used when the agent builder
-    /// bar pins to the bottom edge (iPad, where the standard tab bar is at
-    /// the top).
-    var bottomChromeInset: CGFloat = 0 {
-        didSet {
-            guard isViewLoaded, oldValue != bottomChromeInset else { return }
-            additionalSafeAreaInsets.bottom = bottomChromeInset
-        }
-    }
 
     // MARK: - Lifecycle
 
     override func viewDidLoad() {
         super.viewDidLoad()
         setupCollectionView()
-        // Apply any inset values that landed before the view loaded —
-        // the `didSet`s short-circuit while `isViewLoaded` is false, so
-        // without this the values silently vanish.
-        if topChromeInset != 0 {
-            additionalSafeAreaInsets.top = topChromeInset
-        }
-        if bottomChromeInset != 0 {
-            additionalSafeAreaInsets.bottom = bottomChromeInset
-        }
         _ = dataSource
     }
 
@@ -371,13 +353,48 @@ final class ConversationsViewController: UIViewController {
         return conversation
     }
 
+    /// The conversations belonging to a collapsible list group, in the
+    /// order they appear in `unpinnedConversations`.
+    private func conversations(in group: ConversationListGroup) -> [Conversation] {
+        switch group {
+        case .admin:
+            return currentState.unpinnedConversations.filter { $0.goldilocksPinnedSection == .admin }
+        case .client:
+            return currentState.unpinnedConversations.filter { $0.goldilocksPinnedSection == .client }
+        case .advisory:
+            return currentState.unpinnedConversations.filter { $0.isOtherClientAdvisory }
+        case .chats:
+            return currentState.unpinnedConversations.filter { $0.goldilocksPinnedSection == nil && !$0.isOtherClientAdvisory }
+        }
+    }
+
+    /// Toggle a section between expanded and collapsed, then re-render.
+    private func toggleCollapse(_ group: ConversationListGroup) {
+        if collapsedGroups.contains(group) {
+            collapsedGroups.remove(group)
+        } else {
+            collapsedGroups.insert(group)
+        }
+        applySnapshot(animated: true, changedIds: [])
+    }
+
     private func makeDataSource() -> UICollectionViewDiffableDataSource<ConversationsSection, Item> {
         // Cell registration for list items
         let listCellRegistration = UICollectionView.CellRegistration<ConversationListItemCell, Conversation> { [weak self] cell, _, conversation in
             guard let self = self else { return }
             let fresh = self.freshConversation(for: conversation)
             let isSelected = self.currentState.selectedConversationId == fresh.id
-            cell.configure(with: fresh, isSelected: isSelected, memberContactOverride: self.memberContactOverride)
+            cell.configure(with: fresh, isSelected: isSelected)
+        }
+
+        // Cell registration for the tappable section dividers.
+        let dividerCellRegistration = UICollectionView.CellRegistration<SectionDividerCell, ConversationListGroup> { [weak self] cell, _, group in
+            guard let self = self else { return }
+            let convos = self.conversations(in: group)
+            let count: Int = convos.count
+            let isCollapsed: Bool = self.collapsedGroups.contains(group)
+            let hasUnread: Bool = convos.contains { $0.isUnread }
+            cell.configure(group: group, count: count, isCollapsed: isCollapsed, hasUnread: hasUnread)
         }
 
         // Cell registration for pinned items
@@ -385,7 +402,7 @@ final class ConversationsViewController: UIViewController {
             guard let self = self else { return }
             let fresh = self.freshConversation(for: conversation)
             let isSelected = self.currentState.selectedConversationId == fresh.id
-            cell.configure(with: fresh, isSelected: isSelected, memberContactOverride: self.memberContactOverride)
+            cell.configure(with: fresh, isSelected: isSelected)
         }
 
         // Cell registration for empty states
@@ -409,6 +426,24 @@ final class ConversationsViewController: UIViewController {
                     using: listCellRegistration,
                     for: indexPath,
                     item: conversation
+                )
+
+            case .sectionDivider(let group):
+                return collectionView.dequeueConfiguredReusableCell(
+                    using: dividerCellRegistration,
+                    for: indexPath,
+                    item: group
+                )
+
+            case .emptyCTA:
+                let type = EmptyStateType.cta(
+                    onStartConvo: { self.onStartConvo?() },
+                    onJoinConvo: { self.onJoinConvo?() }
+                )
+                return collectionView.dequeueConfiguredReusableCell(
+                    using: emptyCellRegistration,
+                    for: indexPath,
+                    item: type
                 )
 
             case .filteredEmpty(let message):
@@ -439,26 +474,45 @@ final class ConversationsViewController: UIViewController {
         if currentState.isFilteredResultEmpty {
             snapshot.appendItems([.filteredEmpty(currentState.filterEmptyMessage)], toSection: .list)
         } else {
-            let listItems = currentState.unpinnedConversations.map { Item.conversation($0) }
-            snapshot.appendItems(listItems, toSection: .list)
+            if currentState.shouldShowEmptyCTA {
+                snapshot.appendItems([.emptyCTA], toSection: .list)
+            }
+
+            // Each group is introduced by a tappable divider; its
+            // conversations follow unless the group is collapsed. The
+            // .advisory and .chats dividers are always shown (even when
+            // empty) so the user sees where those conversations belong.
+            for group in ConversationListGroup.allCases {
+                let convos = conversations(in: group)
+                let alwaysShow: Bool = group == .chats || (group == .advisory && GoldilocksConfig.role == .admin)
+                guard !convos.isEmpty || alwaysShow else { continue }
+                snapshot.appendItems([.sectionDivider(group)], toSection: .list)
+                if !collapsedGroups.contains(group) {
+                    snapshot.appendItems(convos.map { Item.conversation($0) }, toSection: .list)
+                }
+            }
         }
 
         dataSource.apply(snapshot, animatingDifferences: animated)
 
-        if !changedIds.isEmpty {
-            var applied = dataSource.snapshot()
-            let itemsToReconfigure = applied.itemIdentifiers.filter { item in
-                switch item {
-                case .pinned(let c), .conversation(let c):
-                    return changedIds.contains(c.id)
-                case .filteredEmpty:
-                    return false
-                }
+        // Reconfigure changed conversations from the diff, plus *all*
+        // section dividers — a divider's count and collapsed chevron live
+        // outside its item identity, so the diff datasource can't see them
+        // change when a sibling row is added or removed.
+        var applied = dataSource.snapshot()
+        let itemsToReconfigure = applied.itemIdentifiers.filter { item in
+            switch item {
+            case .pinned(let c), .conversation(let c):
+                return changedIds.contains(c.id)
+            case .sectionDivider:
+                return true
+            case .emptyCTA, .filteredEmpty:
+                return false
             }
-            if !itemsToReconfigure.isEmpty {
-                applied.reconfigureItems(itemsToReconfigure)
-                dataSource.apply(applied, animatingDifferences: false)
-            }
+        }
+        if !itemsToReconfigure.isEmpty {
+            applied.reconfigureItems(itemsToReconfigure)
+            dataSource.apply(applied, animatingDifferences: false)
         }
 
         updateSelection()
@@ -482,7 +536,7 @@ final class ConversationsViewController: UIViewController {
                 switch item {
                 case .pinned(let conversation), .conversation(let conversation):
                     conversationId = conversation.id
-                case .filteredEmpty:
+                case .sectionDivider, .emptyCTA, .filteredEmpty:
                     conversationId = nil
                 }
 
@@ -510,7 +564,7 @@ final class ConversationsViewController: UIViewController {
             switch item {
             case .pinned(let c), .conversation(let c):
                 matchesId = c.id == conversation.id
-            case .filteredEmpty:
+            case .sectionDivider, .emptyCTA, .filteredEmpty:
                 matchesId = false
             }
             if matchesId, let indexPath = dataSource.indexPath(for: item) {
@@ -637,7 +691,7 @@ extension ConversationsViewController: UICollectionViewDelegate {
         switch item {
         case .pinned(let conversation), .conversation(let conversation):
             return conversation
-        case .filteredEmpty:
+        case .sectionDivider, .emptyCTA, .filteredEmpty:
             return nil
         }
     }
@@ -645,18 +699,14 @@ extension ConversationsViewController: UICollectionViewDelegate {
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
 
+        if let item = dataSource.itemIdentifier(for: indexPath),
+           case .sectionDivider(let group) = item {
+            toggleCollapse(group)
+            return
+        }
+
         guard let conversation = conversation(for: indexPath) else { return }
         onSelectConversation?(conversation)
-    }
-
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        // Report scrolled distance from the natural top — zero when the
-        // list is at rest at the top, positive when scrolled down,
-        // negative on overscroll bounce past the top. Without adding the
-        // adjusted top inset back in, the "at top" position is whatever
-        // `-adjustedContentInset.top` happens to be, which the host can't
-        // compare against a fixed threshold cleanly.
-        onScrollOffsetChange?(scrollView.contentOffset.y + scrollView.adjustedContentInset.top)
     }
 
     func collectionView(
@@ -685,7 +735,7 @@ extension ConversationsViewController: UICollectionViewDelegate {
                         .scaleEffect(1.2)
                         .padding(DesignConstants.Spacing.step8x)
                 )
-                hostingController.view.backgroundColor = .systemBackground
+                hostingController.view.backgroundColor = UIColor(named: "colorBackgroundRaised") ?? .systemBackground
                 let size = hostingController.sizeThatFits(in: CGSize(width: 280, height: 500))
                 hostingController.preferredContentSize = size
                 return hostingController

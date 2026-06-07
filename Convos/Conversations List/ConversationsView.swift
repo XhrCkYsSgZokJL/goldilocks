@@ -3,192 +3,134 @@ import SwiftUI
 
 struct ConversationsView: View {
     @State var viewModel: ConversationsViewModel
-    @Bindable var profileSettingsViewModel: ProfileSettingsViewModel
-    /// App-level indicator context plumbed from `MainTabView`. Carries the
-    /// shared namespace + transition id used for the pill -> app settings
-    /// sheet zoom; passed through to `ConversationPresenter` so the pill
-    /// overlay renders with the right matched-transition source.
-    let appIndicatorContext: AppIndicatorContext
-    /// Optional accessory rendered as an overlay at the bottom of the
-    /// sidebar. Reserved for callers that want extra chrome scoped to
-    /// the conversation list only; `MainTabView` no longer uses this
-    /// (the builder bar moved into the global bottom chrome), but the
-    /// hook stays in case downstream callers need it.
-    var sidebarBottomAccessory: AnyView?
-    /// Fired with the conversation list's current scroll content-offset Y
-    /// on every scroll tick, forwarded from `ConversationsViewController`.
-    /// `MainTabView` uses this to reveal the top agent builder bar at the
-    /// top of the list and fade it out (revealing a nav-bar button) once
-    /// the user scrolls down.
-    var onScrollOffsetChange: ((CGFloat) -> Void)?
-    /// Extra top inset (in points) for the conversation list to clear the
-    /// SwiftUI top chrome (the agent builder bar rendered by `MainTabView`
-    /// as a `safeAreaInset(.top)` under the nav bar). SwiftUI's safe-area
-    /// chain doesn't reliably propagate that inset to the UIKit collection
-    /// view, so we plumb it through explicitly. The list still scrolls
-    /// *under* the bar (so it can blur/fade over the content); this inset
-    /// just sets where the content rests at the top.
-    var topChromeInset: CGFloat = 0
-    /// Bottom counterpart to `topChromeInset`, used when the builder bar
-    /// pins to the bottom edge (iPad, where the tab bar is at the top).
-    var bottomChromeInset: CGFloat = 0
-    /// Binding into the shell's "present this conversation as a sheet"
-    /// slot. Set by the inline agent builder (rendered in the chats
-    /// list's empty state) right after `commit()` lands a brand-new
-    /// conversation. `MainTabView` listens for non-nil here and shows
-    /// the conversation in a sheet, mirroring how the bottom-bar
-    /// builder is presented over the tabs.
-    @Binding var presentingCommittedConversation: ConversationViewModel?
-
-    /// Dedicated builder VM for the chats-list empty state. Created
-    /// lazily once the user is in the no-convos-yet state and torn down
-    /// the moment they ship their first convo (which also flips the
-    /// empty state off, so the inline builder unmounts naturally).
-    @State private var inlineBuilderViewModel: AgentBuilderViewModel?
+    @Bindable var quicknameViewModel: QuicknameSettingsViewModel
 
     @Namespace private var namespace: Namespace.ID
+    @State private var presentingAppSettings: Bool = false
+    @State private var appSettingsInitialRoute: AppSettingsRoute?
     @Environment(\.dismiss) private var dismiss: DismissAction
     @State private var sidebarWidth: CGFloat = 0.0
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass: UserInterfaceSizeClass?
     @Environment(\.colorScheme) private var colorScheme: ColorScheme
-    @Environment(\.scenePhase) private var scenePhase: ScenePhase
     @State private var conversationPendingExplosion: Conversation?
     @State private var preferredColumn: NavigationSplitViewColumn = .sidebar
-    @State private var creditBalance: CreditBalance? = CreditsServices.shared.currentBalance
-    @State private var currentSubscription: UserSubscription? = SubscriptionServices.shared.currentSubscription
-    @State private var staleDeviceSheetDismissed: Bool = false
 
     var focusCoordinator: FocusCoordinator {
         viewModel.focusCoordinator
     }
 
-    private var toolbarStatusLabel: String {
-        if creditBalance?.isDepleted == true { return "No power" }
-        if currentSubscription != nil { return "Plus" }
-        return "Basic"
-    }
-
-    private var toolbarStatusColor: Color {
-        if creditBalance?.isDepleted == true { return .colorLava }
-        return .colorTextSecondary
-    }
-
-    private var toolbarShowsBolt: Bool {
-        creditBalance?.isDepleted == true
-    }
-
-    /// Inbox-to-contact-name override applied across the whole
-    /// conversation list view tree (cells, pinned tiles, accessibility
-    /// labels). Built once per `ConversationsView` body recompute so
-    /// cells share the same closure. Reads through the messaging
-    /// service's contacts repository; uses `messagingServiceSync()`
-    /// because cell rendering is synchronous.
-    private var contactOverride: @Sendable (String) -> Contact? {
-        viewModel.session.messagingServiceSync().contactsRepository().contact(for:)
-    }
-
     var emptyConversationsViewScrollable: some View {
-        emptyConversationsView
-    }
-
-    @ViewBuilder
-    var emptyConversationsView: some View {
-        if let inlineBuilderViewModel {
-            AgentBuilderView(
-                viewModel: inlineBuilderViewModel,
-                profileSettingsViewModel: profileSettingsViewModel,
-                mode: .inline,
-                onCommitted: handleInlineBuilderCommit(_:)
-            )
-        }
-        // Until the inline builder VM has been spun up by
-        // `ensureInlineBuilder()`, the empty state renders nothing.
-        // The previous "Pop-up private convo" fallback CTA caused a
-        // visible flash on cold launch and has been removed in favor
-        // of a blank empty state for that one frame.
-    }
-
-    private func ensureInlineBuilder() {
-        // Recreate the VM when it's nil, when the previous one has
-        // already committed, or when it's been discarded. A committed
-        // VM renders `Color.clear` in `inlineBody`. A discarded VM had
-        // `discard()` called on it (e.g. by `AgentBuilderView.onDisappear`
-        // when the user left the chats tab without committing), so its
-        // tasks are cancelled and its conversation has been torn down.
-        // Either case leaves the empty state non-functional until we
-        // spin up a fresh VM.
-        let needsFresh: Bool = inlineBuilderViewModel == nil
-            || inlineBuilderViewModel?.hasCommitted == true
-            || inlineBuilderViewModel?.didDiscard == true
-        if needsFresh {
-            inlineBuilderViewModel = AgentBuilderViewModel(session: viewModel.session, coreActions: viewModel.coreActions)
-        }
-    }
-
-    private func handleInlineBuilderCommit(_ convoVM: ConversationViewModel) {
-        presentingCommittedConversation = convoVM
-        // Intentionally keep `inlineBuilderViewModel` around (in its
-        // committed state). The chats list will update with the new
-        // conversation shortly, at which point `isEmptyCTAActive` flips
-        // false and `sidebarContent` swaps from the empty branch to the
-        // collection view, unmounting the builder naturally. Clearing
-        // here eagerly would leave a blank `Color` behind the sheet if
-        // the user dismisses before the list catches up — see the
-        // `onChange` below that recreates a fresh VM in that race.
-    }
-
-    /// Called whenever the post-commit conversation sheet dismisses.
-    /// If the chats list is still in its empty state at that moment
-    /// (DB sync race — the new convo hasn't landed in
-    /// `conversations` yet), swap the committed inline builder VM out
-    /// for a fresh one so the user sees an interactive composer
-    /// instead of a stuck post-commit gray rect.
-    /// Bridges `selectedConversationViewModel` (driven by the
-    /// `selectedConversationId` setter) to a `navigationDestination(item:)`
-    /// Binding so SwiftUI pushes / pops the `ConversationView` onto the
-    /// outer `NavigationStack` whenever the user selects / deselects a
-    /// conversation.
-    private var chatsDetailBinding: Binding<ConversationViewModel?> {
-        Binding(
-            get: { viewModel.selectedConversationViewModel },
-            set: { newValue in
-                viewModel.selectedConversationId = newValue?.conversation.id
+        ScrollView {
+            LazyVStack(spacing: 0.0) {
+                emptyConversationsView
             }
+        }
+    }
+
+    var emptyConversationsView: some View {
+        ConversationsListEmptyCTA(
+            onStartConvo: viewModel.onOpenGoldilocksGroup,
+            onJoinConvo: viewModel.onJoinConvo
         )
     }
 
     @ViewBuilder
-    private func pushedConversationDestination(viewModel convoVM: ConversationViewModel) -> some View {
-        let isReadOnly: Bool = viewModel.staleDeviceObserver.isDeviceRemoved
-        ConversationPresenter(
-            viewModel: convoVM,
-            focusCoordinator: focusCoordinator,
-            insetsTopSafeArea: true,
-            isReadOnly: isReadOnly,
-            sidebarColumnWidth: $sidebarWidth,
-            appIndicatorContext: nil,
-            sharedIndicatorNamespace: appIndicatorContext.sharedIndicatorNamespace,
-            rendersConversationIndicator: false
-        ) { focusState, coordinator in
-            ConversationView(
-                viewModel: convoVM,
-                profileSettingsViewModel: profileSettingsViewModel,
-                focusState: focusState,
-                focusCoordinator: coordinator,
-                onScanInviteCode: {},
-                onDeleteConversation: {},
-                messagesTopBarTrailingItem: .share,
-                messagesTopBarTrailingItemEnabled: !convoVM.conversation.isPendingInvite,
-                messagesTextFieldEnabled: !convoVM.conversation.isPendingInvite,
-                isReadOnly: isReadOnly,
-                bottomBarContent: { EmptyView() }
-            )
+    private var adminBanner: some View {
+        // Read role from the observable session so the banner updates
+        // immediately if the user upgrades to admin mid-session.
+        let role = GoldilocksSession.shared.role
+        let clientNumber = GoldilocksSession.shared.clientNumber
+        let label: String = {
+            switch role {
+            case .admin:
+                if let n = clientNumber { return "Admin #\(n)" }
+                return "Admin"
+            case .client:
+                if let n = clientNumber { return "Client #\(n)" }
+                return "Client"
+            }
+        }()
+        let icon: String = {
+            switch role {
+            case .admin:  return "shield.lefthalf.filled"
+            case .client: return "person.crop.circle.fill"
+            }
+        }()
+        HStack(spacing: DesignConstants.Spacing.step2x) {
+            let openMyInfo = {
+                appSettingsInitialRoute = .myInfo
+                presentingAppSettings = true
+            }
+            Button(action: openMyInfo) {
+                goldilocksChip(icon: icon, label: label, iconTint: Color.brandIcon, labelTint: .primary)
+            }
+            .buttonStyle(.plain)
+
+            // Admins are also clients with their own membership plan, so
+            // the tier + pending-invoice chips show in both roles.
+            let tier = membershipTier
+            let openMembership = {
+                appSettingsInitialRoute = .membership
+                presentingAppSettings = true
+            }
+            Button(action: openMembership) {
+                goldilocksChip(icon: tier.iconName, label: tier.displayName, iconTint: tier.accentColor, labelTint: .primary)
+            }
+            .buttonStyle(.plain)
+
+            if GoldilocksSession.shared.hasPendingInvoice {
+                let openInvoices = {
+                    appSettingsInitialRoute = nil
+                    presentingAppSettings = true
+                }
+                Button(action: openInvoices) {
+                    goldilocksChip(icon: "doc.text.fill", label: "Pending", labelTint: .primary)
+                }
+                .buttonStyle(.plain)
+            }
         }
+        .padding(.horizontal, DesignConstants.Spacing.step4x)
+        .padding(.vertical, DesignConstants.Spacing.step2x)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func handleCommittedSheetDidDismiss() {
-        guard viewModel.isEmptyCTAActive else { return }
-        inlineBuilderViewModel = AgentBuilderViewModel(session: viewModel.session, coreActions: viewModel.coreActions)
+    /// A small capsule chip — used for the role badge and the tier badge.
+    /// `iconTint` and `labelTint` colour the icon and label separately;
+    /// both default to secondary for the neutral role chip, while the
+    /// tier chip tints only its icon and leaves the name as primary text.
+    private func goldilocksChip(icon: String, label: String, iconTint: Color = .secondary, labelTint: Color = .secondary) -> some View {
+        return HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.caption2)
+                .foregroundStyle(iconTint)
+            Text(label)
+                .font(.caption2)
+                .fontWeight(.medium)
+                .foregroundStyle(labelTint)
+        }
+        .padding(.horizontal, DesignConstants.Spacing.step3x)
+        .padding(.vertical, 4)
+        // Liquid Glass capsule so the conversation rows show through /
+        // scroll behind the chip, matching the glass toolbar title.
+        .glassEffect(.regular, in: Capsule())
+    }
+
+    /// The viewer's Bronze/Silver/Gold/Emerald membership tier, shown as
+    /// a chip beside the role chip. Bronze is the free tier; Silver and
+    /// Gold require active coverage, set by the active-member count.
+    /// Emerald is an admin-controlled override that trumps the
+    /// automatic rules — driven by the `emeraldMembershipEnabled` flag
+    /// the backend returns on `/v2/me`. Without this override the chip
+    /// stays on whatever the seats + coverage math produces, so admins
+    /// who are also Emerald-tier clients still see the Emerald badge.
+    private var membershipTier: GoldilocksMembershipTier {
+        let plan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
+        let emerald: Bool = GoldilocksSession.shared.identity?.emeraldMembershipEnabled ?? false
+        return GoldilocksMembershipTier(
+            activeMembers: plan.billableSeatCount,
+            hasActiveCoverage: plan.coverageActive,
+            emeraldEnabled: emerald
+        )
     }
 
     var filteredEmptyStateView: some View {
@@ -202,19 +144,13 @@ struct ConversationsView: View {
     }
 
     var conversationsCollectionView: some View {
-        // The builder bar is rendered as a `safeAreaInset` by `MainTabView`
-        // (reserving its edge) *and* its height is re-applied here as the
-        // collection view's `additionalSafeAreaInsets`. To avoid counting it
-        // twice we ignore the system safe area on the bar's edge: `.top` on
-        // iPhone (bar pins to the top) and additionally `.bottom` on iPad
-        // (bar pins to the bottom, signalled by a non-zero bottom inset).
-        let ignoredSafeAreaEdges: Edge.Set = bottomChromeInset > 0 ? [.top, .bottom] : .top
-        return ConversationsViewRepresentable(
+        ConversationsViewRepresentable(
             pinnedConversations: viewModel.pinnedConversations,
             unpinnedConversations: viewModel.unpinnedConversations,
             selectedConversationId: viewModel.selectedConversationId,
             isFilteredResultEmpty: viewModel.isFilteredResultEmpty,
             filterEmptyMessage: viewModel.activeFilter.emptyStateMessage,
+            hasCreatedMoreThanOneConvo: viewModel.hasCreatedMoreThanOneConvo,
             onSelectConversation: { conversation in
                 viewModel.selectedConversationId = conversation.id
             },
@@ -233,115 +169,192 @@ struct ConversationsView: View {
             onTogglePin: { conversation in
                 viewModel.togglePin(conversation: conversation)
             },
-            onShowAllFilter: { viewModel.activeFilter = .all },
-            onScrollOffsetChange: onScrollOffsetChange,
-            topChromeInset: topChromeInset,
-            bottomChromeInset: bottomChromeInset
+            onStartConvo: viewModel.onOpenGoldilocksGroup,
+            onJoinConvo: viewModel.onJoinConvo,
+            onShowAllFilter: { viewModel.activeFilter = .all }
         )
-        .ignoresSafeArea(edges: ignoredSafeAreaEdges)
+        .ignoresSafeArea(edges: [.top, .bottom])
+    }
+
+    private var filterMenu: some View {
+        let isFiltered: Bool = viewModel.activeFilter != .all
+        return Menu {
+            let allAction = { viewModel.activeFilter = .all }
+            Button(action: allAction) {
+                if viewModel.activeFilter == .all {
+                    Label("All", systemImage: "checkmark")
+                } else {
+                    Text("All")
+                }
+            }
+
+            let unreadAction = {
+                viewModel.activeFilter = viewModel.activeFilter == .unread ? .all : .unread
+            }
+            Button(action: unreadAction) {
+                if viewModel.activeFilter == .unread {
+                    Label("Unread", systemImage: "checkmark")
+                } else {
+                    Text("Unread")
+                }
+            }
+
+            let explodingAction = {
+                viewModel.activeFilter = viewModel.activeFilter == .exploding ? .all : .exploding
+            }
+            Button(action: explodingAction) {
+                if viewModel.activeFilter == .exploding {
+                    Label("Exploding", systemImage: "checkmark")
+                } else {
+                    Text("Exploding")
+                }
+            }
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease")
+                .foregroundStyle(isFiltered ? .colorTextPrimaryInverted : .colorFillPrimary)
+                .frame(width: 32, height: 32)
+                .background(isFiltered ? .colorFillPrimary : .clear)
+                .mask(Circle())
+                .overlay(Circle().stroke(isFiltered ? .colorFillPrimary : .clear, lineWidth: 2))
+                .accessibilityLabel(isFiltered ? "Filter active" : "Filter conversations")
+                .accessibilityIdentifier("filter-button")
+        }
+        .disabled(!viewModel.hasUnpinnedConversations)
     }
 
     @ViewBuilder
     private var sidebarContent: some View {
-        if viewModel.isEmptyCTAActive {
-            emptyConversationsViewScrollable
-        } else if viewModel.isFilteredResultEmpty && viewModel.pinnedConversations.isEmpty {
-            ScrollView {
-                filteredEmptyStateView
+        VStack(spacing: 0) {
+            // zIndex keeps the chips drawing above the conversation rows —
+            // the list ignores the top safe area and extends up behind
+            // them, so without this the rows would render over the chips.
+            adminBanner
+                .zIndex(1)
+            if viewModel.unpinnedConversations.isEmpty && viewModel.pinnedConversations.isEmpty && viewModel.activeFilter == .all && horizontalSizeClass == .compact {
+                emptyConversationsViewScrollable
+            } else if viewModel.isFilteredResultEmpty && viewModel.pinnedConversations.isEmpty && horizontalSizeClass == .compact {
+                ScrollView {
+                    filteredEmptyStateView
+                }
+            } else {
+                conversationsCollectionView
             }
-        } else {
-            conversationsCollectionView
         }
     }
 
     @ToolbarContentBuilder
     private var sidebarToolbar: some ToolbarContent {
-        // The AppIndicatorPill and compose button are now rendered once
-        // by `MainTabView.sharedTopBar` (a `safeAreaInset(.top)` custom
-        // view) so they persist across tab swaps without flickering.
-        // Empty slot kept here so the NavigationSplitView sidebar's
-        // toolbar layout slot is still allocated.
-        ToolbarItem(placement: .topBarTrailing) { EmptyView() }
+        ToolbarItem(placement: .topBarLeading) {
+            ConvosToolbarButton(padding: false) {
+                appSettingsInitialRoute = nil
+                presentingAppSettings = true
+            }
+            .accessibilityLabel("Convos settings")
+            .accessibilityIdentifier("app-settings-button")
+        }
+        .matchedTransitionSource(id: "app-settings-transition-source", in: namespace)
+
+        ToolbarItem(placement: .topBarTrailing) {
+            filterMenu
+        }
+        .matchedTransitionSource(id: "filter-view-transition-source", in: namespace)
+
+        ToolbarItem(placement: .bottomBar) {
+            Spacer()
+        }
+
+        ToolbarItem(placement: .bottomBar) {
+            Button("Scan", systemImage: "viewfinder") {
+                viewModel.onJoinConvo()
+            }
+            .accessibilityLabel("Scan to join a conversation")
+            .accessibilityIdentifier("scan-button")
+            .disabled(!viewModel.canStartNewConversation)
+        }
+        .matchedTransitionSource(id: "composer-transition-source", in: namespace)
+
+        ToolbarItem(placement: .bottomBar) {
+            Button("Compose", systemImage: "square.and.pencil") {
+                viewModel.onStartConvo()
+            }
+            .accessibilityLabel("Start a new conversation")
+            .accessibilityIdentifier("compose-button")
+            .disabled(!viewModel.canStartNewConversation)
+        }
+        .matchedTransitionSource(id: "composer-transition-source", in: namespace)
     }
 
     var body: some View {
-        let resolver = contactOverride
-        return sidebarContent
-            .onGeometryChange(for: CGSize.self) {
-                $0.size
-            } action: { newValue in
-                sidebarWidth = newValue.width
-            }
-            .background(.colorBackgroundSurfaceless)
-            .overlay(alignment: .bottom) {
-                if let sidebarBottomAccessory {
-                    sidebarBottomAccessory
+        ConversationPresenter(
+            viewModel: viewModel.selectedConversationViewModel,
+            focusCoordinator: focusCoordinator,
+            insetsTopSafeArea: true,
+            sidebarColumnWidth: $sidebarWidth
+        ) { focusState, coordinator in
+            NavigationSplitView(preferredCompactColumn: $preferredColumn) {
+                sidebarContent
+                    .onGeometryChange(for: CGSize.self) {
+                        $0.size
+                    } action: { newValue in
+                        sidebarWidth = newValue.width
+                    }
+                .background(.colorBackgroundSurfaceless)
+                .toolbarTitleDisplayMode(.inline)
+                .toolbar { sidebarToolbar }
+                .toolbar(removing: .sidebarToggle)
+            } detail: {
+                if let conversationViewModel = viewModel.selectedConversationViewModel {
+                    ConversationView(
+                        viewModel: conversationViewModel,
+                        quicknameViewModel: quicknameViewModel,
+                        focusState: focusState,
+                        focusCoordinator: coordinator,
+                        onScanInviteCode: {},
+                        onDeleteConversation: {},
+                        messagesTopBarTrailingItem: .share,
+                        messagesTopBarTrailingItemEnabled: !conversationViewModel.conversation.isPendingInvite,
+                        messagesTextFieldEnabled: !conversationViewModel.conversation.isPendingInvite,
+                        bottomBarContent: { EmptyView() }
+                    )
+                } else if horizontalSizeClass != .compact {
+                    emptyConversationsViewScrollable
+                } else {
+                    EmptyView()
                 }
-            }
-            .navigationDestination(item: chatsDetailBinding) { vm in
-                pushedConversationDestination(viewModel: vm)
             }
             .onAppear {
+                if viewModel.selectedConversationViewModel != nil {
+                    preferredColumn = .detail
+                }
                 viewModel.onAppear()
-                if viewModel.isEmptyCTAActive {
-                    ensureInlineBuilder()
-                }
-            }
-            .onChange(of: viewModel.isEmptyCTAActive) { _, isActive in
-                // Re-fire whenever the chats list flips back to empty
-                // (e.g. user just deleted the last conversation, or a
-                // post-commit sheet just dismissed and the new convo
-                // hasn't landed in the list yet). `.task` attached to
-                // the conditional empty view branch doesn't reliably
-                // fire when the branch's `if let` body is empty
-                // (committed VM or nil VM), so the trigger lives here
-                // on the parent body where firing is deterministic.
-                if isActive {
-                    ensureInlineBuilder()
-                }
-            }
-            .task {
-                // Refresh credits + subscription on every conversations-list
-                // appearance. TTL-debounced inside the services (15s), so
-                // safe to fire here without storming the API on rapid nav.
-                await CreditsServices.shared.refresh()
-                await SubscriptionServices.shared.refresh()
             }
             .onDisappear {
                 viewModel.onDisappear()
             }
-            .onReceive(CreditsServices.shared.balancePublisher) { creditBalance = $0 }
-            .onReceive(SubscriptionServices.shared.subscriptionPublisher) { currentSubscription = $0 }
-            .onChange(of: presentingCommittedConversation == nil) { wasNil, isNil in
-                guard !wasNil, isNil else { return }
-                handleCommittedSheetDidDismiss()
+            .onChange(of: viewModel.selectedConversationViewModel == nil) { _, isNil in
+                preferredColumn = isNil ? .sidebar : .detail
             }
             .onChange(of: viewModel.selectedConversationViewModel?.explodeState) { _, newState in
                 guard let newState, case .exploded = newState else { return }
                 viewModel.selectedConversationId = nil
+                preferredColumn = .sidebar
             }
+            .onChange(of: preferredColumn) { _, newColumn in
+                if newColumn == .sidebar && horizontalSizeClass == .compact {
+                    viewModel.selectedConversationId = nil
+                }
+            }
+        }
         .focusable(false)
         .focusEffectDisabled()
-        .memberContactOverride(resolver)
         .modifier(ConversationsSheetModifier(
+            presentingAppSettings: $presentingAppSettings,
+            appSettingsInitialRoute: appSettingsInitialRoute,
             viewModel: viewModel,
-            profileSettingsViewModel: profileSettingsViewModel,
+            quicknameViewModel: quicknameViewModel,
             conversationPendingExplosion: $conversationPendingExplosion,
-            staleDeviceSheetDismissed: $staleDeviceSheetDismissed,
             namespace: namespace
         ))
-        .onChange(of: viewModel.staleDeviceObserver.isDeviceRemoved) { _, isRemoved in
-            // If a fresh revoke arrives while the user has previously
-            // dismissed the sheet (e.g. after a separate device re-revokes
-            // them post-reset), clear the dismissal so the sheet returns.
-            if isRemoved { staleDeviceSheetDismissed = false }
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            // Re-present the stale-device sheet on each foreground entry so
-            // a previously-dismissed banner doesn't permanently hide the
-            // fact that the device is in a terminal state.
-            if newPhase == .active { staleDeviceSheetDismissed = false }
-        }
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
             if let url = activity.webpageURL {
                 viewModel.handleURL(url)
@@ -354,58 +367,60 @@ struct ConversationsView: View {
 }
 
 private struct ConversationsSheetModifier: ViewModifier {
+    @Binding var presentingAppSettings: Bool
+    let appSettingsInitialRoute: AppSettingsRoute?
     @Bindable var viewModel: ConversationsViewModel
-    let profileSettingsViewModel: ProfileSettingsViewModel
+    let quicknameViewModel: QuicknameSettingsViewModel
     @Binding var conversationPendingExplosion: Conversation?
-    @Binding var staleDeviceSheetDismissed: Bool
     var namespace: Namespace.ID
-
-    private var staleDeviceSheetBinding: Binding<Bool> {
-        Binding(
-            get: { viewModel.staleDeviceObserver.isDeviceRemoved && !staleDeviceSheetDismissed },
-            set: { newValue in
-                if !newValue { staleDeviceSheetDismissed = true }
-            }
-        )
-    }
 
     func body(content: Content) -> some View {
         content
-            // The `NewConversationView` and `AgentBuilderView` sheets
-            // are both presented from `MainTabView` so the compose
-            // button (top-trailing on every tab) and the agent
-            // builder bar can zoom into them with a shared namespace.
+            .sheet(isPresented: $presentingAppSettings) {
+                AppSettingsView(
+                    viewModel: viewModel.appSettingsViewModel,
+                    quicknameViewModel: quicknameViewModel,
+                    session: viewModel.session,
+                    onDeleteAllData: viewModel.deleteAllData,
+                    initialRoute: appSettingsInitialRoute
+                )
+                .navigationTransition(
+                    .zoom(sourceID: "app-settings-transition-source", in: namespace)
+                )
+                .interactiveDismissDisabled(viewModel.appSettingsViewModel.isDeleting)
+            }
+            .sheet(item: $viewModel.newConversationViewModel) { newConvoViewModel in
+                NewConversationView(
+                    viewModel: newConvoViewModel,
+                    quicknameViewModel: quicknameViewModel
+                )
+                .background(.colorBackgroundSurfaceless)
+                .presentationSizing(.page)
+                .navigationTransition(
+                    .zoom(sourceID: "composer-transition-source", in: namespace)
+                )
+            }
+            .sheet(isPresented: $viewModel.presentingComposeFlow) {
+                ComposeFlowView(
+                    conversationsViewModel: viewModel,
+                    session: viewModel.session,
+                    quicknameViewModel: quicknameViewModel
+                )
+                .presentationSizing(.page)
+            }
             .sheet(item: $viewModel.pendingGrantRequest) { request in
                 let dismissAction = { viewModel.pendingGrantRequest = nil }
-                CloudConnectionGrantRequestSheet(
+                ConnectionGrantRequestSheet(
                     viewModel: viewModel.makeGrantRequestSheetViewModel(for: request),
                     onDismiss: dismissAction
                 )
                 .presentationDetents([.medium])
             }
-            .selfSizingSheet(
-                item: $viewModel.pendingJoinerPairing,
-                onDismiss: {
-                    viewModel.pendingPairDevice = nil
-                    viewModel.pendingJoinerPairing = nil
-                },
-                content: { pairingVM in
-                    JoinerPairingSheetView(viewModel: pairingVM)
-                        .padding(.top, DesignConstants.Spacing.step5x)
-                }
-            )
             .selfSizingSheet(isPresented: $viewModel.presentingExplodeInfo) {
                 ExplodeInfoView()
             }
             .selfSizingSheet(isPresented: $viewModel.presentingPinLimitInfo) {
                 PinLimitInfoView()
-            }
-            .selfSizingSheet(isPresented: staleDeviceSheetBinding) {
-                StaleDeviceSheet(
-                    onDelete: { viewModel.resetForStaleDevice() },
-                    onContinue: { staleDeviceSheetDismissed = true },
-                    isDeleting: viewModel.appSettingsViewModel.isDeleting
-                )
             }
             .background {
                 Color.clear
@@ -452,28 +467,20 @@ private struct ConversationsSheetModifier: ViewModifier {
             Conversation.mockPendingInvite(id: "draft-pending-1", name: "Secret Club")
         ]
     )
-    let profileSettingsViewModel = ProfileSettingsViewModel.shared
+    let quicknameViewModel = QuicknameSettingsViewModel.shared
 
     ConversationsView(
         viewModel: viewModel,
-        profileSettingsViewModel: profileSettingsViewModel,
-        appIndicatorContext: AppIndicatorContext(
-            profileImage: profileSettingsViewModel.profileImage
-        ),
-        presentingCommittedConversation: .constant(nil)
+        quicknameViewModel: quicknameViewModel
     )
 }
 
 #Preview("Original") {
     let convos = ConvosClient.mock()
     let viewModel = ConversationsViewModel(session: convos.session)
-    let profileSettingsViewModel = ProfileSettingsViewModel.shared
+    let quicknameViewModel = QuicknameSettingsViewModel.shared
     ConversationsView(
         viewModel: viewModel,
-        profileSettingsViewModel: profileSettingsViewModel,
-        appIndicatorContext: AppIndicatorContext(
-            profileImage: profileSettingsViewModel.profileImage
-        ),
-        presentingCommittedConversation: .constant(nil)
+        quicknameViewModel: quicknameViewModel
     )
 }
