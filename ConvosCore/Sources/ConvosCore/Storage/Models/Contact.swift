@@ -27,26 +27,8 @@ public struct Contact: Hashable, Identifiable, Sendable {
     /// card surfaces verified-agent affordances (Get skills, Learn about
     /// agents) iff `agentVerification?.isVerified == true`.
     public let agentVerification: AgentVerification?
-    /// The backend `AgentTemplate.id` a template-backed agent was
-    /// provisioned from. `nil` for human contacts and for agents that do
-    /// not carry a template. Persisted on `DBContact` (mirrored from the
-    /// per-conversation member profile metadata) so it survives leaving
-    /// every conversation with a running instance; `Contact.resolved(member:...)`
-    /// overlays the freshest value when a live member profile is on hand.
-    /// Drives the contact card's Chat action.
-    public let agentTemplateId: String?
-    /// The shareable web URL for a template-backed agent (the backend's
-    /// `publishedUrl`). `nil` for human contacts and for agents that do
-    /// not carry a template. Persisted on `DBContact` alongside
-    /// `agentTemplateId`; overlaid live by `Contact.resolved(member:...)`
-    /// when available. Drives the contact card's Share button.
-    public let agentTemplatePublishedURL: String?
-    /// Emoji glyph for the contact's avatar fallback. For template-backed
-    /// agents this is persisted on `DBContact` (the template emoji) so the
-    /// browse row renders it without a live member profile;
-    /// `Contact.resolved(member:...)` overlays the freshest per-conversation
-    /// emoji when available, matching `MessageAvatarView` in the messages list.
-    /// not carry a template. Not persisted on `DBContact`; it is overlaid
+    /// The backend `AgentTemplate.id` a template-backed agent was provisioned
+    /// from. Not persisted on `DBContact`; it is overlaid
     /// onto the contact at resolution time from the per-conversation
     /// member profile metadata (see `Contact.resolved(member:...)`), which
     /// is the freshest source. Drives the contact card's Chat action.

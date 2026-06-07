@@ -220,8 +220,6 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// has approved. Conversation Info uses this to render the "Connections" section.
     func capabilityResolutionsRepository(for conversationId: String) -> any CapabilityResolutionsRepositoryProtocol
     func connectionEnablementStore() -> any EnablementStore
-    func connectionManager(callbackURLScheme: String) -> any ConnectionManagerProtocol
-    func connectionRepository() -> any ConnectionRepositoryProtocol
 
     // MARK: Goldilocks identity registration
 

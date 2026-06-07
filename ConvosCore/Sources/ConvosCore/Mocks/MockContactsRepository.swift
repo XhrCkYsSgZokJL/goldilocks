@@ -62,6 +62,8 @@ public final class MockContactsWriter: ContactsWriterProtocol, @unchecked Sendab
     public func block(inboxId: String) async throws {}
 
     public func unblock(inboxId: String) async throws {}
+
+    public func syncAdminContacts(admins: [(inboxId: String, name: String?)]) async throws {}
 }
 
 public final class MockContactSyncCoordinator: ContactSyncCoordinatorProtocol, @unchecked Sendable {

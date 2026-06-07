@@ -121,10 +121,6 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func getCreditBalance() async throws -> CreditBalance
     func getSubscription() async throws -> UserSubscription?
     func verifySubscription(jwsRepresentation: String) async throws -> UserSubscription
-    func initiateConnection(serviceId: String, redirectUri: String) async throws -> ConnectionsAPI.InitiateResponse
-    func completeConnection(connectionRequestId: String) async throws -> ConnectionsAPI.CompleteResponse
-    func listConnections() async throws -> [ConnectionsAPI.ConnectionResponse]
-    func revokeConnection(connectionId: String) async throws
 
     // Goldilocks SIWE-based identity registration. The backend validates
     // that the caller's eth_address is bound to the claimed inbox_id by
@@ -981,22 +977,6 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
 
     func initiateCloudConnection(serviceId: String, redirectUri: String) async throws -> CloudConnectionsAPI.InitiateResponse {
         throw APIError.notImplementedInGoldilocks
-    }
-
-    func initiateConnection(serviceId: String, redirectUri: String) async throws -> ConnectionsAPI.InitiateResponse {
-        throw APIError.notImplementedInGoldilocks
-    }
-
-    func completeConnection(connectionRequestId: String) async throws -> ConnectionsAPI.CompleteResponse {
-        throw APIError.notImplementedInGoldilocks
-    }
-
-    func listConnections() async throws -> [ConnectionsAPI.ConnectionResponse] {
-        return []
-    }
-
-    func revokeConnection(connectionId: String) async throws {
-        // no-op
     }
 
     // MARK: - Goldilocks identity registration
