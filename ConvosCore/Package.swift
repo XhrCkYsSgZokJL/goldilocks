@@ -33,7 +33,9 @@ let package = Package(
         .package(url: "https://github.com/krzyzanowskim/CryptoSwift.git", from: "1.8.0"),
         .package(url: "https://github.com/firebase/firebase-ios-sdk", from: "12.1.0"),
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.31.1"),
-        .package(url: "https://github.com/getsentry/sentry-cocoa.git", from: "8.57.1"),
+        // Sentry stripped (Goldilocks security): no third-party crash/telemetry
+        // SDK. SecurityLog's Sentry calls are `#if canImport(Sentry)`-guarded,
+        // so removing the dependency drops them to no-ops cleanly.
         .package(url: "https://github.com/xmtplabs/convos-shared.git", branch: "main"),
         .package(path: "../ConvosLogging"),
         .package(path: "../ConvosInvites"),
@@ -51,7 +53,6 @@ let package = Package(
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
                 .product(name: "CSecp256k1", package: "CSecp256k1.swift"),
                 .product(name: "CryptoSwift", package: "CryptoSwift"),
-                .product(name: "Sentry", package: "sentry-cocoa"),
                 .product(name: "ConvosLogging", package: "ConvosLogging"),
                 .product(name: "ConvosInvites", package: "ConvosInvites"),
                 .product(name: "ConvosAppData", package: "ConvosAppData"),
