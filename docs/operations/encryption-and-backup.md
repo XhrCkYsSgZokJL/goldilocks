@@ -429,6 +429,14 @@ fully surfaced in the original plan:
   Trade-off accepted: new devices re-onboard via SIWE rather than
   having the identity follow the Apple ID. Per the operator's
   "really locked down" preference.
+
+  > **Revised 2026-06-07 (goldilocks-v2):** reversed in favor of
+  > recoverability. We adopt upstream #971's two-slot design — the
+  > runtime/primary slot stays SE-wrapped + device-local (SE binding
+  > preserved for normal operation), while a *separate* iCloud-synced
+  > slot holds the raw secp256k1 key (no DB key) purely for recovery.
+  > Losing a device no longer loses the identity. Full security
+  > tradeoff in `docs/plans/identity-recovery-icloud.md`.
 - **SE wraps, doesn't sign.** SE keys are P-256 ECDH; XMTP signing
   uses secp256k1. We can't replace the secp256k1 signing key with an
   SE-resident one. Instead the SE key derives a wrapping key via
