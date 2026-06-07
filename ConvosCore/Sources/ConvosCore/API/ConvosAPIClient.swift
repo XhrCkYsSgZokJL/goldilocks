@@ -289,6 +289,9 @@ final class LockedSigningContext: @unchecked Sendable {
     func get() -> BackendAuthSigningContext? {
         lock.lock(); defer { lock.unlock() }
         return value
+    }
+}
+
 /// Single-flight gate for token refresh. Concurrent 401 responses all
 /// await the same in-flight refresh task, so the backend never sees
 /// double-spend of a refresh token (which would otherwise trigger
@@ -315,7 +318,6 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
     private let overrideJWTToken: String?  // Immutable JWT override from APNS payload
     let maxRetryCount: Int = 3
     let siweSigningContext: LockedSigningContext = .shared
-    private let maxRetryCount: Int = 3
     private let tokenRefresher: TokenRefresher = .init()
 
     fileprivate init(environment: AppEnvironment, overrideJWTToken: String? = nil) {
@@ -410,27 +412,8 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
     }
 
     private func reAuthenticate() async throws -> String {
-        let firebaseAppCheckToken = try await FirebaseHelperCore.getAppCheckToken()
-        // If a SIWE signing context is configured for this session,
-        // re-auth must reissue a SIWE-bound JWT. Falling back to
-        // legacy `{ deviceId }` here would silently downgrade the
-        // session to a token missing `accountId`, breaking any
-        // route gated by `requireAccount`.
-        if let context = siweSigningContext.get() {
-            return try await authenticateWithSIWE(
-                appCheckToken: firebaseAppCheckToken,
-                signing: context
-            )
-        }
-        // 401-refresh hit before the session registered a SIWE
-        // signing context. The token we're about to mint will not
-        // carry `accountId`, so any subsequent /account-auth-check or
-        // requireAccount-gated call will 403. Logged here so iOS
-        // logs alone can tell us a refresh raced session bootstrap.
-        Log.warning("reAuthenticate: no SIWE signing context; falling back to legacy device-only auth")
-        return try await authenticate(
-            appCheckToken: firebaseAppCheckToken,
-            retryCount: 0
+        // Goldilocks re-auth: no Firebase App Check. SIWE against the
+        // Goldilocks backend runs via GoldilocksAuth, not this path.
         return try await authenticate(retryCount: 0)
     }
 
@@ -954,6 +937,8 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         }
         let request = try request(for: "v2/agent-templates", queryParameters: queryParameters)
         return try await performRequest(request)
+    }
+
     // MARK: - Invite Codes
     //
     // disabled-for-goldilocks: the original implementation called the Convos
@@ -995,7 +980,9 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
     // backend endpoints under /api/v2/connections/*.
 
     func initiateCloudConnection(serviceId: String, redirectUri: String) async throws -> CloudConnectionsAPI.InitiateResponse {
-        var request = try authenticatedRequest(for: "v2/connections/initiate", method: "POST")
+        throw APIError.notImplementedInGoldilocks
+    }
+
     func initiateConnection(serviceId: String, redirectUri: String) async throws -> ConnectionsAPI.InitiateResponse {
         throw APIError.notImplementedInGoldilocks
     }
@@ -1120,6 +1107,16 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
 
     func completeCloudConnection(connectionRequestId: String) async throws -> CloudConnectionsAPI.CompleteResponse {
         var request = try authenticatedRequest(for: "v2/connections/complete", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        struct CompleteBody: Codable {
+            let connectionRequestId: String
+        }
+        request.httpBody = try JSONEncoder().encode(CompleteBody(connectionRequestId: connectionRequestId))
+
+        return try await performRequest(request)
+    }
+
     func markGoldilocksChannelExploded(role: String) async throws {
         var request = try authenticatedRequest(for: "v2/me/channels/\(role)", method: "PATCH")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1172,6 +1169,8 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         request.httpBody = try JSONEncoder().encode(body)
         let response: ConvosAPI.VerifySubscriptionResponse = try await performRequest(request)
         return response.subscription
+    }
+
     func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse {
         let request = try authenticatedRequest(for: "v2/me/channels", method: "GET")
         return try await performRequest(request)

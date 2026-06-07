@@ -262,7 +262,6 @@ extension Contact {
             agentTemplateId: agentTemplateId,
             agentTemplatePublishedURL: agentTemplatePublishedURL,
             profileEmoji: profileEmoji,
-            agentInstanceId: agentInstanceId
             agentInstanceId: agentInstanceId,
             isAdminContact: isAdminContact
         )
@@ -290,7 +289,6 @@ extension Contact {
             agentTemplateId: agentTemplateId,
             agentTemplatePublishedURL: agentTemplatePublishedURL,
             profileEmoji: profileEmoji,
-            agentInstanceId: agentInstanceId
             agentInstanceId: agentInstanceId,
             isAdminContact: isAdminContact
         )
@@ -319,7 +317,6 @@ extension Contact {
             agentTemplateId: agentTemplateId,
             agentTemplatePublishedURL: agentTemplatePublishedURL,
             profileEmoji: profileEmoji,
-            agentInstanceId: agentInstanceId
             agentInstanceId: agentInstanceId,
             isAdminContact: isAdminContact
         )
@@ -347,7 +344,6 @@ extension Contact {
             agentTemplateId: agentTemplateId,
             agentTemplatePublishedURL: agentTemplatePublishedURL,
             profileEmoji: profileEmoji,
-            agentInstanceId: agentInstanceId
             agentInstanceId: agentInstanceId,
             isAdminContact: isAdminContact
         )
@@ -370,7 +366,6 @@ extension Contact {
             agentTemplatePublishedURL: agentTemplatePublishedURL,
             profileEmoji: profileEmoji,
             agentInstanceId: agentInstanceId,
-            agentAttestation: agentAttestation
             agentAttestation: agentAttestation,
             isAdminContact: isAdminContact
         )
@@ -396,7 +391,6 @@ extension Contact {
             agentTemplatePublishedURL: agentTemplatePublishedURL,
             profileEmoji: profileEmoji,
             agentInstanceId: agentInstanceId,
-            agentAttestation: agentAttestation
             agentAttestation: agentAttestation,
             isAdminContact: isAdminContact
         )

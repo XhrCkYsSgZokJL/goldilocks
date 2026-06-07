@@ -208,6 +208,8 @@ public actor UnusedConversationCache: UnusedConversationCacheProtocol {
 
     public func registerClaimedConversation(id conversationId: String) async {
         claimedConversationIds.insert(conversationId)
+    }
+
     public func peekUnusedConversationId(
         databaseReader: any DatabaseReader
     ) async -> String? {

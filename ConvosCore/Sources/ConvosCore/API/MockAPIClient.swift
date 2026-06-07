@@ -45,6 +45,8 @@ final class MockAPIClient: ConvosAPIClientProtocol, Sendable {
 
     func accountAuthCheck(jwt: String?) async throws -> ConvosAPI.AuthCheckResponse {
         .init(success: jwt != nil)
+    }
+
     func logout() async {
         // Mock implementation — no-op
     }

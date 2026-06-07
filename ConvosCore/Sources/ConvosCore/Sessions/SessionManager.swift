@@ -477,6 +477,8 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         } catch {
             Log.error("Failed to discard claimed conversation \(conversationId): \(error)")
         }
+    }
+
     public func markNewConversationUsed(conversationId: String) async {
         // The user committed to the draft (first message). Make it visible in
         // the list, then arm a fresh hidden draft for the next "new channel".
