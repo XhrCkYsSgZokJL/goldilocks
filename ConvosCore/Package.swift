@@ -31,7 +31,8 @@ let package = Package(
         ),
         .package(url: "https://github.com/tesseract-one/CSecp256k1.swift.git", from: "0.2.0"),
         .package(url: "https://github.com/krzyzanowskim/CryptoSwift.git", from: "1.8.0"),
-        .package(url: "https://github.com/firebase/firebase-ios-sdk", from: "12.1.0"),
+        // Firebase stripped (Goldilocks security): auth uses GoldilocksAuth
+        // (SIWE against the Goldilocks backend), not Firebase App Check.
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.31.1"),
         // Sentry stripped (Goldilocks security): no third-party crash/telemetry
         // SDK. SecurityLog's Sentry calls are `#if canImport(Sentry)`-guarded,
@@ -48,8 +49,6 @@ let package = Package(
             dependencies: [
                 .product(name: "XMTPiOS", package: "libxmtp"),
                 .product(name: "GRDB", package: "GRDB.swift"),
-                .product(name: "FirebaseCore", package: "firebase-ios-sdk"),
-                .product(name: "FirebaseAppCheck", package: "firebase-ios-sdk"),
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
                 .product(name: "CSecp256k1", package: "CSecp256k1.swift"),
                 .product(name: "CryptoSwift", package: "CryptoSwift"),
