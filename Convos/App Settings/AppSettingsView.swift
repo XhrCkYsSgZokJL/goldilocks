@@ -74,29 +74,30 @@ struct AppSettingsView: View {
         }
     }
 
-    private var currentTierLabel: String {
+    private var settingsTier: GoldilocksMembershipTier {
         let emerald: Bool = GoldilocksSession.shared.identity?.emeraldMembershipEnabled ?? false
         return GoldilocksMembershipTier(
             activeMembers: GoldilocksSeatPlan.shared.billableSeatCount,
             hasActiveCoverage: GoldilocksSeatPlan.shared.coverageActive,
             emeraldEnabled: emerald
-        ).displayName
+        )
     }
 
     @ViewBuilder
     private var membershipAndInvoicesSection: some View {
+        let tier: GoldilocksMembershipTier = settingsTier
         Section {
             NavigationLink {
                 MembershipView(session: session)
             } label: {
                 HStack(spacing: DesignConstants.Spacing.step2x) {
-                    Image(systemName: "creditcard.fill")
-                        .foregroundStyle(.colorTextPrimary)
+                    Image(systemName: tier.iconName)
+                        .foregroundStyle(tier.accentColor)
                         .frame(width: Constant.settingsIconWidth, alignment: .center)
                     Text("Membership")
                         .foregroundStyle(.colorTextPrimary)
                     Spacer()
-                    Text(currentTierLabel)
+                    Text(tier.displayName)
                         .foregroundStyle(.colorTextSecondary)
                 }
             }
