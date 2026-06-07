@@ -203,6 +203,14 @@ extension SharedDatabaseMigrator {
 
         migrator.registerMigration("addAgentTemplateDescriptionAndSlug", migrate: Self.addAgentTemplateDescriptionAndSlug)
 
+        // Goldilocks: flag contacts that are admins (advisors) so the
+        // contacts list and people-list crypto can distinguish them.
+        migrator.registerMigration("addIsAdminContactColumn") { db in
+            try db.alter(table: "contact") { t in
+                t.add(column: "isAdminContact", .boolean).notNull().defaults(to: false)
+            }
+        }
+
         return migrator
     }
 

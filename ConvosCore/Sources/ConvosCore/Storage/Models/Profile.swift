@@ -84,6 +84,11 @@ public struct Profile: Codable, Identifiable, Hashable, Sendable {
 
     public var displayName: String {
         if let name, !name.isEmpty { return name }
+        // Goldilocks: resolve admin/agent display names from the name registry
+        // before falling back to the generic "Agent" / "Somebody" buckets.
+        if let registryName = GoldilocksNameRegistry.displayName(forInboxId: inboxId) {
+            return registryName
+        }
         return isAgent ? "Agent" : "Somebody"
     }
 
@@ -333,7 +338,7 @@ public extension Array where Element == Profile {
             }
         }
 
-        let maxNames = NameLimits.maxDisplayedMemberNames
+        let maxNames: Int = NameLimits.maxDisplayedMemberNames
 
         if totalCount <= maxNames {
             var allNames = namedProfiles
@@ -349,9 +354,9 @@ public extension Array where Element == Profile {
             }
         }
 
-        let namesPrefix = namedProfiles.prefix(maxNames)
-        let othersCount = totalCount - namesPrefix.count
-        let othersText = othersCount == 1 ? "1 other" : "\(othersCount) others"
+        let namesPrefix: ArraySlice<String> = namedProfiles.prefix(maxNames)
+        let othersCount: Int = totalCount - namesPrefix.count
+        let othersText: String = othersCount == 1 ? "1 other" : "\(othersCount) others"
 
         return namesPrefix.joined(separator: ", ") + " and " + othersText
     }

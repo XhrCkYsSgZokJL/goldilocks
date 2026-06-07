@@ -97,6 +97,12 @@ public protocol ContactsWriterProtocol: Sendable {
     /// Clears the blocked flag on the contact. No-op if the inboxId has no
     /// contact row or is already unblocked.
     func unblock(inboxId: String) async throws
+
+    /// Goldilocks: syncs admin (advisor) contacts with the authoritative
+    /// backend list. Upserts each admin with `isAdminContact = true`, updates
+    /// names, and clears the flag (or removes) contacts that are no longer
+    /// admins (removing only those with no organic conversation association).
+    func syncAdminContacts(admins: [(inboxId: String, name: String?)]) async throws
 }
 
 final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
@@ -225,6 +231,51 @@ final class ContactsWriter: ContactsWriterProtocol, @unchecked Sendable {
         }
         // `ConversationConsentReconciler` observes the `contact` table and
         // restores this creator's conversations to `.allowed`.
+    }
+
+    func syncAdminContacts(
+        admins: [(inboxId: String, name: String?)]
+    ) async throws {
+        try await databaseWriter.write { db in
+            let adminIds: Set<String> = Set(admins.map { $0.inboxId })
+
+            let staleAdmins = try DBContact
+                .filter(DBContact.Columns.isAdminContact == true)
+                .filter(!adminIds.contains(DBContact.Columns.inboxId))
+                .fetchAll(db)
+
+            for stale in staleAdmins {
+                if stale.addedViaConversationId != nil {
+                    var updated = stale
+                    updated.isAdminContact = false
+                    try updated.save(db)
+                } else {
+                    try stale.delete(db)
+                }
+            }
+
+            let now = Date()
+            for admin in admins {
+                if let existing = try DBContact.fetchOne(db, key: admin.inboxId) {
+                    var updated = existing
+                    updated.isAdminContact = true
+                    if let name = admin.name, existing.displayName != name {
+                        updated.displayName = name
+                    }
+                    try updated.save(db)
+                } else {
+                    let row = DBContact(
+                        inboxId: admin.inboxId,
+                        addedAt: now,
+                        addedViaConversationId: nil,
+                        displayName: admin.name,
+                        profileUpdatedAt: now,
+                        isAdminContact: true
+                    )
+                    try row.save(db)
+                }
+            }
+        }
     }
 
     fileprivate static func upsert(
