@@ -185,7 +185,7 @@ actor StreamProcessor: StreamProcessorProtocol {
     ) async throws {
         let creatorInboxId = try await conversation.creatorInboxId()
         if creatorInboxId == params.client.inboxId {
-            // we created the conversation, update permissions, set inviteTag, and generate encryption key
+            try await conversation.updateConsentState(state: .allowed)
             try await conversation.ensureInviteTag()
             do {
                 try await conversation.ensureImageEncryptionKey()
@@ -756,14 +756,26 @@ actor StreamProcessor: StreamProcessorProtocol {
         }
 
         if consentState == .unknown {
-            let hasOutgoingJoinRequest = try await joinRequestsManager.hasOutgoingJoinRequest(
-                for: conversation,
-                client: params.client
-            )
-
-            if hasOutgoingJoinRequest {
+            // Goldilocks: server-side agents (admins-agent, reports-agent)
+            // create groups and welcome the user into them — no user-initiated
+            // join-request exists for those. We only auto-allow when the
+            // creator is one of the inboxes the iOS app has registered as a
+            // trusted first-party agent. Everything else still goes through
+            // the regular invite / consent flow.
+            let creatorInboxId = try await conversation.creatorInboxId()
+            if GoldilocksAgentTrust.contains(inboxId: creatorInboxId) {
                 try await conversation.updateConsentState(state: .allowed)
                 consentState = try conversation.consentState()
+            } else {
+                let hasOutgoingJoinRequest = try await joinRequestsManager.hasOutgoingJoinRequest(
+                    for: conversation,
+                    client: params.client
+                )
+
+                if hasOutgoingJoinRequest {
+                    try await conversation.updateConsentState(state: .allowed)
+                    consentState = try conversation.consentState()
+                }
             }
         }
 

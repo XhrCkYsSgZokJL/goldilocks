@@ -55,10 +55,33 @@ public protocol UnusedConversationCacheProtocol: Actor {
     /// clears the claim, which makes an abandoned row consumable again.
     func registerClaimedConversation(id conversationId: String) async
 
+    /// Returns an available unused conversation's id *without* claiming it,
+    /// so repeated "new channel" opens reuse the same hidden draft until the
+    /// user commits to it. Returns `nil` if no unused row exists.
+    func peekUnusedConversationId(
+        databaseReader: any DatabaseReader
+    ) async -> String?
+
+    /// Graduates a draft to a real conversation: flips `isUnused` back to
+    /// `false` (so it appears in the list) and bumps `createdAt` so it sorts
+    /// fresh. Idempotent — only affects a row that's still unused. Called
+    /// when the user commits to the draft (sends the first message).
+    func markConversationUsed(
+        conversationId: String,
+        databaseWriter: any DatabaseWriter
+    ) async
+
     /// Cancels any in-flight preparation task and awaits its unwind. Call
     /// during inbox teardown so a late-resolving prewarm can't land a stale
     /// row in a fresh DB after teardown returns.
     func cancel() async
+}
+
+// Default no-ops so lightweight conformers (mocks, test doubles) don't have
+// to implement the reuse hooks. The real actor overrides both.
+public extension UnusedConversationCacheProtocol {
+    func peekUnusedConversationId(databaseReader: any DatabaseReader) async -> String? { nil }
+    func markConversationUsed(conversationId: String, databaseWriter: any DatabaseWriter) async {}
 }
 
 // MARK: - UnusedConversationCache
@@ -185,6 +208,39 @@ public actor UnusedConversationCache: UnusedConversationCacheProtocol {
 
     public func registerClaimedConversation(id conversationId: String) async {
         claimedConversationIds.insert(conversationId)
+    public func peekUnusedConversationId(
+        databaseReader: any DatabaseReader
+    ) async -> String? {
+        do {
+            return try await databaseReader.read { db -> String? in
+                try DBConversation
+                    .filter(DBConversation.Columns.isUnused == true)
+                    .fetchOne(db)?
+                    .id
+            }
+        } catch {
+            Log.error("Failed to peek unused conversation: \(error)")
+            return nil
+        }
+    }
+
+    public func markConversationUsed(
+        conversationId: String,
+        databaseWriter: any DatabaseWriter
+    ) async {
+        let now = Date()
+        do {
+            try await databaseWriter.write { db in
+                // Guard on `isUnused = 1` so this only graduates a hidden
+                // draft and never re-touches an already-visible conversation.
+                try db.execute(
+                    sql: "UPDATE conversation SET isUnused = ?, createdAt = ? WHERE id = ? AND isUnused = ?",
+                    arguments: [false, now, conversationId, true]
+                )
+            }
+        } catch {
+            Log.error("Failed to mark conversation used: \(error)")
+        }
     }
 
     public func cancel() async {

@@ -50,6 +50,40 @@ public struct Conversation: Codable, Hashable, Identifiable, Sendable {
 public extension Conversation {
     static let maxMembers: Int = 150
 
+    /// True iff this conversation was created by a trusted Goldilocks
+    /// server agent (admins-agent, reports-agent). The agent owns the
+    /// group and reprovisions on demand, so the UI treats these as
+    /// system channels — no swipe-to-delete, no hide-on-consent-deny.
+    var isGoldilocksManaged: Bool {
+        GoldilocksAgentTrust.contains(inboxId: creator.profile.inboxId)
+    }
+
+    /// True iff this conversation looks like a Goldilocks-managed
+    /// channel (creator is a trusted agent) but isn't in the calling
+    /// client's owned channel set. Happens when stale MLS state from a
+    /// previous role (e.g. this device was an admin earlier) leaves
+    /// the user as a member of other clients' Advisories. Filtered out
+    /// of the conversations list so only this client's channels show.
+    var isStaleGoldilocksChannel: Bool {
+        guard isGoldilocksManaged else { return false }
+        guard GoldilocksOwnedChannels.isLoaded else { return false }
+        return !GoldilocksOwnedChannels.contains(xmtpGroupId: id)
+    }
+
+    /// True for a group with no name and no members besides the current
+    /// user — an unused or abandoned conversation left behind by the
+    /// new-conversation prewarm. It can only render as the placeholder
+    /// "New Channel", so the conversations list filters it out. Goldilocks
+    /// agent-managed channels are exempt: the agent always gives them a
+    /// name and members, and `isStaleGoldilocksChannel` already governs them.
+    var isEmptyPlaceholderConversation: Bool {
+        guard !isGoldilocksManaged else { return false }
+        guard !creator.isCurrentUser else { return false }
+        guard kind != .dm else { return false }
+        guard name?.isEmpty ?? true else { return false }
+        return membersWithoutCurrent.isEmpty
+    }
+
     var isForked: Bool {
         debugInfo.commitLogForkStatus == .forked
     }
@@ -105,7 +139,7 @@ public extension Conversation {
         }
         let otherMembers = membersWithoutCurrent
         if otherMembers.isEmpty {
-            return "New Convo"
+            return "New Channel"
         }
         return otherMembers.formattedNamesString(memberNameOverride: memberNameOverride)
     }
@@ -116,11 +150,27 @@ public extension Conversation {
         return !otherMembers.map(\.profile).hasAnyNamedProfile
     }
 
-    var defaultEmoji: String {
-        if let conversationEmoji, !conversationEmoji.isEmpty {
-            return conversationEmoji
+    /// A stored emoji the user actually picked, or nil when the stored value
+    /// is just the auto-generated default. New channels auto-seed the
+    /// deterministic `EmojiSelector.emoji(for:)` into group metadata; treating
+    /// that as "not chosen" lets the suggested-icon rotation cycle a blank
+    /// draft while still honoring an emoji the user explicitly set.
+    var userChosenEmoji: String? {
+        guard let conversationEmoji, !conversationEmoji.isEmpty else { return nil }
+        if conversationEmoji == EmojiSelector.emoji(for: clientConversationId) {
+            return nil
         }
-        return EmojiSelector.emoji(for: clientConversationId)
+        return conversationEmoji
+    }
+
+    var defaultEmoji: String {
+        if let userChosenEmoji {
+            return userChosenEmoji
+        }
+        return EmojiSelector.emoji(
+            for: clientConversationId,
+            offset: SuggestedEmojiRotation.offset(for: clientConversationId)
+        )
     }
 
     var avatarType: ConversationAvatarType {
@@ -139,8 +189,8 @@ public extension Conversation {
         if otherMembers.count == 1, let member = otherMembers.first {
             return .profile(member.profile, member.agentVerification)
         }
-        if let conversationEmoji, !conversationEmoji.isEmpty {
-            return .emoji(conversationEmoji)
+        if let userChosenEmoji {
+            return .emoji(userChosenEmoji)
         }
         let otherProfiles = otherMembers.map(\.profile)
         if otherProfiles.isEmpty || !otherProfiles.hasAnyAvatar {

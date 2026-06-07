@@ -567,10 +567,22 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
             return inbox.clientId
         }
 
+        // Fall back to the group's id when no inviteTag is set on the
+        // group's app-data. The DB has a UNIQUE index on inviteTag and an
+        // empty string would collide across every group that isn't user-
+        // created (Goldilocks agent-owned groups, anything received via
+        // a welcome where the creator never called ensureInviteTag, etc).
+        // Group ids are guaranteed unique, so reusing them as a stable
+        // fallback is safe and idempotent across re-syncs.
+        let resolvedInviteTag: String = {
+            let tag = (try? conversation.inviteTag) ?? ""
+            return tag.isEmpty ? conversation.id : tag
+        }()
+
         return DBConversation(
             id: conversation.id,
             clientConversationId: clientConversationId ?? conversation.id,
-            inviteTag: try conversation.inviteTag,
+            inviteTag: resolvedInviteTag,
             creatorId: try await conversation.creatorInboxId(),
             kind: metadata.kind,
             consent: try conversation.consentState().consent,
@@ -666,44 +678,17 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
         Log.info(conversationSaveLog)
 
         if let localConversation = existingConversationByTag {
-            // Prefer draft IDs for stability (image caching, default emoji)
-            let preferredClientConversationId: String
-            if DBConversation.isDraft(id: dbConversation.clientConversationId) {
-                preferredClientConversationId = dbConversation.clientConversationId
-                Log.debug("Using incoming draft ID \(dbConversation.clientConversationId)")
-            } else {
-                preferredClientConversationId = localConversation.clientConversationId
-                Log.debug("Keeping existing ID \(localConversation.clientConversationId)")
-            }
-
-            conversationToSave = conversationToSave
-                .with(clientConversationId: preferredClientConversationId)
-            if !localConversation.isUnused {
-                conversationToSave = conversationToSave.with(createdAt: localConversation.createdAt)
-            }
-            // Preserve hidden state, mirroring `updateExistingConversation`'s
-            // by-id branch: a row only becomes visible through an explicit
-            // commit (`commitClaimedConversation`), never via a stream echo
-            // replacing it by invite tag.
-            if localConversation.isUnused {
-                conversationToSave = conversationToSave.with(isUnused: true)
-            }
-            // This row is replacing `localConversation`, so its sticky-on
-            // agent flag must carry forward.
-            let mergedHasAgentByTag: Bool = localConversation.hasHadVerifiedAgent || conversationToSave.hasHadVerifiedAgent
-            conversationToSave = conversationToSave.with(hasHadVerifiedAgent: mergedHasAgentByTag)
-            try conversationToSave.save(db, onConflict: .replace)
-            firstTimeSeeingConversationExpired = conversationToSave.isExpired && conversationToSave.expiresAt != localConversation.expiresAt
-            actualClientConversationId = preferredClientConversationId
-        } else if let existingConversation {
-            let updateOutcome = try updateExistingConversation(
-                incoming: conversationToSave,
-                existing: existingConversation,
-                originalIncomingId: dbConversation.clientConversationId,
-                in: db
+            let result = try saveMatchingByTag(
+                conversationToSave, incoming: dbConversation, local: localConversation, in: db
             )
-            firstTimeSeeingConversationExpired = updateOutcome.firstTimeSeeingConversationExpired
-            actualClientConversationId = updateOutcome.actualClientConversationId
+            firstTimeSeeingConversationExpired = result.firstExpired
+            actualClientConversationId = result.clientConversationId
+        } else if let existingConversation {
+            let result = try saveMatchingById(
+                conversationToSave, incoming: dbConversation, existing: existingConversation, in: db
+            )
+            firstTimeSeeingConversationExpired = result.firstExpired
+            actualClientConversationId = result.clientConversationId
         } else {
             try conversationToSave.save(db)
             firstTimeSeeingConversationExpired = conversationToSave.isExpired
@@ -798,6 +783,83 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
             .filter(DBConversation.Columns.inviteTag == inviteTag)
             .filter(DBConversation.Columns.id != excludingConversationId)
             .fetchOne(db)
+    }
+
+    private func saveMatchingByTag(
+        _ conversationToSave: DBConversation,
+        incoming: DBConversation,
+        local: DBConversation,
+        in db: Database
+    ) throws -> (clientConversationId: String, firstExpired: Bool) {
+        let preferredClientConversationId: String
+        if DBConversation.isDraft(id: incoming.clientConversationId) {
+            preferredClientConversationId = incoming.clientConversationId
+            Log.debug("Using incoming draft ID \(incoming.clientConversationId)")
+        } else {
+            preferredClientConversationId = local.clientConversationId
+            Log.debug("Keeping existing ID \(local.clientConversationId)")
+        }
+
+        var toSave = conversationToSave.with(clientConversationId: preferredClientConversationId)
+        if !local.isUnused {
+            toSave = toSave.with(createdAt: local.createdAt)
+        }
+        try toSave.save(db, onConflict: .replace)
+        let firstExpired: Bool = toSave.isExpired && toSave.expiresAt != local.expiresAt
+        return (clientConversationId: preferredClientConversationId, firstExpired: firstExpired)
+    }
+
+    private func saveMatchingById(
+        _ conversationToSave: DBConversation,
+        incoming: DBConversation,
+        existing: DBConversation,
+        in db: Database
+    ) throws -> (clientConversationId: String, firstExpired: Bool) {
+        let preferredClientConversationId: String
+        if incoming.clientConversationId != existing.clientConversationId {
+            if DBConversation.isDraft(id: incoming.clientConversationId) {
+                preferredClientConversationId = incoming.clientConversationId
+            } else {
+                preferredClientConversationId = existing.clientConversationId
+            }
+        } else {
+            preferredClientConversationId = incoming.clientConversationId
+        }
+
+        var updatedConversation = conversationToSave.with(clientConversationId: preferredClientConversationId)
+        if existing.isUnused {
+            updatedConversation = updatedConversation.with(isUnused: true)
+        }
+        if !existing.isUnused {
+            updatedConversation = updatedConversation.with(createdAt: existing.createdAt)
+        }
+        if let existingExpiresAt = existing.expiresAt, updatedConversation.expiresAt == nil {
+            updatedConversation = updatedConversation.with(expiresAt: existingExpiresAt)
+        }
+        if let conflictingConversation = try existingConversationMatchingInviteTag(
+            inviteTag: updatedConversation.inviteTag,
+            excludingConversationId: updatedConversation.id,
+            in: db
+        ) {
+            Log.error(
+                "Invite tag collision before save. " +
+                    "incomingId=\(updatedConversation.id) " +
+                    "incomingClientConversationId=\(updatedConversation.clientConversationId) " +
+                    "incomingInviteTag=\(updatedConversation.inviteTag) " +
+                    "existingId=\(existing.id) " +
+                    "existingClientConversationId=\(existing.clientConversationId) " +
+                    "conflictingId=\(conflictingConversation.id) " +
+                    "conflictingClientConversationId=\(conflictingConversation.clientConversationId) " +
+                    "conflictingIsUnused=\(conflictingConversation.isUnused)"
+            )
+        }
+        if updatedConversation == existing {
+            Log.debug("Conversation \(updatedConversation.id) unchanged, skipping save")
+        } else {
+            try updatedConversation.save(db)
+        }
+        let firstExpired: Bool = updatedConversation.isExpired && updatedConversation.expiresAt != existing.expiresAt
+        return (clientConversationId: preferredClientConversationId, firstExpired: firstExpired)
     }
 
     private func saveMembers(_ dbMembers: [DBConversationMember], in db: Database) throws {
