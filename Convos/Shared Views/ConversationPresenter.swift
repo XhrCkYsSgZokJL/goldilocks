@@ -69,9 +69,11 @@ struct ConversationPresenter<Content: View>: View {
     }
 
     var body: some View {
-        ZStack {
+        let toolbarVisibility: Visibility = isShowingShareOverlay ? .hidden : .automatic
+        let shareTopInset: CGFloat = (insetsTopSafeArea && horizontalSizeClass == .compact) ? safeAreaInsets.top : DesignConstants.Spacing.step3x
+        return ZStack {
             content($focusState, focusCoordinator)
-                .toolbar(isShowingShareOverlay ? .hidden : .automatic, for: .navigationBar)
+                .toolbar(toolbarVisibility, for: .navigationBar)
 
             VStack {
                 indicatorOverlay
@@ -90,8 +92,7 @@ struct ConversationPresenter<Content: View>: View {
                         get: { viewModel.presentingShareView },
                         set: { viewModel.presentingShareView = $0 }
                     ),
-                    topSafeAreaInset: insetsTopSafeArea && horizontalSizeClass == .compact ? safeAreaInsets.top : DesignConstants.Spacing.step3x,
-                    coreActions: viewModel.coreActions
+                    topSafeAreaInset: shareTopInset
                 )
                 .ignoresSafeArea()
                 .zIndex(2000)
@@ -107,7 +108,9 @@ struct ConversationPresenter<Content: View>: View {
             focusCoordinator.horizontalSizeClass = newSizeClass
         }
         .onChange(of: focusCoordinator.currentFocus) { oldFocus, newFocus in
-            Log.info("onChange(of: focusCoordinator.currentFocus) oldFocus: \(String(describing: oldFocus)) newFocus: \(String(describing: newFocus))")
+            let oldDesc: String = String(describing: oldFocus)
+            let newDesc: String = String(describing: newFocus)
+            Log.info("onChange(of: focusCoordinator.currentFocus) oldFocus: \(oldDesc) newFocus: \(newDesc)")
             // Always sync coordinator to SwiftUI to ensure focus actually changes
             // The transition flags will prevent race conditions in the opposite direction
             focusState = newFocus

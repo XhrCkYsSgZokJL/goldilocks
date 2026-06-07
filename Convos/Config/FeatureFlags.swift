@@ -20,6 +20,13 @@ final class FeatureFlags {
         }
     }
 
+    /// Cloud Connections = Composio-brokered SaaS integrations. Goldilocks runs
+    /// no-egress, so this pathway stays gated off: the flag exists for the UI that
+    /// references it (conversation info, app settings) but is hard-locked `false`.
+    var isCloudConnectionsEnabled: Bool {
+        false
+    }
+
     /// Mock credits/subscription state used by the in-app paywall preview surface
     /// in the Debug menu. Non-production only; defaults to `.plusAmple`.
     var mockCreditsPreset: CreditsStatePreset {

@@ -3,6 +3,7 @@ import SwiftUI
 import UIKit
 
 enum EmptyStateType {
+    case cta(onStartConvo: () -> Void, onJoinConvo: () -> Void)
     case filtered(message: String, onShowAll: () -> Void)
 }
 
@@ -26,6 +27,16 @@ final class EmptyStateCell: UICollectionViewCell {
 
     func configure(with type: EmptyStateType) {
         switch type {
+        case let .cta(onStartConvo, onJoinConvo):
+            contentConfiguration = UIHostingConfiguration {
+                ConversationsListEmptyCTA(
+                    onStartConvo: onStartConvo,
+                    onJoinConvo: onJoinConvo
+                )
+            }
+            .margins(.all, 0)
+            .background(.clear)
+
         case let .filtered(message, onShowAll):
             contentConfiguration = UIHostingConfiguration {
                 FilteredEmptyStateView(
@@ -53,7 +64,7 @@ final class EmptyStateCell: UICollectionViewCell {
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         )
-        layoutAttributes.size.height = fittingSize.height
+        layoutAttributes.size.height = max(fittingSize.height, 200)
         return layoutAttributes
     }
 }

@@ -10,7 +10,7 @@ struct ConvosApp: App {
 
     private let convos: ConvosClient
     let conversationsViewModel: ConversationsViewModel
-    let quicknameViewModel: QuicknameSettingsViewModel = .shared
+    let profileSettingsViewModel: ProfileSettingsViewModel = .shared
 
     init() {
         FileDescriptorDiagnostics.raiseSoftLimit(to: 512)
@@ -46,7 +46,8 @@ struct ConvosApp: App {
 
         self.convos = .client(
             environment: environment,
-            platformProviders: .iOS(accessGroup: environment.keychainAccessGroup),
+            platformProviders: .iOS,
+            coreActions: NoOpCoreActions()
         )
 
         let dbWriter = convos.databaseWriter
@@ -63,7 +64,7 @@ struct ConvosApp: App {
         WindowGroup {
             ConversationsView(
                 viewModel: conversationsViewModel,
-                quicknameViewModel: quicknameViewModel
+                profileSettingsViewModel: profileSettingsViewModel
             )
             .safeAreaPadding(.top, DesignConstants.Spacing.stepX)
             .withSafeAreaEnvironment()

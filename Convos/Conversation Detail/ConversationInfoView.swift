@@ -88,6 +88,7 @@ struct ConversationInfoView: View {
     @State private var restoreInviteTagText: String = ""
     @State private var selectedPerson: SeatMember?
     @State private var emeraldChannel: ConvosAPI.GoldilocksAdminChannel?
+    @State private var presentingAddFromContactsPicker: Bool = false
     private let maxMembersToShow: Int = 6
     private var displayedMembers: [ConversationMember] {
         let sortedMembers = viewModel.conversation.members.sortedByRole(creatorInboxId: viewModel.conversation.creator.profile.inboxId)
@@ -99,7 +100,7 @@ struct ConversationInfoView: View {
 
     @ViewBuilder
     private var assistantSection: some View {
-        if viewModel.conversation.hasEverHadVerifiedAssistant {
+        if viewModel.conversation.hasEverHadVerifiedConvosAgent {
             Section {
                 filesAndLinksRow
             }
@@ -117,15 +118,20 @@ struct ConversationInfoView: View {
     @ViewBuilder
     private var filesAndLinksRow: some View {
         NavigationLink {
-            AssistantFilesLinksView(
-                repository: viewModel.makeAssistantFilesLinksRepository()
+            AgentFilesLinksView(
+                conversationId: viewModel.conversation.id,
+                repository: viewModel.makeAgentFilesLinksRepository(),
+                members: viewModel.conversation.members,
+                profileSheetContent: { member in
+                    AnyView(MemberContactDetailSheetContent(viewModel: viewModel, member: member, profileSettingsViewModel: .shared))
+                }
             )
         } label: {
             FeatureRowItem(
                 imageName: nil,
                 symbolName: "folder",
                 title: "Files & Links",
-                subtitle: "Managed by Assistants",
+                subtitle: "Managed by Agents",
                 iconBackgroundColor: .colorFillMinimal,
                 iconForegroundColor: .colorTextPrimary
             ) {
@@ -313,6 +319,7 @@ struct ConversationInfoView: View {
 
     var body: some View {
         infoContent
+            .addFromContactsPicker(viewModel: viewModel, isPresented: $presentingAddFromContactsPicker)
     }
 
     private var vanishSection: some View {
@@ -523,7 +530,7 @@ struct ConversationInfoView: View {
                 } else {
                     AddToConversationMenu(
                         isFull: viewModel.isFull,
-                        hasAssistant: viewModel.conversation.hasAgent,
+                        isAgentJoinPending: viewModel.isAgentJoinPending,
                         isEnabled: true,
                         onConvoCode: {
                             if viewModel.isFull {
@@ -535,8 +542,11 @@ struct ConversationInfoView: View {
                         onCopyLink: {
                             viewModel.copyInviteLink()
                         },
-                        onInviteAssistant: {
-                            viewModel.requestAssistantJoin()
+                        onInviteAgent: {
+                            viewModel.presentAgentBuilder()
+                        },
+                        onAddFromContacts: {
+                            presentingAddFromContactsPicker = true
                         }
                     )
                     .accessibilityIdentifier("info-add-button")

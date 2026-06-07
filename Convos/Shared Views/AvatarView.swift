@@ -170,7 +170,34 @@ struct ConversationAvatarView: View {
             EmojiAvatarView(emoji: emoji)
         case .monogram(let name):
             MonogramView(name: name)
+        case .pendingAgent:
+            PendingAgentAvatarView()
         }
+    }
+}
+
+struct PendingAgentAvatarView: View {
+    var body: some View {
+        GeometryReader { geometry in
+            let side = min(geometry.size.width, geometry.size.height)
+            // Size the glyph proportionally rather than with a fixed inset so
+            // it reads like an emoji avatar (centered, with breathing room) at
+            // any avatar size -- a touch larger than `EmojiAvatarView`'s 0.43
+            // emoji since the glyph carries no internal whitespace.
+            let glyphSide = side * 0.5
+            ZStack {
+                Circle()
+                    .fill(Color.black)
+                Image("addAgentIcon")
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.white)
+                    .frame(width: glyphSide, height: glyphSide)
+            }
+            .frame(width: side, height: side)
+        }
+        .aspectRatio(1.0, contentMode: .fit)
     }
 }
 

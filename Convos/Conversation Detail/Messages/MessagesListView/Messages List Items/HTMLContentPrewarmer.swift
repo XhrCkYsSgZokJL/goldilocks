@@ -49,12 +49,24 @@ final class HTMLContentPrewarmer {
     /// path still produces a useful layout.
     private static let fallbackPrewarmSize: CGSize = CGSize(width: 430, height: 932)
 
+    /// Named entries rather than labeled tuples: the labeled-tuple form
+    /// was expensive for the type-checker in the LRU closures below.
+    private struct CacheEntry {
+        let key: String
+        let content: PrewarmedContent
+    }
+
+    private struct QueueItem {
+        let key: String
+        let fileURL: URL
+    }
+
     /// Insertion-ordered LRU: most recently used appended to the end.
-    private var cache: [(key: String, content: PrewarmedContent)] = []
+    private var cache: [CacheEntry] = []
     /// FIFO of pending `(attachmentKey, fileURL)` requests. We pop one
     /// at a time; appended duplicates are coalesced before they enter
     /// the queue.
-    private var pendingQueue: [(key: String, fileURL: URL)] = []
+    private var pendingQueue: [QueueItem] = []
     /// Set of keys for entries currently queued or being processed.
     /// Used to coalesce repeat calls so a single attachment never
     /// occupies more than one slot end-to-end.
@@ -112,18 +124,19 @@ final class HTMLContentPrewarmer {
     /// queue processes one entry at a time; repeat calls for an already-
     /// cached or already-queued attachment are no-ops.
     func prewarm(attachmentKey: String, fileURL: URL) {
-        let isCached: Bool = cache.contains { (entry: (key: String, content: PrewarmedContent)) -> Bool in
-            entry.key == attachmentKey
-        }
-        if isCached {
+        if isCached(attachmentKey) {
             promote(attachmentKey: attachmentKey)
             return
         }
         if queuedKeys.contains(attachmentKey) { return }
         queuedKeys.insert(attachmentKey)
-        let queueItem: (key: String, fileURL: URL) = (key: attachmentKey, fileURL: fileURL)
+        let queueItem = QueueItem(key: attachmentKey, fileURL: fileURL)
         pendingQueue.append(queueItem)
         processQueueIfIdle()
+    }
+
+    private func isCached(_ attachmentKey: String) -> Bool {
+        cache.contains { $0.key == attachmentKey }
     }
 
     /// Removes and returns the cached `PrewarmedContent` if one exists.
@@ -191,7 +204,7 @@ final class HTMLContentPrewarmer {
 
     private func insert(attachmentKey: String, content: PrewarmedContent) {
         cache.removeAll { $0.key == attachmentKey }
-        cache.append((key: attachmentKey, content: content))
+        cache.append(CacheEntry(key: attachmentKey, content: content))
         while cache.count > Self.cacheLimit {
             let dropped = cache.removeFirst()
             dropped.content.webView.stopLoading()

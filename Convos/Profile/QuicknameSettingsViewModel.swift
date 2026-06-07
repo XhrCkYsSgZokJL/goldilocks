@@ -34,7 +34,7 @@ class QuicknameSettingsViewModel {
         do {
             try quicknameSettings.save()
             if !quicknameSettings.isDefault {
-                ConversationOnboardingCoordinator.markQuicknameEditorShown()
+                ConversationOnboardingCoordinator.markProfileEditorShown()
             }
         } catch {
             Log.error("Failed saving quickname settings: \(error.localizedDescription)")

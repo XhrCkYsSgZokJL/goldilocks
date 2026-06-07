@@ -71,21 +71,8 @@ extension ConversationMember {
     /// the optimistic card member, the copy is only ever handed to the
     /// messages-list repository, never inserted into `conversation.members`.
     func withFallbackAgentDescription(_ description: String?) -> ConversationMember {
-        guard profile.agentDescription == nil, let description, !description.isEmpty else { return self }
-        var metadata: ProfileMetadata = profile.metadata ?? [:]
-        metadata["description"] = .string(description)
-        let updatedProfile = Profile(
-            inboxId: profile.inboxId,
-            conversationId: profile.conversationId,
-            name: profile.name,
-            avatar: profile.avatar,
-            avatarSalt: profile.avatarSalt,
-            avatarNonce: profile.avatarNonce,
-            avatarKey: profile.avatarKey,
-            isAgent: profile.isAgent,
-            imageSourceContentDigest: profile.imageSourceContentDigest,
-            metadata: metadata
-        )
+        guard let description, !description.isEmpty, profile.agentDescription == nil else { return self }
+        let updatedProfile: Profile = profile.withFallbackDescriptionMetadata(description)
         return ConversationMember(
             profile: updatedProfile,
             role: role,
@@ -94,6 +81,29 @@ extension ConversationMember {
             agentVerification: agentVerification,
             invitedBy: invitedBy,
             joinedAt: joinedAt
+        )
+    }
+}
+
+private extension Profile {
+    /// Returns a copy carrying `description` in its `description` metadata.
+    /// Split into its own body so the multi-argument `Profile` initializer
+    /// is type-checked separately from `withFallbackAgentDescription`'s
+    /// `ConversationMember` construction (keeps both under the limit).
+    func withFallbackDescriptionMetadata(_ description: String) -> Profile {
+        var metadata: ProfileMetadata = self.metadata ?? [:]
+        metadata["description"] = .string(description)
+        return Profile(
+            inboxId: inboxId,
+            conversationId: conversationId,
+            name: name,
+            avatar: avatar,
+            avatarSalt: avatarSalt,
+            avatarNonce: avatarNonce,
+            avatarKey: avatarKey,
+            isAgent: isAgent,
+            imageSourceContentDigest: imageSourceContentDigest,
+            metadata: metadata
         )
     }
 }

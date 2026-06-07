@@ -3,7 +3,7 @@ import SwiftUI
 
 struct ConversationsView: View {
     @State var viewModel: ConversationsViewModel
-    @Bindable var quicknameViewModel: QuicknameSettingsViewModel
+    @Bindable var profileSettingsViewModel: ProfileSettingsViewModel
 
     @Namespace private var namespace: Namespace.ID
     @State private var presentingAppSettings: Bool = false
@@ -306,7 +306,7 @@ struct ConversationsView: View {
                 if let conversationViewModel = viewModel.selectedConversationViewModel {
                     ConversationView(
                         viewModel: conversationViewModel,
-                        quicknameViewModel: quicknameViewModel,
+                        profileSettingsViewModel: profileSettingsViewModel,
                         focusState: focusState,
                         focusCoordinator: coordinator,
                         onScanInviteCode: {},
@@ -351,7 +351,8 @@ struct ConversationsView: View {
             presentingAppSettings: $presentingAppSettings,
             appSettingsInitialRoute: appSettingsInitialRoute,
             viewModel: viewModel,
-            quicknameViewModel: quicknameViewModel,
+            quicknameViewModel: QuicknameSettingsViewModel.shared,
+            profileSettingsViewModel: profileSettingsViewModel,
             conversationPendingExplosion: $conversationPendingExplosion,
             namespace: namespace
         ))
@@ -371,8 +372,14 @@ private struct ConversationsSheetModifier: ViewModifier {
     let appSettingsInitialRoute: AppSettingsRoute?
     @Bindable var viewModel: ConversationsViewModel
     let quicknameViewModel: QuicknameSettingsViewModel
+    @Bindable var profileSettingsViewModel: ProfileSettingsViewModel
     @Binding var conversationPendingExplosion: Conversation?
     var namespace: Namespace.ID
+
+    /// The compose-flow's working draft. Created when the compose sheet opens
+    /// and torn down on dismiss, so `ComposeFlowView` keeps a stable instance
+    /// across redraws rather than one rebuilt every body pass.
+    @State private var composeViewModel: NewConversationViewModel?
 
     func body(content: Content) -> some View {
         content
@@ -392,7 +399,7 @@ private struct ConversationsSheetModifier: ViewModifier {
             .sheet(item: $viewModel.newConversationViewModel) { newConvoViewModel in
                 NewConversationView(
                     viewModel: newConvoViewModel,
-                    quicknameViewModel: quicknameViewModel
+                    profileSettingsViewModel: profileSettingsViewModel
                 )
                 .background(.colorBackgroundSurfaceless)
                 .presentationSizing(.page)
@@ -400,17 +407,28 @@ private struct ConversationsSheetModifier: ViewModifier {
                     .zoom(sourceID: "composer-transition-source", in: namespace)
                 )
             }
+            .onChange(of: viewModel.presentingComposeFlow) { _, presenting in
+                if presenting {
+                    composeViewModel = NewConversationViewModel(session: viewModel.session, mode: .newConversation)
+                } else {
+                    composeViewModel?.cleanUpIfNeeded()
+                    composeViewModel = nil
+                }
+            }
             .sheet(isPresented: $viewModel.presentingComposeFlow) {
-                ComposeFlowView(
-                    conversationsViewModel: viewModel,
-                    session: viewModel.session,
-                    quicknameViewModel: quicknameViewModel
-                )
-                .presentationSizing(.page)
+                if let composeViewModel {
+                    ComposeFlowView(
+                        conversationsViewModel: viewModel,
+                        composeConversationViewModel: composeViewModel,
+                        profileSettingsViewModel: profileSettingsViewModel,
+                        contactsRepository: viewModel.session.messagingServiceSync().contactsRepository()
+                    )
+                    .presentationSizing(.page)
+                }
             }
             .sheet(item: $viewModel.pendingGrantRequest) { request in
                 let dismissAction = { viewModel.pendingGrantRequest = nil }
-                ConnectionGrantRequestSheet(
+                CloudConnectionGrantRequestSheet(
                     viewModel: viewModel.makeGrantRequestSheetViewModel(for: request),
                     onDismiss: dismissAction
                 )
@@ -467,20 +485,20 @@ private struct ConversationsSheetModifier: ViewModifier {
             Conversation.mockPendingInvite(id: "draft-pending-1", name: "Secret Club")
         ]
     )
-    let quicknameViewModel = QuicknameSettingsViewModel.shared
+    let profileSettingsViewModel = ProfileSettingsViewModel.shared
 
     ConversationsView(
         viewModel: viewModel,
-        quicknameViewModel: quicknameViewModel
+        profileSettingsViewModel: profileSettingsViewModel
     )
 }
 
 #Preview("Original") {
     let convos = ConvosClient.mock()
     let viewModel = ConversationsViewModel(session: convos.session)
-    let quicknameViewModel = QuicknameSettingsViewModel.shared
+    let profileSettingsViewModel = ProfileSettingsViewModel.shared
     ConversationsView(
         viewModel: viewModel,
-        quicknameViewModel: quicknameViewModel
+        profileSettingsViewModel: profileSettingsViewModel
     )
 }

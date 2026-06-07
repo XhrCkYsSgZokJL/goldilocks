@@ -311,9 +311,9 @@ final class ConversationsViewModel {
         updateSelectionTask?.cancel()
     }
 
-    func makeGrantRequestSheetViewModel(for request: PendingGrantRequest) -> ConnectionGrantRequestSheetViewModel {
+    func makeGrantRequestSheetViewModel(for request: PendingGrantRequest) -> CloudConnectionGrantRequestSheetViewModel {
         let conversation = conversations.first(where: { $0.id == request.conversationId })
-        return ConnectionGrantRequestSheetViewModel(
+        return CloudConnectionGrantRequestSheetViewModel(
             serviceId: request.serviceId,
             conversationId: request.conversationId,
             conversation: conversation,
@@ -339,6 +339,11 @@ final class ConversationsViewModel {
                 serviceId: serviceId,
                 conversationId: conversationId
             )
+        case .pairDevice, .agentTemplate:
+            // Device pairing is driven from settings, and agent templates are
+            // gated in Goldilocks; neither is reachable from the conversations
+            // list deep-link surface.
+            break
         }
     }
 

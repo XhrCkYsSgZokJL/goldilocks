@@ -10,6 +10,19 @@ extension Conversation {
             return goldilocksDisplayName ?? displayName
         }
     }
+
+    /// Member-name-override-aware title, used by the pinned-conversation
+    /// surfaces. Groups keep their Goldilocks name when one is present;
+    /// otherwise this mirrors `computedDisplayName(memberNameOverride:)`.
+    func title(memberNameOverride: (String) -> String?) -> String {
+        switch kind {
+        case .dm:
+            guard let other = otherMember else { return "" }
+            return other.displayName(memberNameOverride: memberNameOverride)
+        case .group:
+            return goldilocksDisplayName ?? computedDisplayName(memberNameOverride: memberNameOverride)
+        }
+    }
 }
 
 struct ListItemView<LeadingContent: View, SubtitleContent: View, AccessoryContent: View>: View {

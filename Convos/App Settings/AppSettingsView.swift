@@ -168,12 +168,11 @@ struct AppSettingsView: View {
             profile: .constant(.empty()),
             profileImage: .constant(nil),
             editingDisplayName: .constant(""),
-            quicknameViewModel: quicknameViewModel,
+            profileSettingsViewModel: .shared,
             showsCancelButton: false,
             showsProfile: false,
-            showsUseQuicknameButton: false,
-            canEditQuickname: true,
-            embedInNavigationStack: false
+            showsUseProfileButton: false,
+            canEditProfile: true
         ) { _ in
         }
     }
