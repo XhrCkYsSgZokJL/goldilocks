@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct BrandConfig: Codable, Sendable {
-    nonisolated(unsafe) static let shared: BrandConfig = {
+    static let shared: BrandConfig = {
         guard let url = Bundle.main.url(forResource: "brand", withExtension: "json"),
               let data = try? Data(contentsOf: url)
         else {

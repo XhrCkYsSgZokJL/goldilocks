@@ -289,8 +289,21 @@ public final actor KeychainIdentityStore: KeychainIdentityStoreProtocol {
     /// identity's inboxId as the account, one item per backed-up identity.
     public static let syncedBackupService: String = "org.convos.ios.KeychainIdentityStore.v3-synced-backup"
 
-    /// Fixed account key for the identity in the primary slot.
-    public static let identityAccount: String = "convos-identity"
+    /// Optional slot suffix that scopes which "slot" identities are read
+    /// from / written to. The dual-identity Goldilocks dev model uses this
+    /// to keep an admin key and a client key persisted side-by-side and
+    /// toggle which is active. Set once per process lifetime; changing
+    /// requires a relaunch.
+    nonisolated(unsafe) public static var slotSuffix: String?
+
+    /// Account key for the identity in the primary slot. With no suffix,
+    /// `"convos-identity"`; with suffix `"admin"`, `"convos-identity.admin"`.
+    public static var identityAccount: String {
+        if let suffix = slotSuffix, !suffix.isEmpty {
+            return "convos-identity.\(suffix)"
+        }
+        return "convos-identity"
+    }
 
     // MARK: - Initialization
 
