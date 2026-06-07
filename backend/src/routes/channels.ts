@@ -344,7 +344,12 @@ export default async function channelRoutes(app: FastifyInstance) {
   // Posts a "Admin #N enabled/disabled Emerald membership for Client #M"
   // line to the audit log via pg_notify('audit_event').
   // -------------------------------------------------------------------
-  const EmeraldBody = z.object({ enabled: z.boolean() });
+  const EmeraldBody = z.object({
+    enabled: z.boolean(),
+    // How many people the Emerald client may enable (billed externally).
+    // Optional; omitted = leave the current limit untouched.
+    seatLimit: z.number().int().min(0).max(999).optional(),
+  });
   app.post<{ Params: { inboxId: string } }>(
     '/v2/admin/clients/:inboxId/emerald',
     async (req, reply) => {
@@ -368,7 +373,7 @@ export default async function channelRoutes(app: FastifyInstance) {
       }
       // No-op fast path — don't write or audit if nothing actually
       // changes, so a UI that re-submits doesn't double-log.
-      if (target.current === parsed.data.enabled) {
+      if (target.current === parsed.data.enabled && parsed.data.seatLimit === undefined) {
         return reply.code(200).send({
           clientNumber: target.clientNumber,
           emeraldMembershipEnabled: parsed.data.enabled,
@@ -377,7 +382,10 @@ export default async function channelRoutes(app: FastifyInstance) {
       }
       await db
         .update(clients)
-        .set({ emeraldMembershipEnabled: parsed.data.enabled })
+        .set({
+          emeraldMembershipEnabled: parsed.data.enabled,
+          ...(parsed.data.seatLimit !== undefined ? { emeraldSeatLimit: parsed.data.seatLimit } : {}),
+        })
         .where(eq(clients.id, target.id));
 
       // Best-effort audit emit. If admin-number resolution fails

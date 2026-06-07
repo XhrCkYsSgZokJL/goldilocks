@@ -107,6 +107,7 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
     func setupGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodSetupResponse
     func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse
+    func removeGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse
     func claimGoldilocksReferral(code: String) async throws
     func toggleGoldilocksCoverage(_ request: ConvosAPI.GoldilocksCoverageToggleRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
     func toggleGoldilocksPersonCoverage(_ request: ConvosAPI.GoldilocksPersonToggleRequest) async throws -> ConvosAPI.GoldilocksPersonToggleResponse
@@ -152,6 +153,10 @@ extension ConvosAPIClientProtocol {
     }
 
     func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        ConvosAPI.GoldilocksPaymentMethodConfirmResponse(hasPaymentMethod: false)
+    }
+
+    func removeGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
         ConvosAPI.GoldilocksPaymentMethodConfirmResponse(hasPaymentMethod: false)
     }
 
@@ -1009,6 +1014,13 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         var request = try authenticatedRequest(for: "v2/billing/payment-method/confirm", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(Body(sessionId: sessionId))
+        return try await performRequest(request)
+    }
+
+    func removeGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        var request = try authenticatedRequest(for: "v2/billing/payment-method/remove", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([String: String]())
         return try await performRequest(request)
     }
 

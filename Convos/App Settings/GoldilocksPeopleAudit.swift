@@ -36,12 +36,12 @@ enum GoldilocksPeopleAudit {
 
     private static func addedLine(for member: SeatMember) -> String {
         let name: String = displayName(for: member)
-        return "Added \(name) to the plan"
+        return "Client added \(name) to their membership."
     }
 
     private static func removedLine(for member: SeatMember) -> String {
         let name: String = displayName(for: member)
-        return "Removed \(name) from the plan"
+        return "Client removed \(name) from their membership."
     }
 
     private static func displayName(for member: SeatMember) -> String {

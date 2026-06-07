@@ -251,6 +251,9 @@ public enum ConvosAPI {
         /// regardless of seats / coverage, and the Membership screen
         /// hides the "Add coverage" purchase flow + enables Invoices.
         public let emeraldMembershipEnabled: Bool
+        /// How many people an Emerald client may enable (billed
+        /// externally). 0 when no Emerald allowance has been granted.
+        public let emeraldSeatLimit: Int
         public let referralCode: String?
         public let referralCreditCents: Int
         public let payingReferralCount: Int
@@ -261,6 +264,7 @@ public enum ConvosAPI {
             isAdmin: Bool,
             inboxId: String,
             emeraldMembershipEnabled: Bool = false,
+            emeraldSeatLimit: Int = 0,
             referralCode: String? = nil,
             referralCreditCents: Int = 0,
             payingReferralCount: Int = 0,
@@ -270,6 +274,7 @@ public enum ConvosAPI {
             self.isAdmin = isAdmin
             self.inboxId = inboxId
             self.emeraldMembershipEnabled = emeraldMembershipEnabled
+            self.emeraldSeatLimit = emeraldSeatLimit
             self.referralCode = referralCode
             self.referralCreditCents = referralCreditCents
             self.payingReferralCount = payingReferralCount
@@ -277,7 +282,7 @@ public enum ConvosAPI {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case clientNumber, isAdmin, inboxId, emeraldMembershipEnabled, referralCode, referralCreditCents, payingReferralCount, hasAppliedReferralCode
+            case clientNumber, isAdmin, inboxId, emeraldMembershipEnabled, emeraldSeatLimit, referralCode, referralCreditCents, payingReferralCount, hasAppliedReferralCode
         }
 
         public init(from decoder: any Decoder) throws {
@@ -286,6 +291,7 @@ public enum ConvosAPI {
             self.isAdmin = try container.decode(Bool.self, forKey: .isAdmin)
             self.inboxId = try container.decode(String.self, forKey: .inboxId)
             self.emeraldMembershipEnabled = try container.decodeIfPresent(Bool.self, forKey: .emeraldMembershipEnabled) ?? false
+            self.emeraldSeatLimit = try container.decodeIfPresent(Int.self, forKey: .emeraldSeatLimit) ?? 0
             self.referralCode = try container.decodeIfPresent(String.self, forKey: .referralCode)
             self.referralCreditCents = try container.decodeIfPresent(Int.self, forKey: .referralCreditCents) ?? 0
             self.payingReferralCount = try container.decodeIfPresent(Int.self, forKey: .payingReferralCount) ?? 0
@@ -671,6 +677,7 @@ public enum ConvosAPI {
         public let seats: Int
         public let coveredPeople: Int
         public let reportDay: String
+        public let hasPaymentMethod: Bool
         public let activated: Bool
         public let deductedCents: Int
 
@@ -683,6 +690,7 @@ public enum ConvosAPI {
             seats: Int = 0,
             coveredPeople: Int = 0,
             reportDay: String = "1st",
+            hasPaymentMethod: Bool = false,
             activated: Bool = false,
             deductedCents: Int = 0
         ) {
@@ -694,6 +702,7 @@ public enum ConvosAPI {
             self.seats = seats
             self.coveredPeople = coveredPeople
             self.reportDay = reportDay
+            self.hasPaymentMethod = hasPaymentMethod
             self.activated = activated
             self.deductedCents = deductedCents
         }

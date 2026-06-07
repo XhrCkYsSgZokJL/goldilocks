@@ -22,7 +22,7 @@ import { requireJwt } from '../middleware/jwt.js';
 import { getStripe, isStripeConfigured } from '../billing/stripe.js';
 import { activeUntil, isCoverageActive, liveBalanceCents, monthlyRateCents } from '../billing/balance.js';
 import { reconcileCheckoutSession } from '../billing/reconcile-checkout.js';
-import { cancelAtPeriodEnd, ensureCustomer } from '../billing/subscriptions.js';
+import { cancelAtPeriodEnd, ensureCustomer, handleSetupSessionCompleted } from '../billing/subscriptions.js';
 import { togglePersonCoverage } from '../billing/person-activation.js';
 import { queueSampleReport } from '../billing/sample-report.js';
 import { emitBillingEvent } from '../observability/billing-events.js';
@@ -193,6 +193,7 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
         mode: 'setup',
         customer: customerId,
         client_reference_id: client.id,
+        payment_method_types: ['card'],
         success_url: successUrl(publicBaseUrl),
         cancel_url: cancelUrl(publicBaseUrl),
         metadata: { clientId: client.id, inboxId: client.inboxId, kind: 'payment_method_setup' },
@@ -258,6 +259,43 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
     } catch (err) {
       req.log.warn({ err }, 'payment-method confirm failed');
       return reply.code(502).send({ error: 'stripe_error', message: 'Could not confirm your card.' });
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // POST /v2/billing/payment-method/remove — detach the saved card(s) from
+  // the Stripe customer and clear the has-payment-method flag. Recurring
+  // invoices will fail without a card; Stripe dunning + the lapse webhook
+  // handle that if the client never adds a new one.
+  // returns: { hasPaymentMethod: false }
+  // ---------------------------------------------------------------------
+  app.post('/v2/billing/payment-method/remove', { preHandler: requireJwt }, async (req, reply) => {
+    if (!isStripeConfigured()) {
+      return reply.code(503).send({ error: 'billing_unavailable' });
+    }
+    const client = await resolveClient(req.deviceId!);
+    if (!client) {
+      return reply.code(409).send({ error: 'client_missing' });
+    }
+    try {
+      if (client.stripeCustomerId) {
+        const stripe = getStripe();
+        const methods = await stripe.paymentMethods.list({ customer: client.stripeCustomerId, type: 'card' });
+        for (const method of methods.data) {
+          await stripe.paymentMethods.detach(method.id);
+        }
+      }
+      await db.update(clients).set({ hasPaymentMethod: false }).where(eq(clients.id, client.id));
+      emitBillingEvent(req.log, {
+        event: 'billing.coverage.toggled',
+        clientId: client.id,
+        inboxId: client.inboxId,
+        context: { kind: 'payment_method_removed' },
+      });
+      return reply.code(200).send({ hasPaymentMethod: false });
+    } catch (err) {
+      req.log.warn({ err }, 'payment-method remove failed');
+      return reply.code(502).send({ error: 'stripe_error', message: 'Could not remove your card.' });
     }
   });
 
@@ -450,6 +488,9 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
       if (message === 'no_payment_method') {
         return reply.code(402).send({ error: 'no_payment_method', message: 'Add a payment method before enabling people.' });
       }
+      if (message === 'seat_limit_reached') {
+        return reply.code(409).send({ error: 'seat_limit_reached', message: 'Your Emerald membership seat limit has been reached.' });
+      }
       if (message === 'seat_price_not_configured') {
         return reply.code(503).send({ error: 'billing_unavailable', message: 'Billing is not fully configured on this server.' });
       }
@@ -515,6 +556,14 @@ export default async function billingRoutes(app: FastifyInstance, opts: { public
     const sessionId = (req.query as Record<string, string>).session_id;
     if (sessionId && isStripeConfigured()) {
       try {
+        const stripe = getStripe();
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+        if (session.mode === 'setup') {
+          // Card-on-file setup — attach the saved card right away so the
+          // app sees it even before the webhook or its own confirm call.
+          await handleSetupSessionCompleted(session);
+          return reply.type('text/html').send(landingPage('Card saved', 'Your payment method is on file. You can close this page and return to Goldilocks.'));
+        }
         await reconcileCheckoutSession(sessionId, req.log);
       } catch (err) {
         req.log.warn({ err }, 'return-page reconcile failed — webhook will retry');

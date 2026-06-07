@@ -161,6 +161,9 @@ export const clients = pgTable('clients', {
   // overrides the auto-computed tier from seats + coverage — see
   // `computeTier` in src/billing/tier.ts.
   emeraldMembershipEnabled: boolean('emerald_membership_enabled').notNull().default(false),
+  // How many people an Emerald client may enable (migration 030). Emerald
+  // clients are billed externally — no card or Stripe subscription.
+  emeraldSeatLimit: integer('emerald_seat_limit').notNull().default(0),
   // Report delivery day: '1st' or '14th' of each month (migration 021).
   reportDay: text('report_day').notNull().default('1st'),
   // Client-controlled coverage toggle (migration 022). When false, the

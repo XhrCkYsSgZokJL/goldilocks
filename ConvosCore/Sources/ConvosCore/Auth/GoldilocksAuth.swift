@@ -29,6 +29,7 @@ public enum GoldilocksAuth {
         public let isAdmin: Bool
         public let inboxId: String
         public let emeraldMembershipEnabled: Bool
+        public let emeraldSeatLimit: Int
         public let referralCode: String?
         public let referralCreditCents: Int
         public let payingReferralCount: Int
@@ -39,6 +40,7 @@ public enum GoldilocksAuth {
             isAdmin: Bool,
             inboxId: String,
             emeraldMembershipEnabled: Bool = false,
+            emeraldSeatLimit: Int = 0,
             referralCode: String? = nil,
             referralCreditCents: Int = 0,
             payingReferralCount: Int = 0,
@@ -48,6 +50,7 @@ public enum GoldilocksAuth {
             self.isAdmin = isAdmin
             self.inboxId = inboxId
             self.emeraldMembershipEnabled = emeraldMembershipEnabled
+            self.emeraldSeatLimit = emeraldSeatLimit
             self.referralCode = referralCode
             self.referralCreditCents = referralCreditCents
             self.payingReferralCount = payingReferralCount
@@ -59,6 +62,7 @@ public enum GoldilocksAuth {
             self.isAdmin = response.isAdmin
             self.inboxId = response.inboxId
             self.emeraldMembershipEnabled = response.emeraldMembershipEnabled
+            self.emeraldSeatLimit = response.emeraldSeatLimit
             self.referralCode = response.referralCode
             self.referralCreditCents = response.referralCreditCents
             self.payingReferralCount = response.payingReferralCount

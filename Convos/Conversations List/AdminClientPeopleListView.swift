@@ -193,13 +193,13 @@ struct AdminClientPeopleListView: View {
                     .font(.caption)
                     .foregroundStyle(.colorTextSecondary)
             }
-            if !member.phone.isEmpty {
-                Text("Phone: \(member.phone)")
+            ForEach(member.phones, id: \.self) { phone in
+                Text("Phone: \(phone)")
                     .font(.caption)
                     .foregroundStyle(.colorTextSecondary)
             }
-            if !member.address.isEmpty {
-                Text(member.address.singleLine)
+            ForEach(member.addresses, id: \.self) { line in
+                Text(line)
                     .font(.caption)
                     .foregroundStyle(.colorTextSecondary)
             }

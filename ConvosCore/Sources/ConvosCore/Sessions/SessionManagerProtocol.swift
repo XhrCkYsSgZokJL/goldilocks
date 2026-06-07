@@ -157,6 +157,10 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// (`POST /v2/billing/payment-method/confirm`).
     func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse
 
+    /// Detach the saved card from the Stripe customer
+    /// (`POST /v2/billing/payment-method/remove`).
+    func removeGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse
+
     func claimGoldilocksReferral(code: String) async throws
 
     /// Enable or disable coverage (`POST /v2/billing/coverage`).
@@ -356,6 +360,10 @@ extension SessionManagerProtocol {
     }
 
     public func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        ConvosAPI.GoldilocksPaymentMethodConfirmResponse(hasPaymentMethod: false)
+    }
+
+    public func removeGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
         ConvosAPI.GoldilocksPaymentMethodConfirmResponse(hasPaymentMethod: false)
     }
 

@@ -474,6 +474,7 @@ struct MembershipView: View {
     @State private var activatedPersonIds: Set<UUID> = []
     @State private var showingTierInfo: Bool = false
     @State private var showingNeedsPaymentMethod: Bool = false
+    @State private var showingPaymentMethodOptions: Bool = false
 
     var body: some View {
         listContent
@@ -499,7 +500,7 @@ struct MembershipView: View {
 
     private var listContent: some View {
         listWithSheets
-            .alert("Verification", isPresented: $showingVerifyResult) {
+            .alert("Membership", isPresented: $showingVerifyResult) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(verifyResultMessage ?? "")
@@ -517,17 +518,17 @@ struct MembershipView: View {
                 Button("Activate", action: confirmAction)
                 Button("Cancel", role: .cancel) { pendingActivation = nil }
             } message: {
-                Text("$\(GoldilocksPlan.monthlyPricePerPerson)/mo will be deducted from your balance.")
+                Text(activationConfirmMessage)
             }
-            .alert("Re-activate coverage?", isPresented: $showingReactivationConfirm) {
+            .alert("Restart coverage?", isPresented: $showingReactivationConfirm) {
                 let confirmAction: () -> Void = {
                     guard let member = pendingActivation else { return }
                     Task { await confirmActivation(member) }
                 }
-                Button("Re-activate", action: confirmAction)
+                Button("Restart", action: confirmAction)
                 Button("Cancel", role: .cancel) { pendingActivation = nil }
             } message: {
-                Text("This person will be re-added to your membership for no extra charge.")
+                Text("This person will be added to your membership for no extra charge.")
             }
             .alert("Cancel coverage?", isPresented: $showingCancelConfirm) {
                 Button("Keep coverage", role: .cancel) {}
@@ -560,7 +561,7 @@ struct MembershipView: View {
                     onRemove: {
                         let label: String = member.displayName
                         plan.members.removeAll { $0.id == member.id }
-                        showVerifyResult("Removed \(label) from your plan.")
+                        showVerifyResult("\(label) was removed from your membership.")
                     }
                 )
             }
@@ -569,7 +570,7 @@ struct MembershipView: View {
                     mode: .add,
                     onSave: { newMember in
                         plan.members.append(newMember)
-                        showVerifyResult("\(newMember.displayName) was added to your plan.")
+                        showVerifyResult("\(newMember.displayName) was added to your membership.")
                     }
                 )
             }
@@ -609,6 +610,19 @@ struct MembershipView: View {
         GoldilocksSession.shared.identity?.emeraldMembershipEnabled ?? false
     }
 
+    /// How many people this Emerald client may enable — granted by the
+    /// admin alongside the Emerald flag; billed externally.
+    private var emeraldSeatLimit: Int {
+        GoldilocksSession.shared.identity?.emeraldSeatLimit ?? 0
+    }
+
+    private var activationConfirmMessage: String {
+        if isEmerald {
+            return "Coverage is included with your Emerald membership."
+        }
+        return "Your card will be charged $\(GoldilocksPlan.monthlyPricePerPerson) now for the initial report. Coverage runs through the end of next month, then renews at $\(GoldilocksPlan.monthlyPricePerPerson)/mo."
+    }
+
     private var currentTier: GoldilocksMembershipTier {
         GoldilocksMembershipTier(
             activeMembers: plan.billableSeatCount,
@@ -628,9 +642,19 @@ struct MembershipView: View {
                     .font(.body)
                     .foregroundStyle(tier.accentColor)
                     .frame(width: Self.rowIconWidth, alignment: .center)
-                Text("\(tier.displayName) member")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.colorTextPrimary)
+                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                    Text("\(tier.displayName) member")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.colorTextPrimary)
+                    Text(tier.membershipDetail)
+                        .font(.caption)
+                        .foregroundStyle(.colorTextSecondary)
+                    if isEmerald, emeraldSeatLimit > 0 {
+                        Text("Add up to \(emeraldSeatLimit) people.")
+                            .font(.caption)
+                            .foregroundStyle(.colorTextSecondary)
+                    }
+                }
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.footnote.weight(.semibold))
@@ -661,11 +685,15 @@ struct MembershipView: View {
         let tapAction = { showingReferralSheet = true }
         let creditLabel: String = "$\(referralCreditCents / 100)"
         return Button(action: tapAction) {
-            HStack {
+            HStack(spacing: DesignConstants.Spacing.step2x) {
+                Image(systemName: "gift.fill")
+                    .font(.body)
+                    .foregroundStyle(.colorFillPrimary)
+                    .frame(width: Self.rowIconWidth, alignment: .center)
                 VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
                     Text("Referral credit")
                         .foregroundStyle(.colorTextPrimary)
-                    Text("Get a $50 credit for every new paying client.")
+                    Text("$50 credit for every paying client.")
                         .font(.caption)
                         .foregroundStyle(.colorTextSecondary)
                 }
@@ -680,6 +708,7 @@ struct MembershipView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .alignmentGuide(.listRowSeparatorLeading) { dimensions in dimensions[.leading] }
         .sheet(isPresented: $showingReferralSheet) {
             ReferralCreditSheet(session: session)
         }
@@ -688,22 +717,8 @@ struct MembershipView: View {
     private var paymentSection: some View {
         Section {
             addPaymentMethodRow
-            if billingStatus?.coverageActive == true {
-                cancelCoverageRow
-            }
         } header: {
             Text("Payments")
-        }
-    }
-
-    private var cancelCoverageRow: some View {
-        let tapAction: () -> Void = { showingCancelConfirm = true }
-        return Button(role: .destructive, action: tapAction) {
-            HStack {
-                Text("Cancel coverage")
-                Spacer()
-            }
-            .contentShape(Rectangle())
         }
     }
 
@@ -713,8 +728,20 @@ struct MembershipView: View {
 
     @ViewBuilder
     private var addPaymentMethodRow: some View {
-        let tapAction: () -> Void = { Task { await startPaymentMethodSetup() } }
-        let title: String = hasPaymentMethod ? "Payment method" : "Add payment method"
+        let tapAction: () -> Void = {
+            if hasPaymentMethod {
+                showingPaymentMethodOptions = true
+            } else {
+                Task { await startPaymentMethodSetup() }
+            }
+        }
+        let title: String = (hasPaymentMethod || isEmerald) ? "Payment method" : "Add payment method"
+        let subtitle: String = {
+            if isEmerald { return "Emerald members are billed externally." }
+            if hasPaymentMethod { return "Tap to update or cancel coverage." }
+            return "Required before enabling people."
+        }()
+        let rowOpacity: Double = isEmerald ? 0.5 : 1.0
         Button(action: tapAction) {
             HStack(spacing: DesignConstants.Spacing.step2x) {
                 Image(systemName: "creditcard.fill")
@@ -723,11 +750,9 @@ struct MembershipView: View {
                     Text(title)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.colorTextPrimary)
-                    if !hasPaymentMethod {
-                        Text("Required before enabling people.")
-                            .font(.caption)
-                            .foregroundStyle(.colorTextSecondary)
-                    }
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.colorTextSecondary)
                 }
                 Spacer()
                 addPaymentMethodTrailing
@@ -735,17 +760,32 @@ struct MembershipView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(isSettingUpPaymentMethod)
+        .opacity(rowOpacity)
+        .disabled(isEmerald || isSettingUpPaymentMethod)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if hasPaymentMethod, !isEmerald {
+                let removeAction: () -> Void = { Task { await removePaymentMethod() } }
+                Button("Remove", role: .destructive, action: removeAction)
+            }
+        }
+        .confirmationDialog("Payment method", isPresented: $showingPaymentMethodOptions, titleVisibility: .visible) {
+            let updateAction: () -> Void = { Task { await startPaymentMethodSetup() } }
+            Button("Update method", action: updateAction)
+            if billingStatus?.coverageActive == true {
+                let cancelAction: () -> Void = { showingCancelConfirm = true }
+                Button("Cancel coverage", role: .destructive, action: cancelAction)
+            }
+            Button("Dismiss", role: .cancel) {}
+        }
     }
 
     @ViewBuilder
     private var addPaymentMethodTrailing: some View {
-        if isSettingUpPaymentMethod {
+        if isEmerald {
+            EmptyView()
+        } else if isSettingUpPaymentMethod {
             ProgressView()
         } else if hasPaymentMethod {
-            Text("On file")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.colorTextSecondary)
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         } else {
@@ -781,9 +821,18 @@ struct MembershipView: View {
     private var nextChargeRow: some View {
         let tapAction = { showingBillingInfo = true }
         return Button(action: tapAction) {
-            HStack {
-                Text("Billing cycle")
-                    .foregroundStyle(.colorTextPrimary)
+            HStack(spacing: DesignConstants.Spacing.step2x) {
+                Image(systemName: "calendar")
+                    .font(.body)
+                    .foregroundStyle(.colorFillPrimary)
+                    .frame(width: Self.rowIconWidth, alignment: .center)
+                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                    Text("Billing cycle")
+                        .foregroundStyle(.colorTextPrimary)
+                    Text("\(GoldilocksPlan.priceLabel).")
+                        .font(.caption)
+                        .foregroundStyle(.colorTextSecondary)
+                }
                 Spacer()
                 Text(nextChargeLabel)
                     .foregroundStyle(.colorTextSecondary)
@@ -794,6 +843,7 @@ struct MembershipView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .alignmentGuide(.listRowSeparatorLeading) { dimensions in dimensions[.leading] }
     }
 
     private var nextChargeLabel: String {
@@ -875,12 +925,12 @@ struct MembershipView: View {
         let nextMonth: Date = calendar.date(byAdding: .month, value: 1, to: now) ?? now
         let components: DateComponents = calendar.dateComponents([.year, .month], from: nextMonth)
         guard let firstOfNextMonth = calendar.date(from: components) else {
-            return "Disable people in your membership before the billing date to avoid being charged."
+            return "Billing runs at midnight on the 1st of each month."
         }
         let formatter = DateFormatter()
         formatter.dateFormat = "MMMM d"
         let dateString: String = formatter.string(from: firstOfNextMonth)
-        return "Billing runs at midnight on \(dateString). Disable people or cancel before then to avoid being charged."
+        return "Billing runs at midnight on \(dateString)."
     }
 
     private var hasBalance: Bool {
@@ -922,9 +972,6 @@ struct MembershipView: View {
             addSomeoneRow
         } header: {
             Text("People")
-        } footer: {
-            Text("\(GoldilocksPlan.priceLabel). Toggle a person on to start coverage. Tap to edit, swipe to remove.")
-                .foregroundStyle(.colorTextSecondary)
         }
     }
 
@@ -941,9 +988,12 @@ struct MembershipView: View {
                     .foregroundStyle(.colorFillPrimary)
                     .frame(width: Self.rowIconWidth, alignment: .center)
                 VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
-                    Text("Add someone")
+                    Text("Add coverage")
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.colorTextPrimary)
+                    Text("Toggle people to start/stop coverage.")
+                        .font(.caption)
+                        .foregroundStyle(.colorTextSecondary)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -963,12 +1013,18 @@ struct MembershipView: View {
                 HStack(spacing: DesignConstants.Spacing.step2x) {
                     Image(systemName: member.icon)
                         .font(.body)
-                        .foregroundStyle(.colorFillPrimary)
+                        .foregroundStyle(member.iconSwiftUIColor)
                         .frame(width: Self.rowIconWidth, alignment: .center)
                     VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
                         Text(rowLabel)
                             .font(.body)
                             .foregroundStyle(.colorTextPrimary)
+                        let summary: String = contactSummary(for: member)
+                        if !summary.isEmpty {
+                            Text(summary)
+                                .font(.caption)
+                                .foregroundStyle(.colorTextSecondary)
+                        }
                     }
                     Spacer()
                 }
@@ -979,12 +1035,38 @@ struct MembershipView: View {
         }
     }
 
+    /// One-line summary of what's on file for a person, e.g.
+    /// "3 emails, 2 phones, 1 address". Zero-count items are skipped.
+    private func contactSummary(for member: SeatMember) -> String {
+        var parts: [String] = []
+        if !member.emails.isEmpty {
+            parts.append(countLabel(member.emails.count, singular: "email", plural: "emails"))
+        }
+        if !member.phones.isEmpty {
+            parts.append(countLabel(member.phones.count, singular: "phone", plural: "phones"))
+        }
+        if !member.addresses.isEmpty {
+            parts.append(countLabel(member.addresses.count, singular: "address", plural: "addresses"))
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private func countLabel(_ count: Int, singular: String, plural: String) -> String {
+        count == 1 ? "1 \(singular)" : "\(count) \(plural)"
+    }
+
     private func memberToggle(for member: SeatMember) -> some View {
         let binding = Binding<Bool>(
             get: { member.enabled },
             set: { newValue in
                 if newValue {
-                    guard hasPaymentMethod else {
+                    if isEmerald {
+                        let enabledCount: Int = plan.members.filter(\.enabled).count
+                        guard enabledCount < emeraldSeatLimit else {
+                            showBillingResult("Your Emerald membership covers up to \(emeraldSeatLimit) people.")
+                            return
+                        }
+                    } else if !hasPaymentMethod {
                         showingNeedsPaymentMethod = true
                         return
                     }
@@ -1026,15 +1108,16 @@ struct MembershipView: View {
                 monthlyRateCents: response.monthlyRateCents,
                 seats: response.seats,
                 coveredPeople: response.coveredPeople,
-                reportDay: response.reportDay
+                reportDay: response.reportDay,
+                hasPaymentMethod: response.hasPaymentMethod
             )
             cacheCoverageActive()
             if response.activated, response.deductedCents > 0 {
                 let dollars: Int = response.deductedCents / 100
-                showBillingResult("Coverage activated for \(member.displayName). $\(dollars) deducted.")
+                showBillingResult("Coverage activated for \(member.displayName). Your card was charged $\(dollars) for their initial report.")
             }
-        } catch let apiError as APIError {
-            showBillingResult("Not enough balance to activate.")
+        } catch is APIError {
+            showBillingResult("Couldn't activate coverage. Make sure a payment method is on file, then try again.")
         } catch {
             showBillingResult(error.localizedDescription)
         }
@@ -1107,6 +1190,18 @@ struct MembershipView: View {
             showBillingResult("Your card has been saved.")
         } catch {
             Log.warning("[Goldilocks] Payment method confirm failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Detach the saved card from the Stripe customer. Recurring invoices
+    /// will fail without a card, so the row prompts to add a new one.
+    private func removePaymentMethod() async {
+        do {
+            _ = try await session.removeGoldilocksPaymentMethod()
+            billingStatus = try await session.fetchGoldilocksBillingStatus()
+            showBillingResult("Payment method removed. Add a new one before your next renewal.")
+        } catch {
+            showBillingResult("Couldn't remove payment method: \(error.localizedDescription)")
         }
     }
 
@@ -1228,14 +1323,12 @@ struct MembershipView: View {
 
 /// Unified Add / Edit sheet for one person on the plan. Same UX for
 /// both flows — the only difference is the title, the destructive
-/// "Remove" section (edit only), and what gets done on Save. Email
-/// addresses are managed as a per-row list with inline verification:
-/// the user types one or more addresses, taps "Send verification
-/// codes" to dispatch codes for every unverified row at once, then
-/// types each 6-digit code into its row's inline field. Auto-focus
-/// hops to the next pending row as each one verifies. At least one
-/// verified email is required before Save is enabled — the person's
-/// identity on the plan is the set of verified email addresses.
+/// "Remove" section (edit only), and what gets done on Save. Emails,
+/// phones, and addresses are lists; each entry is added through its
+/// own pop-up (emails verify a 6-digit code before they land in the
+/// list). At least one verified email is required before Save is
+/// enabled — the person's identity on the plan is the set of verified
+/// email addresses.
 private struct PersonEditorSheet: View {
     enum Mode {
         case add
@@ -1249,18 +1342,17 @@ private struct PersonEditorSheet: View {
     let onRemove: (() -> Void)?
 
     @State private var icon: String
+    @State private var iconColor: String
     @State private var firstName: String
     @State private var middleName: String
     @State private var lastName: String
-    @State private var phone: String
-    @State private var countryCode: String
-    @State private var address: PersonAddress
-    @State private var emails: [EditableEmail]
+    @State private var emails: [LabeledEmail]
+    @State private var phones: [String]
+    @State private var addresses: [String]
     @State private var showingRemoveConfirm: Bool = false
-    @State private var verifyingEmailID: UUID?
-    @State private var verificationCode: String = ""
-    @State private var verificationError: String?
-    @State private var resendCooldown: Int = 0
+    @State private var showingAddEmail: Bool = false
+    @State private var showingAddPhone: Bool = false
+    @State private var showingAddAddress: Bool = false
 
     private let originalMember: SeatMember?
 
@@ -1276,26 +1368,23 @@ private struct PersonEditorSheet: View {
         case .add:
             self.originalMember = nil
             self._icon = State(initialValue: Self.defaultIconChoice)
+            self._iconColor = State(initialValue: SeatMember.defaultIconColor)
             self._firstName = State(initialValue: "")
             self._middleName = State(initialValue: "")
             self._lastName = State(initialValue: "")
-            self._phone = State(initialValue: "")
-            self._countryCode = State(initialValue: Self.defaultCountryCode)
-            self._address = State(initialValue: PersonAddress())
-            // Start with one draft row so the user sees the email
-            // section immediately without having to tap "Add email".
-            self._emails = State(initialValue: [EditableEmail.draft()])
+            self._emails = State(initialValue: [])
+            self._phones = State(initialValue: [])
+            self._addresses = State(initialValue: [])
         case .edit(let member):
             self.originalMember = member
             self._icon = State(initialValue: member.icon)
+            self._iconColor = State(initialValue: member.iconColor)
             self._firstName = State(initialValue: member.firstName)
             self._middleName = State(initialValue: member.middleName)
             self._lastName = State(initialValue: member.lastName)
-            let parsedPhone = Self.parsePhone(member.phone)
-            self._countryCode = State(initialValue: parsedPhone.countryCode)
-            self._phone = State(initialValue: parsedPhone.localNumber)
-            self._address = State(initialValue: member.address)
-            self._emails = State(initialValue: member.emails.map(EditableEmail.fromLabeled))
+            self._emails = State(initialValue: member.emails)
+            self._phones = State(initialValue: member.phones)
+            self._addresses = State(initialValue: member.addresses)
         }
     }
 
@@ -1305,8 +1394,8 @@ private struct PersonEditorSheet: View {
                 iconSection
                 nameSection
                 emailsSection
-                phoneSection
-                addressSection
+                phonesSection
+                addressesSection
                 if onRemove != nil { removeSection }
             }
             .scrollContentBackground(.hidden)
@@ -1328,46 +1417,22 @@ private struct PersonEditorSheet: View {
             } message: {
                 Text("They'll stop counting toward your coverage and be unsubscribed from the service.")
             }
-            .alert("Enter verification code", isPresented: showingVerificationAlert) {
-                TextField("000000", text: $verificationCode)
-                    .keyboardType(.numberPad)
-                    .textContentType(.oneTimeCode)
-                    .onChange(of: verificationCode) { _, newValue in
-                        let digits: String = String(newValue.filter { $0.isNumber }.prefix(EmailCodeVerification.codeLength))
-                        verificationCode = digits
-                    }
-                Button("Verify", action: submitVerificationCode)
-                    .disabled(verificationCode.count < EmailCodeVerification.codeLength)
-                if resendCooldown > 0 {
-                    Button("Resend (\(resendCooldown)s)", role: .cancel) {}
-                        .disabled(true)
-                } else {
-                    Button("Resend", action: resendCode)
+            .sheet(isPresented: $showingAddEmail) {
+                AddEmailSheet { added in
+                    emails.append(LabeledEmail(address: added, label: .other, verified: true))
                 }
-                Button("Cancel", role: .cancel, action: cancelVerification)
-            } message: {
-                if let error = verificationError {
-                    Text(error)
-                } else {
-                    let emailAddress: String = verifyingEmail?.address ?? ""
-                    Text("A 6-digit code was sent to \(emailAddress).")
+            }
+            .sheet(isPresented: $showingAddPhone) {
+                AddPhoneSheet { added in
+                    phones.append(added)
+                }
+            }
+            .sheet(isPresented: $showingAddAddress) {
+                AddAddressSheet { added in
+                    addresses.append(added)
                 }
             }
         }
-    }
-
-    private var showingVerificationAlert: Binding<Bool> {
-        Binding(
-            get: { verifyingEmailID != nil },
-            set: { showing in
-                if !showing { cancelVerification() }
-            }
-        )
-    }
-
-    private var verifyingEmail: EditableEmail? {
-        guard let id = verifyingEmailID else { return nil }
-        return emails.first(where: { $0.id == id })
     }
 
     private var title: String {
@@ -1386,7 +1451,7 @@ private struct PersonEditorSheet: View {
 
     private var removeConfirmTitle: String {
         let label: String = originalMember?.displayName ?? "this person"
-        return "Remove \(label) from your plan?"
+        return "Remove \(label) from your membership?"
     }
 
     @ToolbarContentBuilder
@@ -1406,25 +1471,29 @@ private struct PersonEditorSheet: View {
     }
 
     private static let iconChoices: [String] = [
-        "person.circle.fill", "star.fill", "heart.fill", "bolt.fill",
-        "leaf.fill", "flame.fill", "moon.fill", "sun.max.fill",
-        "pawprint.fill", "crown.fill", "gift.fill", "bell.fill",
-        "cloud.fill", "drop.fill", "sparkles", "bird.fill",
-        "tortoise.fill", "hare.fill", "fish.fill", "diamond.fill"
+        "person.circle.fill", "star.fill", "heart.fill", "leaf.fill", "pawprint.fill", "crown.fill"
     ]
 
     private static let defaultIconChoice: String = iconChoices.first ?? SeatMember.defaultIcon
 
     private var iconSection: some View {
         Section {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: DesignConstants.Spacing.step2x) {
-                    ForEach(Self.iconChoices, id: \.self) { choice in
-                        iconCell(choice)
-                    }
+            // Six equal-width slots per row so the cells distribute evenly
+            // across any iPhone width, and the two rows column-align.
+            HStack(spacing: 0) {
+                ForEach(Self.iconChoices, id: \.self) { choice in
+                    iconCell(choice)
+                        .frame(maxWidth: .infinity)
                 }
-                .padding(.vertical, DesignConstants.Spacing.stepX)
             }
+            .padding(.vertical, DesignConstants.Spacing.stepX)
+            HStack(spacing: 0) {
+                ForEach(SeatMember.iconColorNames, id: \.self) { name in
+                    colorCell(name)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(.vertical, DesignConstants.Spacing.stepX)
         } header: {
             Text("Icon")
         }
@@ -1432,7 +1501,8 @@ private struct PersonEditorSheet: View {
 
     private func iconCell(_ choice: String) -> some View {
         let isSelected: Bool = choice == icon
-        let background: Color = isSelected ? .colorFillPrimary : .colorFillMinimal
+        let selectedTint: Color = SeatMember.color(named: iconColor)
+        let background: Color = isSelected ? selectedTint : .colorFillMinimal
         let foreground: Color = isSelected ? .white : .colorTextPrimary
         let tapAction: () -> Void = { icon = choice }
         return Button(action: tapAction) {
@@ -1441,6 +1511,25 @@ private struct PersonEditorSheet: View {
                 .foregroundStyle(foreground)
                 .frame(width: 44.0, height: 44.0)
                 .background(background, in: Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func colorCell(_ name: String) -> some View {
+        let isSelected: Bool = name == iconColor
+        let fill: Color = SeatMember.color(named: name)
+        let tapAction: () -> Void = { iconColor = name }
+        return Button(action: tapAction) {
+            Circle()
+                .fill(fill)
+                .frame(width: 32.0, height: 32.0)
+                .overlay {
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                    }
+                }
         }
         .buttonStyle(.plain)
     }
@@ -1455,109 +1544,62 @@ private struct PersonEditorSheet: View {
                 .textContentType(.familyName)
         } header: {
             Text("Name")
-        } footer: {
-            Text("First name is required.")
-                .foregroundStyle(.colorTextSecondary)
         }
     }
 
     private var emailsSection: some View {
         Section {
-            ForEach($emails) { $email in
-                emailRow(email: $email)
+            ForEach(emails) { email in
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text(email.address)
+                        .foregroundStyle(.colorTextPrimary)
+                    Spacer()
+                }
             }
             .onDelete(perform: deleteEmails)
-            addEmailButton
-            if validUnsentCount > 0 { sendCodesButton }
+            addRowButton(label: "Add email") { showingAddEmail = true }
         } header: {
             Text("Emails")
         } footer: {
-            Text(emailsFooterText)
+            Text("At least one verified email is required.")
                 .foregroundStyle(.colorTextSecondary)
         }
     }
 
-    @ViewBuilder
-    private func emailRow(email: Binding<EditableEmail>) -> some View {
-        switch email.wrappedValue.status {
-        case .draft:
-            draftRow(email: email)
-        case .awaiting:
-            awaitingRow(email: email)
-        case .verified:
-            verifiedRow(email: email.wrappedValue)
-        case .exhausted:
-            exhaustedRow(email: email)
-        }
-    }
-
-    private func draftRow(email: Binding<EditableEmail>) -> some View {
-        TextField("Email", text: email.address)
-            .textContentType(.emailAddress)
-            .keyboardType(.emailAddress)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-    }
-
-    private func awaitingRow(email: Binding<EditableEmail>) -> some View {
-        let tapAction = { openVerificationDialog(for: email.wrappedValue.id) }
-        return Button(action: tapAction) {
-            HStack {
-                Text(email.wrappedValue.address)
+    private var phonesSection: some View {
+        Section {
+            ForEach(phones, id: \.self) { phone in
+                Text(phone)
                     .foregroundStyle(.colorTextPrimary)
-                Spacer()
-                Text("Enter code")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.colorFillPrimary)
             }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func verifiedRow(email: EditableEmail) -> some View {
-        HStack {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-            Text(email.address)
-                .foregroundStyle(.colorTextPrimary)
-            Spacer()
-            Text("Verified")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.colorTextSecondary)
+            .onDelete(perform: deletePhones)
+            addRowButton(label: "Add phone") { showingAddPhone = true }
+        } header: {
+            Text("Phones (optional)")
         }
     }
 
-    private func exhaustedRow(email: Binding<EditableEmail>) -> some View {
-        let tapAction = {
-            email.wrappedValue.status = .awaiting
-            email.wrappedValue.code = ""
-            email.wrappedValue.attemptsLeft = EmailCodeVerification.maxAttempts
-            openVerificationDialog(for: email.wrappedValue.id)
-        }
-        return Button(action: tapAction) {
-            HStack {
-                Text(email.wrappedValue.address)
+    private var addressesSection: some View {
+        Section {
+            ForEach(addresses, id: \.self) { line in
+                Text(line)
                     .foregroundStyle(.colorTextPrimary)
-                Spacer()
-                Text("Resend code")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.red)
             }
-            .contentShape(Rectangle())
+            .onDelete(perform: deleteAddresses)
+            addRowButton(label: "Add address") { showingAddAddress = true }
+        } header: {
+            Text("Addresses (optional)")
         }
-        .buttonStyle(.plain)
     }
 
-    private var addEmailButton: some View {
-        let tapAction = {
-            emails.append(EditableEmail.draft())
-        }
-        return Button(action: tapAction) {
+    private func addRowButton(label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             HStack(spacing: DesignConstants.Spacing.step2x) {
                 Image(systemName: "plus.circle.fill")
                     .foregroundStyle(.colorFillPrimary)
-                Text("Add email")
+                Text(label)
                     .foregroundStyle(.colorTextPrimary)
                 Spacer()
             }
@@ -1566,65 +1608,12 @@ private struct PersonEditorSheet: View {
         .buttonStyle(.plain)
     }
 
-    private var sendCodesButton: some View {
-        let count: Int = validUnsentCount
-        let buttonLabel: String = count == 1
-            ? "Send verification code"
-            : "Send \(count) verification codes"
-        return Button(action: sendVerificationCodes) {
-            HStack {
-                Spacer()
-                Text(buttonLabel)
-                    .font(.body.weight(.semibold))
-                Spacer()
-            }
-        }
-        .disabled(count == 0)
+    private func deletePhones(at offsets: IndexSet) {
+        phones.remove(atOffsets: offsets)
     }
 
-    private var phoneSection: some View {
-        Section {
-            HStack(spacing: DesignConstants.Spacing.step2x) {
-                Picker("Country code", selection: $countryCode) {
-                    ForEach(Self.countryCodes, id: \.self) { code in
-                        Text(code).tag(code)
-                    }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .onChange(of: countryCode) { _, newCode in
-                    phone = Self.formatPhone(phone, countryCode: newCode)
-                }
-                TextField("Phone", text: $phone)
-                    .textContentType(.telephoneNumber)
-                    .keyboardType(.phonePad)
-                    .onChange(of: phone) { _, newValue in
-                        let formatted: String = Self.formatPhone(newValue, countryCode: countryCode)
-                        if formatted != phone {
-                            phone = formatted
-                        }
-                    }
-            }
-        } header: {
-            Text("Phone (optional)")
-        }
-    }
-
-    private var addressSection: some View {
-        Section {
-            TextField("Street", text: $address.street)
-                .textContentType(.fullStreetAddress)
-            TextField("City", text: $address.city)
-                .textContentType(.addressCity)
-            TextField("State / Region", text: $address.state)
-                .textContentType(.addressState)
-            TextField("Postal code", text: $address.postalCode)
-                .textContentType(.postalCode)
-            TextField("Country", text: $address.country)
-                .textContentType(.countryName)
-        } header: {
-            Text("Address (optional)")
-        }
+    private func deleteAddresses(at offsets: IndexSet) {
+        addresses.remove(atOffsets: offsets)
     }
 
     private var removeSection: some View {
@@ -1643,64 +1632,286 @@ private struct PersonEditorSheet: View {
 
     // MARK: - Helpers
 
-    private var emailsFooterText: String {
-        if emails.contains(where: { $0.status == .verified }) {
-            return "Every email is verified before it's saved. At least one verified email is required."
-        }
-        return "Add one or more emails, then tap Send verification codes to receive a 6-digit code for each."
-    }
-
-    private var validUnsentCount: Int {
-        emails.filter { $0.status == .draft && isValidEmailAddress($0.address) }.count
-    }
-
     private var canSave: Bool {
         guard !firstName.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
-        guard emails.contains(where: { $0.status == .verified }) else { return false }
+        guard !emails.isEmpty else { return false }
         guard let original = originalMember else { return true }
         return assembledMember != original
     }
 
     /// The SeatMember that would be persisted if Save was tapped now.
-    /// Unverified rows are dropped. Free-form fields are trimmed so a
-    /// stray space isn't mistaken for a real edit.
+    /// Free-form fields are trimmed so a stray space isn't mistaken for
+    /// a real edit.
     private var assembledMember: SeatMember {
-        let trimmedAddress: PersonAddress = PersonAddress(
-            street: address.street.trimmingCharacters(in: .whitespaces),
-            city: address.city.trimmingCharacters(in: .whitespaces),
-            state: address.state.trimmingCharacters(in: .whitespaces),
-            postalCode: address.postalCode.trimmingCharacters(in: .whitespaces),
-            country: address.country.trimmingCharacters(in: .whitespaces)
-        )
-        let verifiedEmails: [LabeledEmail] = emails.compactMap { $0.toLabeled }
         // New people start disabled — enabling them later is what charges
         // the $100 initial-report fee and starts coverage.
         var member: SeatMember = originalMember ?? SeatMember(enabled: false)
         member.firstName = firstName.trimmingCharacters(in: .whitespaces)
         member.middleName = middleName.trimmingCharacters(in: .whitespaces)
         member.lastName = lastName.trimmingCharacters(in: .whitespaces)
-        member.emails = verifiedEmails
-        let trimmedPhone: String = phone.trimmingCharacters(in: .whitespaces)
-        member.phone = trimmedPhone.isEmpty ? "" : "\(countryCode) \(trimmedPhone)"
-        member.address = trimmedAddress
+        member.emails = emails
+        member.phones = phones
+        member.addresses = addresses
         member.icon = icon
+        member.iconColor = iconColor
         return member
     }
 
-    private static let defaultCountryCode: String = "+1"
+    private func deleteEmails(at offsets: IndexSet) {
+        emails.remove(atOffsets: offsets)
+    }
+}
 
-    private static let countryCodes: [String] = [
-        "+1", "+44", "+61", "+91", "+33", "+49", "+81", "+86", "+52", "+55", "+34", "+39", "+7", "+82", "+971"
-    ]
+/// Palette for person icons. Names are what's persisted on
+/// `SeatMember.iconColor`; the mapping to SwiftUI colors lives here so
+/// the model stays UI-framework-free.
+extension SeatMember {
+    static let iconColorNames: [String] = ["blue", "green", "orange", "purple", "pink", "red"]
 
-    /// Format a raw phone entry. For US (+1) numbers, group as
-    /// XXX-XXX-XXXX (max 10 digits). For other country codes, keep digits
-    /// only (up to E.164's 15) since dash grouping is region-specific.
-    private static func formatPhone(_ raw: String, countryCode: String) -> String {
+    static func color(named name: String) -> Color {
+        switch name {
+        case "green": return .green
+        case "orange": return .orange
+        case "purple": return .purple
+        case "pink": return .pink
+        case "red": return .red
+        default: return .blue
+        }
+    }
+
+    var iconSwiftUIColor: Color {
+        Self.color(named: iconColor)
+    }
+}
+
+/// Pop-up for adding one email: enter the address, receive a 6-digit
+/// code, verify, and the verified address is handed back to the editor.
+/// Validation is permissive and unicode-friendly — any non-empty user
+/// part, an "@", and a dotted domain — so international addresses work.
+private struct AddEmailSheet: View {
+    @Environment(\.dismiss) private var dismiss: DismissAction
+    let onAdd: (String) -> Void
+
+    @State private var address: String = ""
+    @State private var codeSent: Bool = false
+    @State private var code: String = ""
+    @State private var attemptsLeft: Int = EmailCodeVerification.maxAttempts
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Email address", text: $address)
+                        .textContentType(.emailAddress)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .foregroundStyle(.colorTextPrimary)
+                        .disabled(codeSent)
+                } header: {
+                    Text("Email")
+                }
+                if codeSent {
+                    Section {
+                        TextField("000000", text: $code)
+                            .keyboardType(.numberPad)
+                            .textContentType(.oneTimeCode)
+                            .onChange(of: code) { _, newValue in
+                                code = String(newValue.filter { $0.isNumber }.prefix(EmailCodeVerification.codeLength))
+                            }
+                    } header: {
+                        Text("Verification code")
+                    } footer: {
+                        Text(codeFooter)
+                            .foregroundStyle(.colorTextSecondary)
+                    }
+                }
+                Section {
+                    primaryButton
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(.colorBackgroundRaisedSecondary)
+            .navigationTitle("Add email")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    let cancelAction = { dismiss() }
+                    Button("Cancel", action: cancelAction)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private var codeFooter: String {
+        if let errorMessage { return errorMessage }
+        return "A 6-digit code was sent to \(address)."
+    }
+
+    @ViewBuilder
+    private var primaryButton: some View {
+        if codeSent {
+            let verifyAction: () -> Void = { verify() }
+            Button(action: verifyAction) {
+                centeredLabel("Verify")
+            }
+            .disabled(code.count < EmailCodeVerification.codeLength)
+        } else {
+            let sendAction: () -> Void = { codeSent = true }
+            Button(action: sendAction) {
+                centeredLabel("Send verification code")
+            }
+            .disabled(!isValidEmail)
+        }
+    }
+
+    private func centeredLabel(_ label: String) -> some View {
+        HStack {
+            Spacer()
+            Text(label)
+                .font(.body.weight(.semibold))
+            Spacer()
+        }
+    }
+
+    private var isValidEmail: Bool {
+        let trimmed: String = address.trimmingCharacters(in: .whitespaces)
+        guard let at = trimmed.firstIndex(of: "@") else { return false }
+        let local: Substring = trimmed[..<at]
+        let domain: Substring = trimmed[trimmed.index(after: at)...]
+        return !local.isEmpty && !domain.isEmpty && domain.contains(".")
+    }
+
+    private func verify() {
+        if EmailCodeVerification.isValid(code) {
+            onAdd(address.trimmingCharacters(in: .whitespaces))
+            dismiss()
+        } else {
+            attemptsLeft -= 1
+            code = ""
+            if attemptsLeft <= 0 {
+                codeSent = false
+                attemptsLeft = EmailCodeVerification.maxAttempts
+                errorMessage = nil
+            } else {
+                errorMessage = "Wrong code. \(attemptsLeft) attempts left."
+            }
+        }
+    }
+}
+
+/// Pop-up for adding one phone number. The country code is its own
+/// small field (defaulting to +1, the "+" maintained automatically)
+/// separate from the number. +1 numbers dash-format as 555-123-4567;
+/// other codes keep plain digits up to E.164's 15.
+private struct AddPhoneSheet: View {
+    @Environment(\.dismiss) private var dismiss: DismissAction
+    let onAdd: (String) -> Void
+
+    @State private var countryCode: String = "+1"
+    @State private var number: String = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack(spacing: DesignConstants.Spacing.step2x) {
+                        TextField("+1", text: countryCodeBinding)
+                            .keyboardType(.phonePad)
+                            .multilineTextAlignment(.center)
+                            .frame(width: 56.0)
+                            .foregroundStyle(.colorTextPrimary)
+                        Divider()
+                        TextField("555-123-4567", text: numberBinding)
+                            .textContentType(.telephoneNumber)
+                            .keyboardType(.phonePad)
+                            .foregroundStyle(.colorTextPrimary)
+                    }
+                } header: {
+                    Text("Phone")
+                }
+                Section {
+                    addButton
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(.colorBackgroundRaisedSecondary)
+            .navigationTitle("Add phone")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    let cancelAction = { dismiss() }
+                    Button("Cancel", action: cancelAction)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private var addButton: some View {
+        let addAction: () -> Void = {
+            onAdd("\(countryCode) \(number.trimmingCharacters(in: .whitespaces))")
+            dismiss()
+        }
+        return Button(action: addAction) {
+            HStack {
+                Spacer()
+                Text("Add phone")
+                    .font(.body.weight(.semibold))
+                Spacer()
+            }
+        }
+        .disabled(!canAdd)
+    }
+
+    /// Formats on every keystroke via the binding setter, so the dash
+    /// grouping can't be skipped by view-update timing.
+    private var numberBinding: Binding<String> {
+        Binding(
+            get: { number },
+            set: { newValue in number = formatNumber(newValue) }
+        )
+    }
+
+    /// Keeps the leading "+", digits only (codes are 1–3 digits), and
+    /// re-formats the number whenever the code changes.
+    private var countryCodeBinding: Binding<String> {
+        Binding(
+            get: { countryCode },
+            set: { newValue in
+                let digits: String = String(newValue.filter { $0.isNumber }.prefix(3))
+                countryCode = "+\(digits)"
+                number = formatNumber(number)
+            }
+        )
+    }
+
+    private var isUSCode: Bool {
+        countryCode == "+1"
+    }
+
+    /// US numbers must be the full 10 digits; other countries vary, so
+    /// anything from 5 digits up is accepted.
+    private var canAdd: Bool {
+        let codeDigits: Int = countryCode.filter(\.isNumber).count
+        let numberDigits: Int = number.filter(\.isNumber).count
+        guard codeDigits >= 1 else { return false }
+        return isUSCode ? numberDigits == 10 : numberDigits >= 5
+    }
+
+    /// Dash-format for +1; plain digits (E.164 cap) for everything else.
+    private func formatNumber(_ raw: String) -> String {
         let digits: String = String(raw.filter { $0.isNumber })
-        guard countryCode == defaultCountryCode else {
+        guard isUSCode else {
             return String(digits.prefix(15))
         }
+        return Self.dashFormat(digits)
+    }
+
+    /// Group up to 10 digits as XXX-XXX-XXXX.
+    private static func dashFormat(_ digits: String) -> String {
         let capped: String = String(digits.prefix(10))
         var result: String = ""
         for (index, character) in capped.enumerated() {
@@ -1711,154 +1922,208 @@ private struct PersonEditorSheet: View {
         }
         return result
     }
-
-    /// Split a stored phone ("+1 555-123-4567") back into its country code
-    /// and a freshly-formatted local number. Falls back to the default code.
-    private static func parsePhone(_ stored: String) -> (countryCode: String, localNumber: String) {
-        let trimmed: String = stored.trimmingCharacters(in: .whitespaces)
-        let parts = trimmed.split(separator: " ", maxSplits: 1)
-        guard trimmed.hasPrefix("+"), parts.count == 2 else {
-            return (defaultCountryCode, formatPhone(trimmed, countryCode: defaultCountryCode))
-        }
-        let code: String = String(parts[0])
-        return (code, formatPhone(String(parts[1]), countryCode: code))
-    }
-
-    private func sendVerificationCodes() {
-        var firstSentID: UUID?
-        for index in emails.indices where emails[index].status == .draft {
-            let trimmed: String = emails[index].address.trimmingCharacters(in: .whitespaces)
-            guard isValidEmailAddress(trimmed) else { continue }
-            emails[index].address = trimmed
-            emails[index].status = .awaiting
-            emails[index].code = ""
-            emails[index].attemptsLeft = EmailCodeVerification.maxAttempts
-            if firstSentID == nil { firstSentID = emails[index].id }
-        }
-        if let first = firstSentID {
-            openVerificationDialog(for: first)
-        }
-    }
-
-    private func openVerificationDialog(for emailID: UUID) {
-        verifyingEmailID = emailID
-        verificationCode = ""
-        verificationError = nil
-        startResendCooldown()
-    }
-
-    private func submitVerificationCode() {
-        guard let id = verifyingEmailID,
-              let index = emails.firstIndex(where: { $0.id == id }) else { return }
-        if EmailCodeVerification.isValid(verificationCode) {
-            emails[index].status = .verified
-            emails[index].code = ""
-            verifyingEmailID = nil
-            verificationCode = ""
-            verificationError = nil
-            // Auto-open the next awaiting email if any.
-            if let next = emails.first(where: { $0.status == .awaiting }) {
-                openVerificationDialog(for: next.id)
-            }
-        } else {
-            emails[index].attemptsLeft -= 1
-            verificationCode = ""
-            if emails[index].attemptsLeft <= 0 {
-                emails[index].status = .exhausted
-                verifyingEmailID = nil
-                verificationError = nil
-            } else {
-                verificationError = "Wrong code. \(emails[index].attemptsLeft) attempts left."
-            }
-        }
-    }
-
-    private func resendCode() {
-        guard let id = verifyingEmailID,
-              let index = emails.firstIndex(where: { $0.id == id }) else { return }
-        emails[index].attemptsLeft = EmailCodeVerification.maxAttempts
-        emails[index].code = ""
-        verificationCode = ""
-        verificationError = nil
-        startResendCooldown()
-    }
-
-    private func cancelVerification() {
-        verifyingEmailID = nil
-        verificationCode = ""
-        verificationError = nil
-    }
-
-    private func startResendCooldown() {
-        resendCooldown = 60
-        Task { @MainActor in
-            while resendCooldown > 0 {
-                try? await Task.sleep(for: .seconds(1))
-                resendCooldown -= 1
-            }
-        }
-    }
-
-    private func deleteEmails(at offsets: IndexSet) {
-        emails.remove(atOffsets: offsets)
-    }
-
-    private func isValidEmailAddress(_ raw: String) -> Bool {
-        let trimmed: String = raw.trimmingCharacters(in: .whitespaces)
-        guard let at = trimmed.firstIndex(of: "@") else { return false }
-        let local: Substring = trimmed[..<at]
-        let domain: Substring = trimmed[trimmed.index(after: at)...]
-        return !local.isEmpty && !domain.isEmpty && domain.contains(".")
-    }
 }
 
-/// Per-row state for an email in the person editor. `LabeledEmail` is
-/// the persisted shape; `EditableEmail` adds the transient
-/// verification state — code typed so far, attempts remaining, what
-/// stage the row is in — that exists only while the sheet is open.
-private struct EditableEmail: Identifiable, Equatable {
-    var id: UUID
-    var address: String
-    var status: Status
-    var code: String
-    var attemptsLeft: Int
-    /// Preserved so an existing email loaded in edit mode round-trips
-    /// without losing its on-disk label, even though we no longer
-    /// surface labels in the UI.
-    var label: EmailLabel
+/// Pop-up for adding one mailing address, matching the email / phone
+/// pop-ups. Country sits at the top and drives which fields appear and
+/// what they're called (e.g. ZIP vs Postcode, postal-before-city for
+/// Germany / Japan), so international addresses enter naturally. The
+/// result is stored as a single line.
+private struct AddAddressSheet: View {
+    @Environment(\.dismiss) private var dismiss: DismissAction
+    let onAdd: (String) -> Void
 
-    enum Status: Equatable {
-        case draft       // user is typing the address, no code sent yet
-        case awaiting    // code dispatched, awaiting code entry
-        case verified    // correct code entered
-        case exhausted   // all attempts used, needs a resend
+    /// One country's address-entry shape. This is the single config to
+    /// edit when adding country support: the picker entry (flag + name),
+    /// the field labels, the field ordering, and the postal keyboard all
+    /// derive from a row here. Keep "United States" first; list every
+    /// other country alphabetically. A country is either supported here
+    /// or not offered at all.
+    private struct CountryFormat {
+        let flag: String
+        let name: String
+        let cityLabel: String
+        /// nil = the country's addresses don't use a region field.
+        let regionLabel: String?
+        let postalLabel: String
+        /// Postal code is written before the city (Germany, France, Japan…).
+        let postalBeforeCity: Bool
+        /// Postal codes are digits-only — opens the number pad.
+        let numericPostal: Bool
     }
 
-    static func draft() -> EditableEmail {
-        EditableEmail(
-            id: UUID(),
-            address: "",
-            status: .draft,
-            code: "",
-            attemptsLeft: EmailCodeVerification.maxAttempts,
-            label: .other
-        )
+    private static let formats: [CountryFormat] = [
+        CountryFormat(flag: "🇺🇸", name: "United States", cityLabel: "City", regionLabel: "State", postalLabel: "ZIP code", postalBeforeCity: false, numericPostal: true),
+        CountryFormat(flag: "🇦🇺", name: "Australia", cityLabel: "Suburb", regionLabel: "State", postalLabel: "Postcode", postalBeforeCity: false, numericPostal: true),
+        CountryFormat(flag: "🇨🇦", name: "Canada", cityLabel: "City", regionLabel: "Province", postalLabel: "Postal code", postalBeforeCity: false, numericPostal: false),
+        CountryFormat(flag: "🇫🇷", name: "France", cityLabel: "City", regionLabel: nil, postalLabel: "Postal code", postalBeforeCity: true, numericPostal: true),
+        CountryFormat(flag: "🇩🇪", name: "Germany", cityLabel: "City", regionLabel: nil, postalLabel: "Postal code", postalBeforeCity: true, numericPostal: true),
+        CountryFormat(flag: "🇯🇵", name: "Japan", cityLabel: "City", regionLabel: "Prefecture", postalLabel: "Postal code", postalBeforeCity: true, numericPostal: true),
+        CountryFormat(flag: "🇲🇽", name: "Mexico", cityLabel: "City", regionLabel: "State", postalLabel: "Postal code", postalBeforeCity: true, numericPostal: true),
+        CountryFormat(flag: "🇬🇧", name: "United Kingdom", cityLabel: "Town / City", regionLabel: nil, postalLabel: "Postcode", postalBeforeCity: false, numericPostal: false)
+    ]
+
+    @State private var country: String = "United States"
+    @State private var showingCountryPicker: Bool = false
+    @State private var line1: String = ""
+    @State private var city: String = ""
+    @State private var region: String = ""
+    @State private var postal: String = ""
+
+    private var format: CountryFormat {
+        Self.formats.first(where: { $0.name == country }) ?? Self.formats[0]
     }
 
-    static func fromLabeled(_ stored: LabeledEmail) -> EditableEmail {
-        EditableEmail(
-            id: stored.id,
-            address: stored.address,
-            status: stored.verified ? .verified : .draft,
-            code: "",
-            attemptsLeft: EmailCodeVerification.maxAttempts,
-            label: stored.label
-        )
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    countryRow
+                    TextField("Address", text: $line1)
+                        .textContentType(.fullStreetAddress)
+                    if format.postalBeforeCity {
+                        postalField
+                        regionField
+                        cityField
+                    } else {
+                        cityField
+                        regionField
+                        postalField
+                    }
+                } header: {
+                    Text("Address")
+                }
+                Section {
+                    addButton
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(.colorBackgroundRaisedSecondary)
+            .navigationTitle("Add address")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    let cancelAction = { dismiss() }
+                    Button("Cancel", action: cancelAction)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
-    var toLabeled: LabeledEmail? {
-        guard status == .verified else { return nil }
-        return LabeledEmail(id: id, address: address, label: label, verified: true)
+    private var countryRow: some View {
+        let tapAction: () -> Void = { showingCountryPicker = true }
+        return Button(action: tapAction) {
+            HStack {
+                Text("Country")
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+                Text("\(format.flag) \(format.name)")
+                    .foregroundStyle(.colorTextSecondary)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.colorTextTertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showingCountryPicker) {
+            countryPickerSheet
+        }
+    }
+
+    private var countryPickerSheet: some View {
+        NavigationStack {
+            List {
+                ForEach(Self.formats, id: \.name) { entry in
+                    countryPickerRow(entry)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(.colorBackgroundRaisedSecondary)
+            .navigationTitle("Country")
+            .toolbarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    let cancelAction = { showingCountryPicker = false }
+                    Button("Cancel", action: cancelAction)
+                }
+            }
+        }
+        // A medium detent steals the list's scroll gesture to resize the
+        // sheet; scrolling must win here, so prefer it explicitly and
+        // keep the sheet at full height.
+        .presentationDetents([.large])
+        .presentationContentInteraction(.scrolls)
+    }
+
+    private func countryPickerRow(_ entry: CountryFormat) -> some View {
+        let selectAction: () -> Void = {
+            country = entry.name
+            showingCountryPicker = false
+        }
+        return Button(action: selectAction) {
+            HStack {
+                Text("\(entry.flag) \(entry.name)")
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+                if entry.name == country {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(.colorFillPrimary)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var cityField: some View {
+        TextField(format.cityLabel, text: $city)
+            .textContentType(.addressCity)
+    }
+
+    @ViewBuilder
+    private var regionField: some View {
+        if let regionLabel = format.regionLabel {
+            TextField(regionLabel, text: $region)
+                .textContentType(.addressState)
+        }
+    }
+
+    private var postalField: some View {
+        let keyboard: UIKeyboardType = format.numericPostal ? .numberPad : .default
+        return TextField(format.postalLabel, text: $postal)
+            .textContentType(.postalCode)
+            .keyboardType(keyboard)
+    }
+
+    private var addButton: some View {
+        let addAction: () -> Void = {
+            onAdd(singleLine)
+            dismiss()
+        }
+        return Button(action: addAction) {
+            HStack {
+                Spacer()
+                Text("Add address")
+                    .font(.body.weight(.semibold))
+                Spacer()
+            }
+        }
+        .disabled(line1.trimmingCharacters(in: .whitespaces).isEmpty)
+    }
+
+    /// Compose the parts in the country's reading order, skipping blanks.
+    private var singleLine: String {
+        let includeRegion: Bool = format.regionLabel != nil
+        let middle: [String] = format.postalBeforeCity
+            ? [postal, includeRegion ? region : "", city]
+            : [city, includeRegion ? region : "", postal]
+        let parts: [String] = [line1] + middle + [country]
+        return parts
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
     }
 }
 
@@ -2019,6 +2284,7 @@ private struct ReferralCreditSheet: View {
     @State private var referralInput: String = ""
     @State private var resultMessage: String?
     @State private var showingResult: Bool = false
+    @State private var showingShareQR: Bool = false
     @FocusState private var isInputFocused: Bool
 
     private var myCode: String {
@@ -2065,7 +2331,7 @@ private struct ReferralCreditSheet: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Copy referral code \(myCode)")
 
-                    Text("Get a $50 credit for every new paying client.")
+                    Text("$50 credit for every paying client.")
                         .font(.footnote)
                         .foregroundStyle(.colorTextSecondary)
 
@@ -2135,6 +2401,17 @@ private struct ReferralCreditSheet: View {
                     let cancelAction = { dismiss() }
                     Button("Done", action: cancelAction)
                 }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    let showShareQR = { showingShareQR = true }
+                    Button(action: showShareQR) {
+                        Image(systemName: "qrcode")
+                    }
+                    .accessibilityLabel("Show invite QR code")
+                }
+            }
+            .sheet(isPresented: $showingShareQR) {
+                AppShareQRSheet()
             }
             .onAppear { if !hasAppliedReferralCode { isInputFocused = true } }
             .alert("Referral", isPresented: $showingResult) {

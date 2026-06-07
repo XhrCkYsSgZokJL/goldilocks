@@ -591,6 +591,10 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         try await apiClient.confirmGoldilocksPaymentMethod(sessionId: sessionId)
     }
 
+    public func removeGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        try await apiClient.removeGoldilocksPaymentMethod()
+    }
+
     public func claimGoldilocksReferral(code: String) async throws {
         try await apiClient.claimGoldilocksReferral(code: code)
     }

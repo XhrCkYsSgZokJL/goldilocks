@@ -9,8 +9,14 @@
     "footerCredit": "Modified in private by Goldilocks Digital"
   },
   "groups": {
-    "client": ["Advisory", "Back Office"],
-    "admin": ["Admins", "Audit Log"]
+    "client": [
+      "Advisory",
+      "Back Office"
+    ],
+    "admin": [
+      "Admins",
+      "Audit Log"
+    ]
   },
   "groupIcons": {
     "Admins": "shield.lefthalf.filled",
@@ -44,29 +50,45 @@
     "styles": {
       "bronze": {
         "colorHex": "#B87333",
-        "colorRGB": [0.72, 0.45, 0.20],
+        "colorRGB": [
+          0.72,
+          0.45,
+          0.2
+        ],
         "icon": "seal.fill"
       },
       "silver": {
         "colorHex": "#858A99",
-        "colorRGB": [0.52, 0.55, 0.60],
+        "colorRGB": [
+          0.52,
+          0.55,
+          0.6
+        ],
         "icon": "seal.fill"
       },
       "gold": {
         "colorHex": "#CC9C21",
-        "colorRGB": [0.80, 0.61, 0.13],
+        "colorRGB": [
+          0.8,
+          0.61,
+          0.13
+        ],
         "icon": "seal.fill"
       },
       "emerald": {
         "colorHex": "#339E66",
-        "colorRGB": [0.20, 0.62, 0.40],
+        "colorRGB": [
+          0.2,
+          0.62,
+          0.4
+        ],
         "icon": "diamond.fill"
       }
     },
     "descriptions": {
       "bronze": "A free private briefing.",
-      "silver": "One or more memberships.",
-      "gold": "Four or more memberships.",
+      "silver": "Coverage for 1+ people",
+      "gold": "Coverage for 4+ people",
       "emerald": "Awarded directly by Goldilocks."
     }
   },

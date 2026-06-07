@@ -101,18 +101,24 @@ struct SeatMember: Codable, Identifiable, Equatable {
     /// be present + verified for the person to count as added; further
     /// emails track their own verified state independently.
     var emails: [LabeledEmail]
-    var phone: String
-    var address: PersonAddress
+    /// Phone numbers, stored already formatted ("+1 555-123-4567").
+    var phones: [String]
+    /// Single-line mailing addresses.
+    var addresses: [String]
     /// Admin-controlled kill switch. Defaults to `true` for newly
     /// verified people. When an admin disables a person the backend
     /// unsubscribes them from the third-party service; flipping it back
     /// on resubscribes.
     var enabled: Bool
     /// SF Symbol name shown as the person's avatar/adornment in the people
-    /// list. Picked (or shuffled) in the person editor.
+    /// list. Picked in the person editor.
     var icon: String
+    /// Palette name for the icon tint ("blue", "green", …) — mapped to a
+    /// SwiftUI color at display time.
+    var iconColor: String
 
     static let defaultIcon: String = "person.circle.fill"
+    static let defaultIconColor: String = "blue"
 
     init(
         id: UUID = UUID(),
@@ -120,20 +126,22 @@ struct SeatMember: Codable, Identifiable, Equatable {
         middleName: String = "",
         lastName: String = "",
         emails: [LabeledEmail] = [],
-        phone: String = "",
-        address: PersonAddress = PersonAddress(),
+        phones: [String] = [],
+        addresses: [String] = [],
         enabled: Bool = true,
-        icon: String = SeatMember.defaultIcon
+        icon: String = SeatMember.defaultIcon,
+        iconColor: String = SeatMember.defaultIconColor
     ) {
         self.id = id
         self.firstName = firstName
         self.middleName = middleName
         self.lastName = lastName
         self.emails = emails
-        self.phone = phone
-        self.address = address
+        self.phones = phones
+        self.addresses = addresses
         self.enabled = enabled
         self.icon = icon
+        self.iconColor = iconColor
     }
 
     /// Concatenated first / middle / last, skipping blanks so a
@@ -161,14 +169,14 @@ struct SeatMember: Codable, Identifiable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, firstName, middleName, lastName, emails, phone, address, enabled, icon
+        case id, firstName, middleName, lastName, emails, phones, addresses, enabled, icon, iconColor
     }
 
     /// Keys that don't map to a stored property, used only by the decoder
     /// to detect legacy on-disk shapes. Kept separate from `CodingKeys`
     /// so Swift's synthesized `encode(to:)` doesn't try to encode them.
     private enum LegacyKeys: String, CodingKey {
-        case name, email, approvalStatus
+        case name, email, approvalStatus, phone, address
     }
 
     init(from decoder: any Decoder) throws {
@@ -207,8 +215,22 @@ struct SeatMember: Codable, Identifiable, Equatable {
             }
         }
 
-        self.phone = try container.decodeIfPresent(String.self, forKey: .phone) ?? ""
-        self.address = try container.decodeIfPresent(PersonAddress.self, forKey: .address) ?? PersonAddress()
+        // Phones / addresses are lists now. Older rows carried a single
+        // `phone` string and a structured `address`; migrate both into
+        // one-element lists (the address flattened to a single line).
+        if container.contains(.phones) {
+            self.phones = try container.decodeIfPresent([String].self, forKey: .phones) ?? []
+        } else {
+            let legacyPhone: String = (try? legacyContainer.decodeIfPresent(String.self, forKey: .phone)) ?? ""
+            self.phones = legacyPhone.isEmpty ? [] : [legacyPhone]
+        }
+        if container.contains(.addresses) {
+            self.addresses = try container.decodeIfPresent([String].self, forKey: .addresses) ?? []
+        } else {
+            let legacyAddress: PersonAddress? = try? legacyContainer.decodeIfPresent(PersonAddress.self, forKey: .address)
+            let line: String = legacyAddress?.singleLine ?? ""
+            self.addresses = line.isEmpty ? [] : [line]
+        }
 
         // Older shapes carried an `approvalStatus` field and used
         // `enabled` only as the admin's kill switch on top of an
@@ -226,6 +248,7 @@ struct SeatMember: Codable, Identifiable, Equatable {
         }
 
         self.icon = try container.decodeIfPresent(String.self, forKey: .icon) ?? SeatMember.defaultIcon
+        self.iconColor = try container.decodeIfPresent(String.self, forKey: .iconColor) ?? SeatMember.defaultIconColor
     }
 
     /// Best-effort split of a legacy single-string name into first /

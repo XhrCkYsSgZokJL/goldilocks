@@ -761,10 +761,10 @@ private struct AdvisoryPersonSheet: View {
             Form {
                 identitySection
                 emailsSection
-                if !member.phone.isEmpty {
+                if !member.phones.isEmpty {
                     phoneSection
                 }
-                if !member.address.isEmpty {
+                if !member.addresses.isEmpty {
                     addressSection
                 }
                 enabledSection
@@ -842,19 +842,23 @@ private struct AdvisoryPersonSheet: View {
 
     private var phoneSection: some View {
         Section {
-            LabeledContent("Phone") {
-                Text(member.phone)
+            ForEach(member.phones, id: \.self) { phone in
+                Text(phone)
                     .foregroundStyle(.colorTextSecondary)
             }
+        } header: {
+            Text("Phones")
         }
     }
 
     private var addressSection: some View {
         Section {
-            Text(member.address.singleLine)
-                .foregroundStyle(.colorTextSecondary)
+            ForEach(member.addresses, id: \.self) { line in
+                Text(line)
+                    .foregroundStyle(.colorTextSecondary)
+            }
         } header: {
-            Text("Address")
+            Text("Addresses")
         }
     }
 

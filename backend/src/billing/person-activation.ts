@@ -95,11 +95,26 @@ async function activatePerson(
 
   const now = new Date();
   const needsInitialReport: boolean = !existing?.initialReportSentAt;
+  const isEmerald: boolean = client.emeraldMembershipEnabled;
+
+  // Emerald clients are billed externally — no card, no $100 fee, no
+  // Stripe subscription — but their granted seat allowance is enforced.
+  if (isEmerald) {
+    const [row] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(coveredPersons)
+      .where(and(eq(coveredPersons.clientId, clientId), eq(coveredPersons.enabled, true)));
+    const enabledCount: number = row?.count ?? 0;
+    if (enabledCount >= client.emeraldSeatLimit) {
+      throw new Error('seat_limit_reached');
+    }
+  }
 
   // Charge the $100 fee only the first time a person is enabled. A person
-  // who already paid (initialFeePaidAt set) re-enables for free.
+  // who already paid (initialFeePaidAt set) re-enables for free; Emerald
+  // people never pay through Stripe at all.
   const alreadyPaid: boolean = existing?.initialFeePaidAt != null;
-  const chargeCents: number = alreadyPaid ? 0 : INITIAL_REPORT_FEE_CENTS;
+  const chargeCents: number = isEmerald || alreadyPaid ? 0 : INITIAL_REPORT_FEE_CENTS;
 
   if (chargeCents > 0) {
     await chargeInitialReportFee(client); // throws 'no_payment_method' if no card on file
@@ -109,8 +124,15 @@ async function activatePerson(
 
   // New people are covered by the $100 until the 1st of the month after
   // next. Free re-enables rejoin recurring billing on the next 1st.
-  const recurringStart: Date = alreadyPaid ? nextMonthStart(now) : recurringStartsAt(now);
-  const feePaidAt: Date | null = alreadyPaid ? (existing?.initialFeePaidAt ?? null) : now;
+  // Emerald people never enter the subscription quantity.
+  let recurringStart: Date | null = null;
+  let feePaidAt: Date | null = existing?.initialFeePaidAt ?? null;
+  if (!isEmerald) {
+    recurringStart = alreadyPaid ? nextMonthStart(now) : recurringStartsAt(now);
+    if (!alreadyPaid) {
+      feePaidAt = now;
+    }
+  }
 
   if (existing) {
     await db
