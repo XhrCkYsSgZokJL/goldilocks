@@ -76,7 +76,7 @@ private struct AddFromContactsPickerModifier: ViewModifier {
         viewModel.requestAgentJoins(templateIds: agentTemplateIds)
         let ids = Array(inboxIds)
         guard !ids.isEmpty else { return }
-        Task {
+        Task { @MainActor in
             do {
                 try await viewModel.addMembersFromContacts(ids)
             } catch {
