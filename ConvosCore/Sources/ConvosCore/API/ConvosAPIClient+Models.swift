@@ -263,6 +263,563 @@ public enum ConvosAPI {
         }
     }
 
+    // MARK: - Goldilocks identity registration (SIWE)
+
+    public struct GoldilocksChallengeRequest: Codable {
+        public let inboxId: String
+        public let ethAddress: String
+    }
+
+    public struct GoldilocksChallengeResponse: Codable {
+        public let siweMessage: String
+        public let nonce: String
+        public let expiresAt: String
+    }
+
+    public struct GoldilocksMeRequest: Codable {
+        public let inboxId: String
+        public let siweMessage: String
+        public let signature: String
+        /// iOS sets this to `true` on builds whose role is `.admin`,
+        /// so the backend can promote the inbox to admin in the same
+        /// transaction as the client row creation. That ordering makes
+        /// `admin_changed` arrive at the agent before
+        /// `client_registered`, which means reports-agent never creates
+        /// a Reports group for an admin in the first place. Backend
+        /// ignores this flag in production (gate via env var).
+        public let claimAdminRole: Bool
+
+        public init(inboxId: String, siweMessage: String, signature: String, claimAdminRole: Bool) {
+            self.inboxId = inboxId
+            self.siweMessage = siweMessage
+            self.signature = signature
+            self.claimAdminRole = claimAdminRole
+        }
+    }
+
+    public struct GoldilocksMeResponse: Codable, Sendable {
+        public let clientNumber: Int64
+        public let isAdmin: Bool
+        public let inboxId: String
+        /// Admin-controlled Emerald membership flag for this client.
+        /// Default false so older backend responses (pre-migration 015)
+        /// still decode cleanly. Emerald clients get the Emerald tier
+        /// regardless of seats / coverage, and the Membership screen
+        /// hides the "Add coverage" purchase flow + enables Invoices.
+        public let emeraldMembershipEnabled: Bool
+        public let referralCode: String?
+        public let referralCreditCents: Int
+        public let payingReferralCount: Int
+        public let hasAppliedReferralCode: Bool
+
+        public init(
+            clientNumber: Int64,
+            isAdmin: Bool,
+            inboxId: String,
+            emeraldMembershipEnabled: Bool = false,
+            referralCode: String? = nil,
+            referralCreditCents: Int = 0,
+            payingReferralCount: Int = 0,
+            hasAppliedReferralCode: Bool = false
+        ) {
+            self.clientNumber = clientNumber
+            self.isAdmin = isAdmin
+            self.inboxId = inboxId
+            self.emeraldMembershipEnabled = emeraldMembershipEnabled
+            self.referralCode = referralCode
+            self.referralCreditCents = referralCreditCents
+            self.payingReferralCount = payingReferralCount
+            self.hasAppliedReferralCode = hasAppliedReferralCode
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case clientNumber, isAdmin, inboxId, emeraldMembershipEnabled, referralCode, referralCreditCents, payingReferralCount, hasAppliedReferralCode
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.clientNumber = try container.decode(Int64.self, forKey: .clientNumber)
+            self.isAdmin = try container.decode(Bool.self, forKey: .isAdmin)
+            self.inboxId = try container.decode(String.self, forKey: .inboxId)
+            self.emeraldMembershipEnabled = try container.decodeIfPresent(Bool.self, forKey: .emeraldMembershipEnabled) ?? false
+            self.referralCode = try container.decodeIfPresent(String.self, forKey: .referralCode)
+            self.referralCreditCents = try container.decodeIfPresent(Int.self, forKey: .referralCreditCents) ?? 0
+            self.payingReferralCount = try container.decodeIfPresent(Int.self, forKey: .payingReferralCount) ?? 0
+            self.hasAppliedReferralCode = try container.decodeIfPresent(Bool.self, forKey: .hasAppliedReferralCode) ?? false
+        }
+    }
+
+    public struct GoldilocksAdminInbox: Codable, Sendable {
+        public let inboxId: String
+        public let name: String?
+    }
+
+    public struct GoldilocksAdminsResponse: Codable, Sendable {
+        public let inboxes: [GoldilocksAdminInbox]
+    }
+
+    // MARK: - Goldilocks server agents
+
+    public struct GoldilocksAgent: Codable, Sendable {
+        public let kind: String       // "admins" | "reports"
+        public let inboxId: String
+    }
+
+    public struct GoldilocksAgentsResponse: Codable, Sendable {
+        public let agents: [GoldilocksAgent]
+        /// xmtpGroupId of the cross-admin "Admins" coordination group, or
+        /// nil if the admins-agent hasn't created it yet (no admins
+        /// promoted). Admin iOS clients merge this into
+        /// `GoldilocksOwnedChannels` so the group passes the staleness
+        /// filter on the conversations list.
+        public let adminsGroupId: String?
+        /// xmtpGroupId of the cross-admin "Alerts" feed where client
+        /// reports get cross-posted. Same membership shape as Admins.
+        /// Null until the admins-agent creates it (after the first
+        /// admin is promoted).
+        public let alertsGroupId: String?
+    }
+
+    // MARK: - Goldilocks channel lifecycle
+
+    public struct GoldilocksChannelResponse: Codable, Sendable {
+        public let role: String
+        public let xmtpGroupId: String
+        public let status: String
+    }
+
+    public struct GoldilocksChannel: Codable, Sendable {
+        public let role: String
+        public let xmtpGroupId: String?
+        public let status: String                 // "active" | "exploded"
+        public let createdAt: String
+        public let explodedAt: String?
+        public let recreatedAt: String?
+    }
+
+    public struct GoldilocksChannelsListResponse: Codable, Sendable {
+        public let clientNumber: Int64
+        public let channels: [GoldilocksChannel]
+        /// The roles every client should eventually have ("advisory",
+        /// "reports"). The agents provision channels asynchronously, so
+        /// `channels` can be a partial set right after registration —
+        /// this is the full target the client waits for. Optional so an
+        /// older backend that omits it still decodes.
+        public let expectedRoles: [String]?
+
+        public init(
+            clientNumber: Int64,
+            channels: [GoldilocksChannel],
+            expectedRoles: [String]? = nil
+        ) {
+            self.clientNumber = clientNumber
+            self.channels = channels
+            self.expectedRoles = expectedRoles
+        }
+    }
+
+    /// One row in the admin's view of all clients' channels. Admins use
+    /// `clientNumber` as the human-readable identifier ("Advisory #55").
+    public struct GoldilocksAdminChannel: Codable, Sendable {
+        public let clientNumber: Int64
+        public let clientInboxId: String
+        public let role: String
+        public let xmtpGroupId: String?
+        public let status: String
+        public let createdAt: String
+        public let explodedAt: String?
+        public let recreatedAt: String?
+        /// The client's current monthly spend in cents — drives the
+        /// Bronze/Silver/Gold membership tier shown in the admin view.
+        public let monthlyRateCents: Int
+        /// Whether the client currently has active prepaid coverage. A
+        /// client only reaches Silver or Gold while this is true.
+        public let coverageActive: Bool
+        /// Admin-controlled Emerald override. When true, the tier is
+        /// Emerald regardless of `monthlyRateCents` / `coverageActive`.
+        public let emeraldMembershipEnabled: Bool
+    }
+
+    /// Body for `POST /v2/admin/clients/:inboxId/emerald` — admins
+    /// toggle a client's Emerald membership status.
+    public struct GoldilocksEmeraldToggleRequest: Codable, Sendable {
+        public let enabled: Bool
+        public init(enabled: Bool) { self.enabled = enabled }
+    }
+
+    /// Response for the Emerald toggle endpoint. `changed` is false
+    /// when the requested state matched what was already stored.
+    public struct GoldilocksEmeraldToggleResponse: Codable, Sendable {
+        public let clientNumber: Int64
+        public let emeraldMembershipEnabled: Bool
+        public let changed: Bool
+    }
+
+    public struct GoldilocksAdminChannelsResponse: Codable, Sendable {
+        public let channels: [GoldilocksAdminChannel]
+    }
+
+    // MARK: - Goldilocks admin stats dashboard
+
+    /// Per-tier client counts (and per-tier MRR) for the admin Stats page.
+    public struct GoldilocksStatsTierCounts: Codable, Sendable {
+        public let bronze: Int
+        public let silver: Int
+        public let gold: Int
+        public let emerald: Int
+
+        public init(bronze: Int, silver: Int, gold: Int, emerald: Int) {
+            self.bronze = bronze
+            self.silver = silver
+            self.gold = gold
+            self.emerald = emerald
+        }
+    }
+
+    /// One bar of the seat-distribution histogram. A `seats` value of 4
+    /// represents the "4+" bucket.
+    public struct GoldilocksStatsSeatBucket: Codable, Sendable, Identifiable {
+        public let seats: Int
+        public let clients: Int
+
+        public var id: Int { seats }
+
+        public init(seats: Int, clients: Int) {
+            self.seats = seats
+            self.clients = clients
+        }
+    }
+
+    /// Coverage state breakdown: live coverage, client-paused, or
+    /// enabled-but-never-started.
+    public struct GoldilocksStatsCoverage: Codable, Sendable {
+        public let active: Int
+        public let paused: Int
+        public let none: Int
+
+        public init(active: Int, paused: Int, none: Int) {
+            self.active = active
+            self.paused = paused
+            self.none = none
+        }
+    }
+
+    public struct GoldilocksStatsReferrals: Codable, Sendable {
+        public let total: Int
+        public let paying: Int
+        public let creditIssuedCents: Int
+
+        public init(total: Int, paying: Int, creditIssuedCents: Int) {
+            self.total = total
+            self.paying = paying
+            self.creditIssuedCents = creditIssuedCents
+        }
+    }
+
+    /// One point of the cumulative-screenings trend. `date` is a UTC
+    /// calendar day, "YYYY-MM-DD".
+    public struct GoldilocksStatsTrendPoint: Codable, Sendable, Identifiable {
+        public let date: String
+        public let cumulative: Int
+
+        public var id: String { date }
+
+        public init(date: String, cumulative: Int) {
+            self.date = date
+            self.cumulative = cumulative
+        }
+    }
+
+    /// Response for `GET /v2/admin/stats` — an aggregate, point-in-time
+    /// snapshot powering the admin-only Stats dashboard.
+    public struct GoldilocksAdminStatsResponse: Codable, Sendable {
+        public let totalClients: Int
+        public let newClientsThisMonth: Int
+        public let clientsWithActiveCoverage: Int
+        public let totalCoveredPeople: Int
+        public let membershipsTotal: Int
+        public let mrrCents: Int
+        public let totalBalanceCents: Int
+        public let clientsByTier: GoldilocksStatsTierCounts
+        public let mrrByTierCents: GoldilocksStatsTierCounts
+        public let lifetimeRevenueCents: Int
+        public let refundedCents: Int
+        public let seatDistribution: [GoldilocksStatsSeatBucket]
+        public let coverage: GoldilocksStatsCoverage
+        public let referrals: GoldilocksStatsReferrals
+        public let screeningTrend: [GoldilocksStatsTrendPoint]
+        public let asOf: String
+
+        public init(
+            totalClients: Int,
+            newClientsThisMonth: Int,
+            clientsWithActiveCoverage: Int,
+            totalCoveredPeople: Int,
+            membershipsTotal: Int,
+            mrrCents: Int,
+            totalBalanceCents: Int,
+            clientsByTier: GoldilocksStatsTierCounts,
+            mrrByTierCents: GoldilocksStatsTierCounts,
+            lifetimeRevenueCents: Int,
+            refundedCents: Int,
+            seatDistribution: [GoldilocksStatsSeatBucket],
+            coverage: GoldilocksStatsCoverage,
+            referrals: GoldilocksStatsReferrals,
+            screeningTrend: [GoldilocksStatsTrendPoint],
+            asOf: String
+        ) {
+            self.totalClients = totalClients
+            self.newClientsThisMonth = newClientsThisMonth
+            self.clientsWithActiveCoverage = clientsWithActiveCoverage
+            self.totalCoveredPeople = totalCoveredPeople
+            self.membershipsTotal = membershipsTotal
+            self.mrrCents = mrrCents
+            self.totalBalanceCents = totalBalanceCents
+            self.clientsByTier = clientsByTier
+            self.mrrByTierCents = mrrByTierCents
+            self.lifetimeRevenueCents = lifetimeRevenueCents
+            self.refundedCents = refundedCents
+            self.seatDistribution = seatDistribution
+            self.coverage = coverage
+            self.referrals = referrals
+            self.screeningTrend = screeningTrend
+            self.asOf = asOf
+        }
+    }
+
+    // MARK: - Goldilocks billing (Stripe prepaid balance)
+
+    /// Body for `POST /v2/billing/checkout` — deposit funds into the
+    /// prepaid balance. The amount is in cents, must be a multiple of $100.
+    public struct GoldilocksCheckoutRequest: Codable, Sendable {
+        public let paymentMethod: String   // "card" | "crypto"
+        public let amountCents: Int
+
+        public init(paymentMethod: String, amountCents: Int) {
+            self.paymentMethod = paymentMethod
+            self.amountCents = amountCents
+        }
+    }
+
+    public struct GoldilocksCheckoutResponse: Codable, Sendable {
+        /// Hosted Stripe Checkout URL the app opens in the browser.
+        public let checkoutUrl: String
+        /// Stripe Checkout Session id, for status reconciliation.
+        public let sessionId: String
+
+        public init(checkoutUrl: String, sessionId: String) {
+            self.checkoutUrl = checkoutUrl
+            self.sessionId = sessionId
+        }
+    }
+
+    /// Body for `POST /v2/billing/seats` — pushes the current seat count so
+    /// the backend can re-settle the balance and move the coverage date.
+    public struct GoldilocksSeatsRequest: Codable, Sendable {
+        public let seats: Int
+
+        public init(seats: Int) {
+            self.seats = seats
+        }
+    }
+
+    public struct GoldilocksBillingStatusResponse: Codable, Sendable {
+        public let activeUntil: String?
+        public let coverageActive: Bool
+        public let coverageEnabled: Bool
+        public let balanceCents: Int
+        public let monthlyRateCents: Int
+        public let seats: Int
+        public let coveredPeople: Int
+        public let reportDay: String
+
+        public init(
+            activeUntil: String?,
+            coverageActive: Bool = false,
+            coverageEnabled: Bool = true,
+            balanceCents: Int,
+            monthlyRateCents: Int,
+            seats: Int,
+            coveredPeople: Int = 0,
+            reportDay: String = "1st"
+        ) {
+            self.activeUntil = activeUntil
+            self.coverageActive = coverageActive
+            self.coverageEnabled = coverageEnabled
+            self.balanceCents = balanceCents
+            self.monthlyRateCents = monthlyRateCents
+            self.seats = seats
+            self.coveredPeople = coveredPeople
+            self.reportDay = reportDay
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            activeUntil = try container.decodeIfPresent(String.self, forKey: .activeUntil)
+            coverageActive = try container.decodeIfPresent(Bool.self, forKey: .coverageActive) ?? false
+            coverageEnabled = try container.decodeIfPresent(Bool.self, forKey: .coverageEnabled) ?? true
+            balanceCents = try container.decode(Int.self, forKey: .balanceCents)
+            monthlyRateCents = try container.decode(Int.self, forKey: .monthlyRateCents)
+            seats = try container.decode(Int.self, forKey: .seats)
+            coveredPeople = try container.decodeIfPresent(Int.self, forKey: .coveredPeople) ?? 0
+            reportDay = try container.decodeIfPresent(String.self, forKey: .reportDay) ?? "1st"
+        }
+    }
+
+    public struct GoldilocksReportDayRequest: Codable, Sendable {
+        public let reportDay: String
+
+        public init(reportDay: String) {
+            self.reportDay = reportDay
+        }
+    }
+
+    public struct GoldilocksCoverageToggleRequest: Codable, Sendable {
+        public let enabled: Bool
+
+        public init(enabled: Bool) {
+            self.enabled = enabled
+        }
+    }
+
+    public struct GoldilocksPersonToggleRequest: Codable, Sendable {
+        public let personId: String
+        public let displayName: String
+        public let enabled: Bool
+
+        public init(personId: String, displayName: String, enabled: Bool) {
+            self.personId = personId
+            self.displayName = displayName
+            self.enabled = enabled
+        }
+    }
+
+    public struct GoldilocksPersonToggleResponse: Codable, Sendable {
+        public let activeUntil: String?
+        public let coverageActive: Bool
+        public let coverageEnabled: Bool
+        public let balanceCents: Int
+        public let monthlyRateCents: Int
+        public let seats: Int
+        public let coveredPeople: Int
+        public let reportDay: String
+        public let activated: Bool
+        public let deductedCents: Int
+
+        public init(
+            activeUntil: String? = nil,
+            coverageActive: Bool = false,
+            coverageEnabled: Bool = true,
+            balanceCents: Int = 0,
+            monthlyRateCents: Int = 0,
+            seats: Int = 0,
+            coveredPeople: Int = 0,
+            reportDay: String = "1st",
+            activated: Bool = false,
+            deductedCents: Int = 0
+        ) {
+            self.activeUntil = activeUntil
+            self.coverageActive = coverageActive
+            self.coverageEnabled = coverageEnabled
+            self.balanceCents = balanceCents
+            self.monthlyRateCents = monthlyRateCents
+            self.seats = seats
+            self.coveredPeople = coveredPeople
+            self.reportDay = reportDay
+            self.activated = activated
+            self.deductedCents = deductedCents
+        }
+    }
+
+    /// Body for `POST /v2/billing/apple-purchase` — sends the StoreKit2
+    /// transaction to the backend for App Store Server API verification
+    /// and balance crediting.
+    public struct GoldilocksApplePurchaseRequest: Codable, Sendable {
+        public let transactionId: String
+        public let productId: String
+        public let amountCents: Int
+
+        public init(transactionId: String, productId: String, amountCents: Int) {
+            self.transactionId = transactionId
+            self.productId = productId
+            self.amountCents = amountCents
+        }
+    }
+
+    /// Result of `POST /v2/billing/cancel`.
+    public struct GoldilocksCancelResponse: Codable, Sendable {
+        /// How much was refunded to the card, in cents.
+        public let refundedCents: Int
+        /// How much was retained (current month, non-refundable), in cents.
+        public let retainedCents: Int
+
+        public init(refundedCents: Int, retainedCents: Int = 0) {
+            self.refundedCents = refundedCents
+            self.retainedCents = retainedCents
+        }
+    }
+
+    /// The encrypted people-list blob, from `GET /v2/me/people-list`. The
+    /// blob fields are AES-256-GCM ciphertext (base64); they are nil when
+    /// the client has no list yet (version 0).
+    public struct GoldilocksPeopleListResponse: Codable, Sendable {
+        public let version: Int
+        public let ciphertext: String?
+        public let salt: String?
+        public let nonce: String?
+
+        public init(version: Int, ciphertext: String?, salt: String?, nonce: String?) {
+            self.version = version
+            self.ciphertext = ciphertext
+            self.salt = salt
+            self.nonce = nonce
+        }
+    }
+
+    /// Body for `PUT /v2/me/people-list` — the re-encrypted blob plus the
+    /// version it was edited from (optimistic concurrency). `auditHint`
+    /// is only honoured by the admin variant of the endpoint; it tags
+    /// the write so the backend can post a narrative line ("Admin #N
+    /// enabled/disabled someone on Client #M") to the audit log
+    /// without ever seeing the plaintext list.
+    public struct GoldilocksPeopleListSaveRequest: Codable, Sendable {
+        public let ciphertext: String
+        public let salt: String
+        public let nonce: String
+        public let baseVersion: Int
+        public let auditHint: AuditHint?
+
+        public struct AuditHint: Codable, Sendable, Equatable {
+            public let action: String
+            public init(action: String) { self.action = action }
+            public static let enablePerson: AuditHint = AuditHint(action: "enable_person")
+            public static let disablePerson: AuditHint = AuditHint(action: "disable_person")
+        }
+
+        public init(
+            ciphertext: String,
+            salt: String,
+            nonce: String,
+            baseVersion: Int,
+            auditHint: AuditHint? = nil
+        ) {
+            self.ciphertext = ciphertext
+            self.salt = salt
+            self.nonce = nonce
+            self.baseVersion = baseVersion
+            self.auditHint = auditHint
+        }
+    }
+
+    /// Result of `PUT /v2/me/people-list` — the new stored version.
+    public struct GoldilocksPeopleListSaveResponse: Codable, Sendable {
+        public let version: Int
+
+        public init(version: Int) {
+            self.version = version
+        }
+    }
+
     // MARK: - Common Error Response
 
     public struct ErrorResponse: Codable {

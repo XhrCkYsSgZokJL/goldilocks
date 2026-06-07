@@ -791,7 +791,15 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
         stopRevocationObserver()
         await syncingManager?.pause()
 
-        try result.client.dropLocalDatabaseConnection()
+        // disabled-for-goldilocks: Convos drops the SQLCipher connection on
+        // background to free resources, and re-opens it on foreground. On
+        // iOS 26 Simulator the foreground notification fires unreliably right
+        // after launch (the app briefly backgrounds during launch settle),
+        // which leaves libxmtp's worker pool in a permanently disconnected
+        // state ("Failed to delete expired messages: PoolNeedsConnection").
+        // For dev we leave the connection open through background; the cost
+        // is negligible relative to the broken-app risk.
+        // try result.client.dropLocalDatabaseConnection()
 
         emitStateChange(.backgrounded(result))
         Log.info("Inbox backgrounded successfully")
@@ -1197,39 +1205,13 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
             do {
                 try Task.checkCancellation()
 
-                Log.debug("Getting Firebase AppCheck token...")
-                let appCheckToken = try await FirebaseHelperCore.getAppCheckToken()
-
-                try Task.checkCancellation()
-
-                // Default path: SIWE auth. Loads the on-device identity,
-                // signs an EIP-4361 message with its Ethereum private key,
-                // exchanges for a JWT containing `accountId`. Registering
-                // the signing context with the API client BEFORE the call
-                // is what makes the 401 re-auth path and every subsequent
-                // authenticated request use the SIWE slot — without this
-                // the API client would silently fall back to legacy
-                // device-only auth on token expiry.
-                if let identity = try await identityStore.load() {
-                    let signing = BackendAuthSigningContext.make(from: identity.keys.privateKey)
-                    apiClient.updateSIWESigningContext(signing)
-                    Log.debug("Authenticating with backend via SIWE (address \(signing.address))...")
-                    let token = try await apiClient.authenticateWithSIWE(
-                        appCheckToken: appCheckToken,
-                        signing: signing
-                    )
-                    let accountId = BackendAuthProbe.extractAccountId(from: token) ?? "?"
-                    Log.info("Successfully authenticated with backend (SIWE, address=\(signing.address), accountId=\(accountId))")
-                } else {
-                    // No on-device identity yet: clear any stale signing
-                    // context and fall back to the legacy device-only
-                    // path. SIWE will run on the next attempt once an
-                    // identity is provisioned.
-                    apiClient.updateSIWESigningContext(nil)
-                    Log.debug("No identity yet; falling back to legacy device-only auth...")
-                    _ = try await apiClient.authenticate(appCheckToken: appCheckToken, retryCount: 0)
-                    Log.info("Successfully authenticated with backend (legacy)")
-                }
+                // Goldilocks auth: no Firebase App Check. The Goldilocks
+                // SIWE handshake against our backend runs separately via
+                // SessionManager.registerWithGoldilocks; this path just
+                // obtains/stores the JWT.
+                Log.debug("Authenticating with backend and storing JWT...")
+                _ = try await apiClient.authenticate(retryCount: 0)
+                Log.info("Successfully authenticated with backend")
                 return
             } catch is CancellationError {
                 throw CancellationError()
@@ -1265,6 +1247,16 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
 
         let backgroundNotificationName = appLifecycle.didEnterBackgroundNotification
         let foregroundNotificationName = appLifecycle.willEnterForegroundNotification
+        // didBecomeActive is our safety net: on iOS 26 Simulator the
+        // willEnterForeground notification fires unreliably right after
+        // launch (the app briefly backgrounds during launch settle), which
+        // would otherwise leave the SyncingManager paused forever and
+        // welcomes from server-side agents permanently undelivered.
+        // didBecomeActive fires every time the app actually becomes the
+        // active foreground app, with no precondition on having been in
+        // background. The state machine's `enterForeground` transition
+        // is a no-op when we're already ready, so re-firing is safe.
+        let didBecomeActiveNotificationName = appLifecycle.didBecomeActiveNotification
         let notificationCenter = NotificationCenter.default
 
         appLifecycleTask = Task { [weak self] in
@@ -1279,6 +1271,13 @@ public actor SessionStateMachine: SessionStateManagerProtocol {
                 group.addTask { [weak self] in
                     let foregroundStream = notificationCenter.notifications(named: foregroundNotificationName)
                     for await _ in foregroundStream {
+                        await self?.enqueueAction(.enterForeground)
+                    }
+                }
+
+                group.addTask { [weak self] in
+                    let activeStream = notificationCenter.notifications(named: didBecomeActiveNotificationName)
+                    for await _ in activeStream {
                         await self?.enqueueAction(.enterForeground)
                     }
                 }

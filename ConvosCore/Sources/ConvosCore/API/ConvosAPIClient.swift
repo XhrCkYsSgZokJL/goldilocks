@@ -23,11 +23,17 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
                  method: String,
                  queryParameters: [String: String]?) throws -> URLRequest
 
-    /// Register device with AppCheck authentication (no JWT required - device-level operation)
+    /// Register device (no JWT required — device-level operation).
     func registerDevice(deviceId: String, pushToken: String?) async throws
 
-    func authenticate(appCheckToken: String,
-                      retryCount: Int) async throws -> String
+    func authenticate(retryCount: Int) async throws -> String
+
+    /// Revoke the saved refresh-token family on the backend and drop
+    /// both tokens from the local keychain. Idempotent — safe to call
+    /// even if no tokens are saved. Network failure does not block
+    /// local deletion; we prefer being signed-out-locally over staying
+    /// signed-in because the backend wasn't reachable at the moment.
+    func logout() async
 
     /// SIWE auth path. Fetches a nonce, has the caller sign an EIP-4361
     /// message, exchanges `(message, signature)` for a JWT containing
@@ -115,6 +121,54 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func getCreditBalance() async throws -> CreditBalance
     func getSubscription() async throws -> UserSubscription?
     func verifySubscription(jwsRepresentation: String) async throws -> UserSubscription
+    func initiateConnection(serviceId: String, redirectUri: String) async throws -> ConnectionsAPI.InitiateResponse
+    func completeConnection(connectionRequestId: String) async throws -> ConnectionsAPI.CompleteResponse
+    func listConnections() async throws -> [ConnectionsAPI.ConnectionResponse]
+    func revokeConnection(connectionId: String) async throws
+
+    // Goldilocks SIWE-based identity registration. The backend validates
+    // that the caller's eth_address is bound to the claimed inbox_id by
+    // querying the XMTP node, so other clients can't impersonate this
+    // inbox even if they steal the JWT.
+    func fetchGoldilocksChallenge(inboxId: String, ethAddress: String) async throws -> ConvosAPI.GoldilocksChallengeResponse
+    func registerWithGoldilocks(inboxId: String, siweMessage: String, signature: String, claimAdminRole: Bool) async throws -> ConvosAPI.GoldilocksMeResponse
+    func fetchGoldilocksMe() async throws -> ConvosAPI.GoldilocksMeResponse
+    func promoteSelfToAdminDev() async throws
+    func upgradeGoldilocksAdmin(code: String) async throws
+    func downgradeGoldilocksAdmin() async throws
+    func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse
+    func fetchGoldilocksAgents() async throws -> ConvosAPI.GoldilocksAgentsResponse
+    func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse
+    func fetchGoldilocksAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse
+    func setGoldilocksEmeraldMembership(
+        clientInboxId: String,
+        enabled: Bool
+    ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse
+
+    // Goldilocks channel lifecycle.
+    func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse
+    func markGoldilocksChannelExploded(role: String) async throws
+    func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse
+    func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse
+    func recoverGoldilocksChannels() async throws
+
+    // Goldilocks billing (Stripe prepaid balance + Apple IAP).
+    func createGoldilocksCheckout(_ request: ConvosAPI.GoldilocksCheckoutRequest) async throws -> ConvosAPI.GoldilocksCheckoutResponse
+    func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    func syncGoldilocksSeats(_ request: ConvosAPI.GoldilocksSeatsRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    func setGoldilocksReportDay(_ request: ConvosAPI.GoldilocksReportDayRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    func claimGoldilocksReferral(code: String) async throws
+    func toggleGoldilocksCoverage(_ request: ConvosAPI.GoldilocksCoverageToggleRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
+    func toggleGoldilocksPersonCoverage(_ request: ConvosAPI.GoldilocksPersonToggleRequest) async throws -> ConvosAPI.GoldilocksPersonToggleResponse
+    func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse
+    func verifyApplePurchase(_ request: ConvosAPI.GoldilocksApplePurchaseRequest) async throws
+
+    // Goldilocks people list (encrypted blob).
+    func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse
+    func saveGoldilocksPeopleList(_ request: ConvosAPI.GoldilocksPeopleListSaveRequest) async throws -> ConvosAPI.GoldilocksPeopleListSaveResponse
+    func fetchAdminPeopleList(clientInboxId: String) async throws -> ConvosAPI.GoldilocksPeopleListResponse
+    func saveAdminPeopleList(clientInboxId: String, _ request: ConvosAPI.GoldilocksPeopleListSaveRequest) async throws -> ConvosAPI.GoldilocksPeopleListSaveResponse
 }
 
 extension ConvosAPIClientProtocol {
@@ -135,13 +189,69 @@ extension ConvosAPIClientProtocol {
     ) async throws -> ConvosAPI.AgentJoinResponse {
         try await requestAgentJoin(slug: slug, templateId: templateId, options: nil, forceErrorCode: nil)
     }
+
+    /// Default billing stubs so mock/stub conformers compile without their
+    /// own implementations. The real `ConvosAPIClient` overrides them.
+    func createGoldilocksCheckout(_ request: ConvosAPI.GoldilocksCheckoutRequest) async throws -> ConvosAPI.GoldilocksCheckoutResponse {
+        throw APIError.notImplementedInGoldilocks
+    }
+
+    func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    func syncGoldilocksSeats(_ request: ConvosAPI.GoldilocksSeatsRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    func setGoldilocksReportDay(_ request: ConvosAPI.GoldilocksReportDayRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    func claimGoldilocksReferral(code: String) async throws {}
+
+    func toggleGoldilocksCoverage(_ request: ConvosAPI.GoldilocksCoverageToggleRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
+    }
+
+    func toggleGoldilocksPersonCoverage(_ request: ConvosAPI.GoldilocksPersonToggleRequest) async throws -> ConvosAPI.GoldilocksPersonToggleResponse {
+        ConvosAPI.GoldilocksPersonToggleResponse()
+    }
+
+    func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
+        ConvosAPI.GoldilocksCancelResponse(refundedCents: 0)
+    }
+
+    func verifyApplePurchase(_ request: ConvosAPI.GoldilocksApplePurchaseRequest) async throws {
+        // No-op for mocks
+    }
+
+    func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        ConvosAPI.GoldilocksPeopleListResponse(version: 0, ciphertext: nil, salt: nil, nonce: nil)
+    }
+
+    func saveGoldilocksPeopleList(_ request: ConvosAPI.GoldilocksPeopleListSaveRequest) async throws -> ConvosAPI.GoldilocksPeopleListSaveResponse {
+        ConvosAPI.GoldilocksPeopleListSaveResponse(version: request.baseVersion + 1)
+    }
+
+    func fetchAdminPeopleList(clientInboxId: String) async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        ConvosAPI.GoldilocksPeopleListResponse(version: 0, ciphertext: nil, salt: nil, nonce: nil)
+    }
+
+    func saveAdminPeopleList(clientInboxId: String, _ request: ConvosAPI.GoldilocksPeopleListSaveRequest) async throws -> ConvosAPI.GoldilocksPeopleListSaveResponse {
+        ConvosAPI.GoldilocksPeopleListSaveResponse(version: request.baseVersion + 1)
+    }
 }
 
 /// HTTP client for Convos backend API
 ///
 /// ConvosAPIClient provides both authenticated and unauthenticated access to the Convos backend, handling:
 /// - JWT authentication with automatic token refresh
-/// - Device registration with Firebase AppCheck
+/// - Device registration
 /// - Attachment uploads via S3 presigned URLs
 /// - Push notification topic subscriptions
 /// - Device and installation management
@@ -179,6 +289,21 @@ final class LockedSigningContext: @unchecked Sendable {
     func get() -> BackendAuthSigningContext? {
         lock.lock(); defer { lock.unlock() }
         return value
+/// Single-flight gate for token refresh. Concurrent 401 responses all
+/// await the same in-flight refresh task, so the backend never sees
+/// double-spend of a refresh token (which would otherwise trigger
+/// family revocation under our RFC 6819 §5.2.2.3 theft-detection rule).
+private actor TokenRefresher {
+    private var inflight: Task<String, Error>?
+
+    func refresh(_ work: @Sendable @escaping () async throws -> String) async throws -> String {
+        if let existing = inflight {
+            return try await existing.value
+        }
+        let task = Task { try await work() }
+        inflight = task
+        defer { inflight = nil }
+        return try await task.value
     }
 }
 
@@ -190,13 +315,28 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
     private let overrideJWTToken: String?  // Immutable JWT override from APNS payload
     let maxRetryCount: Int = 3
     let siweSigningContext: LockedSigningContext = .shared
+    private let maxRetryCount: Int = 3
+    private let tokenRefresher: TokenRefresher = .init()
 
     fileprivate init(environment: AppEnvironment, overrideJWTToken: String? = nil) {
         guard let apiBaseURL = URL(string: environment.apiBaseURL) else {
             fatalError("Failed constructing API base URL")
         }
         self.baseURL = apiBaseURL
-        self.session = URLSession(configuration: .default)
+        // Certificate pinning, when configured. `GoldilocksPinning` returns
+        // nil while no SPKI hashes are filled in; the client falls back to
+        // the OS-default URLSession in that case. First production release
+        // ships in `.shadow` mode (mismatches log to Sentry but don't
+        // break connections); flip to `.enforce` after a clean cycle.
+        if let pinner = GoldilocksPinning.defaultPinner(mode: .shadow) {
+            self.session = URLSession(
+                configuration: .default,
+                delegate: pinner,
+                delegateQueue: nil,
+            )
+        } else {
+            self.session = URLSession(configuration: .default)
+        }
         self.environment = environment
         self.overrideJWTToken = overrideJWTToken
     }
@@ -220,17 +360,14 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         return request
     }
 
-    /// Register device using AppCheck authentication
-    /// This is a device-level operation, not inbox-specific
+    /// Register device. Device-level operation, not inbox-specific. No JWT
+    /// or App Check — abuse on this endpoint is bounded by the backend's
+    /// per-route rate limit.
     func registerDevice(deviceId: String, pushToken: String?) async throws {
         let url = baseURL.appendingPathComponent("v2/device/register")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        // Get AppCheck token for authentication
-        let appCheckToken = try await FirebaseHelperCore.getAppCheckToken()
-        request.setValue(appCheckToken, forHTTPHeaderField: "X-Firebase-AppCheck")
 
         // Determine APNS environment and token type
         let apnsEnv: String?
@@ -294,7 +431,36 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         return try await authenticate(
             appCheckToken: firebaseAppCheckToken,
             retryCount: 0
+        return try await authenticate(retryCount: 0)
+    }
+
+    func logout() async {
+        let deviceId = DeviceInfo.deviceIdentifier
+        let savedRefresh = try? keychainService.retrieveString(
+            account: KeychainAccount.refreshToken(deviceId: deviceId)
         )
+
+        if let savedRefresh, !savedRefresh.isEmpty {
+            // Best-effort: tell the backend to revoke the family. We
+            // ignore the response — local deletion happens regardless,
+            // because the user has decided to sign out and a network
+            // error shouldn't strand them in a half-state.
+            do {
+                let url = baseURL.appendingPathComponent("v2/auth/logout")
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                struct LogoutBody: Encodable { let refreshToken: String }
+                request.httpBody = try JSONEncoder().encode(LogoutBody(refreshToken: savedRefresh))
+                _ = try await session.data(for: request)
+            } catch {
+                Log.warning("Logout call failed (\(error.localizedDescription)); clearing local tokens anyway")
+            }
+        }
+
+        try? keychainService.delete(account: KeychainAccount.jwt(deviceId: deviceId))
+        try? keychainService.delete(account: KeychainAccount.refreshToken(deviceId: deviceId))
+        SecurityLog.event(.authLogout, deviceId: deviceId)
     }
 
     func isJWTValid(_ token: String) -> Bool {
@@ -314,13 +480,10 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
 
     // MARK: - Authentication
 
-    /// Authenticates with the backend to obtain a JWT token
-    /// - Parameters:
-    ///   - appCheckToken: Firebase AppCheck token for authentication
-    ///   - retryCount: Number of retry attempts (for rate limiting)
-    /// - Returns: JWT token string
-    func authenticate(appCheckToken: String,
-                      retryCount: Int = 0) async throws -> String {
+    /// Authenticates with the backend to obtain a JWT token.
+    /// - Parameter retryCount: Number of retry attempts (for rate limiting).
+    /// - Returns: JWT token string.
+    func authenticate(retryCount: Int = 0) async throws -> String {
         let deviceId = DeviceInfo.deviceIdentifier
 
         // Check for existing valid JWT token first
@@ -345,7 +508,6 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
 
-        request.setValue(appCheckToken, forHTTPHeaderField: "X-Firebase-AppCheck")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         struct AuthRequest: Encodable {
@@ -377,8 +539,7 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
 
             // Sleep and then retry
             try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            return try await authenticate(appCheckToken: appCheckToken,
-                                          retryCount: retryCount + 1)
+            return try await authenticate(retryCount: retryCount + 1)
         }
 
         guard httpResponse.statusCode == 200 else {
@@ -387,18 +548,16 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
             throw APIError.authenticationFailed
         }
 
-        struct AuthResponse: Codable {
-            let token: String
-        }
-
-        let authResponse = try JSONDecoder().decode(AuthResponse.self, from: data)
-        try keychainService.saveString(
-            authResponse.token,
-            account: KeychainAccount.jwt(deviceId: deviceId)
-        )
-        Log.info("Successfully authenticated and stored JWT token")
+        let authResponse = try JSONDecoder().decode(AuthTokensResponse.self, from: data)
+        try saveAuthTokens(authResponse, deviceId: deviceId)
+        Log.info("Successfully authenticated and stored JWT + refresh tokens")
         return authResponse.token
     }
+
+    // MARK: - Refresh Tokens
+    //
+    // Implementation lives in the `ConvosAPIClient` extension below to
+    // keep the class body under SwiftLint's `type_body_length` ceiling.
 
     // MARK: - Private Helpers
 
@@ -518,7 +677,7 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         }
 
         guard overrideJWTToken == nil else {
-            Log.error("Authentication failed in JWT override mode - cannot re-authenticate without AppCheck")
+            Log.error("Authentication failed in JWT override mode - cannot re-authenticate")
             throw APIError.notAuthenticated
         }
 
@@ -527,8 +686,18 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
             throw APIError.notAuthenticated
         }
 
-        Log.info("Attempting re-authentication (attempt \(retryCount + 1) of \(maxRetryCount))")
-        let freshJWT = try await reAuthenticate()
+        Log.info("Attempting token refresh (attempt \(retryCount + 1) of \(maxRetryCount))")
+        let freshJWT = try await tokenRefresher.refresh { [self] in
+            // Prefer rotating the saved refresh token. Fall back to a
+            // full re-authentication (fresh family) only when the
+            // refresh token is missing, expired, or rejected.
+            do {
+                return try await refreshAccessToken()
+            } catch {
+                Log.info("Refresh-token rotation failed (\(error)); falling back to full re-auth")
+                return try await reAuthenticate()
+            }
+        }
         guard !freshJWT.isEmpty else {
             throw APIError.notAuthenticated
         }
@@ -785,33 +954,185 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         }
         let request = try request(for: "v2/agent-templates", queryParameters: queryParameters)
         return try await performRequest(request)
+    // MARK: - Invite Codes
+    //
+    // disabled-for-goldilocks: the original implementation called the Convos
+    // backend at /v2/invite-codes/{redeem,status}. Goldilocks Digital does not
+    // gate access behind invite codes, so these methods now return a synthetic
+    // "always-valid" status. To restore: revert this file via git, and bring
+    // back the corresponding backend endpoints.
+
+    func redeemInviteCode(_ code: String) async throws -> ConvosAPI.InviteCodeStatus {
+        let normalised = code.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return ConvosAPI.InviteCodeStatus(
+            code: normalised,
+            name: nil,
+            maxRedemptions: .max,
+            redemptionCount: 0,
+            remainingRedemptions: .max
+        )
+    }
+
+    func fetchInviteCodeStatus(_ code: String) async throws -> ConvosAPI.InviteCodeStatus {
+        let normalised = code.uppercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return ConvosAPI.InviteCodeStatus(
+            code: normalised,
+            name: nil,
+            maxRedemptions: .max,
+            redemptionCount: 0,
+            remainingRedemptions: .max
+        )
     }
 
     // MARK: - Connections
+    //
+    // disabled-for-goldilocks: the original implementation talked to a Composio-
+    // backed service for SaaS integrations (connect Slack/GitHub/etc). Goldilocks
+    // is a security product and doesn't ship third-party app integrations, so we
+    // stub these to no-ops. The cloud-connections UI is also gated by
+    // FeatureFlags.isCloudConnectionsEnabled which defaults to false.
+    // To restore: revert this method block and re-implement the corresponding
+    // backend endpoints under /api/v2/connections/*.
 
     func initiateCloudConnection(serviceId: String, redirectUri: String) async throws -> CloudConnectionsAPI.InitiateResponse {
         var request = try authenticatedRequest(for: "v2/connections/initiate", method: "POST")
+    func initiateConnection(serviceId: String, redirectUri: String) async throws -> ConnectionsAPI.InitiateResponse {
+        throw APIError.notImplementedInGoldilocks
+    }
+
+    func completeConnection(connectionRequestId: String) async throws -> ConnectionsAPI.CompleteResponse {
+        throw APIError.notImplementedInGoldilocks
+    }
+
+    func listConnections() async throws -> [ConnectionsAPI.ConnectionResponse] {
+        return []
+    }
+
+    func revokeConnection(connectionId: String) async throws {
+        // no-op
+    }
+
+    // MARK: - Goldilocks identity registration
+
+    func fetchGoldilocksChallenge(inboxId: String, ethAddress: String) async throws -> ConvosAPI.GoldilocksChallengeResponse {
+        var request = try authenticatedRequest(for: "v2/auth/challenge", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        struct InitiateBody: Codable {
-            let serviceId: String
-            let redirectUri: String
-        }
-        request.httpBody = try JSONEncoder().encode(
-            InitiateBody(serviceId: serviceId, redirectUri: redirectUri)
+        let body = ConvosAPI.GoldilocksChallengeRequest(inboxId: inboxId, ethAddress: ethAddress)
+        request.httpBody = try JSONEncoder().encode(body)
+
+        return try await performRequest(request)
+    }
+
+    func registerWithGoldilocks(inboxId: String, siweMessage: String, signature: String, claimAdminRole: Bool) async throws -> ConvosAPI.GoldilocksMeResponse {
+        var request = try authenticatedRequest(for: "v2/me", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body = ConvosAPI.GoldilocksMeRequest(
+            inboxId: inboxId,
+            siweMessage: siweMessage,
+            signature: signature,
+            claimAdminRole: claimAdminRole
         )
+        request.httpBody = try JSONEncoder().encode(body)
+
+        return try await performRequest(request)
+    }
+
+    func fetchGoldilocksMe() async throws -> ConvosAPI.GoldilocksMeResponse {
+        let request = try authenticatedRequest(for: "v2/me", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func promoteSelfToAdminDev() async throws {
+        var request = try authenticatedRequest(for: "v2/admin/promote-self", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([String: String]())
+        let _: EmptyResponse = try await performRequest(request)
+    }
+
+    func upgradeGoldilocksAdmin(code: String) async throws {
+        var request = try authenticatedRequest(for: "v2/admin/upgrade", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["code": code])
+        // Throws on non-2xx — a wrong code returns 403 and surfaces as
+        // an error the caller turns into "upgrade failed".
+        let _: EmptyResponse = try await performRequest(request)
+    }
+
+    func downgradeGoldilocksAdmin() async throws {
+        var request = try authenticatedRequest(for: "v2/admin/downgrade", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([String: String]())
+        let _: EmptyResponse = try await performRequest(request)
+    }
+
+    func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse {
+        let request = try authenticatedRequest(for: "v2/admins", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func fetchGoldilocksAgents() async throws -> ConvosAPI.GoldilocksAgentsResponse {
+        let request = try authenticatedRequest(for: "v2/agents", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse {
+        let request = try authenticatedRequest(for: "v2/admin/channels", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func fetchGoldilocksAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse {
+        let request = try authenticatedRequest(for: "v2/admin/stats", method: "GET")
+        return try await performRequest(request)
+    }
+
+    /// Toggle a client's admin-controlled Emerald membership flag.
+    /// Admin-only; the backend posts an "Admin #N enabled/disabled
+    /// Emerald membership for Client #M" line to the audit log on
+    /// any state change.
+    func setGoldilocksEmeraldMembership(
+        clientInboxId: String,
+        enabled: Bool
+    ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
+        var request = try authenticatedRequest(
+            for: "v2/admin/clients/\(clientInboxId)/emerald",
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            ConvosAPI.GoldilocksEmeraldToggleRequest(enabled: enabled)
+        )
+        return try await performRequest(request)
+    }
+
+    // MARK: - Goldilocks channel lifecycle
+
+    func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse {
+        var request = try authenticatedRequest(for: "v2/me/channels", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        struct Body: Codable { let role: String; let xmtpGroupId: String }
+        request.httpBody = try JSONEncoder().encode(Body(role: role, xmtpGroupId: xmtpGroupId))
 
         return try await performRequest(request)
     }
 
     func completeCloudConnection(connectionRequestId: String) async throws -> CloudConnectionsAPI.CompleteResponse {
         var request = try authenticatedRequest(for: "v2/connections/complete", method: "POST")
+    func markGoldilocksChannelExploded(role: String) async throws {
+        var request = try authenticatedRequest(for: "v2/me/channels/\(role)", method: "PATCH")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([String: String]())
+        let _: EmptyResponse = try await performRequest(request)
+    }
+
+    func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse {
+        var request = try authenticatedRequest(for: "v2/me/channels/\(role)/recreate", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        struct CompleteBody: Codable {
-            let connectionRequestId: String
-        }
-        request.httpBody = try JSONEncoder().encode(CompleteBody(connectionRequestId: connectionRequestId))
+        struct Body: Codable { let xmtpGroupId: String }
+        request.httpBody = try JSONEncoder().encode(Body(xmtpGroupId: xmtpGroupId))
 
         return try await performRequest(request)
     }
@@ -851,6 +1172,117 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         request.httpBody = try JSONEncoder().encode(body)
         let response: ConvosAPI.VerifySubscriptionResponse = try await performRequest(request)
         return response.subscription
+    func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse {
+        let request = try authenticatedRequest(for: "v2/me/channels", method: "GET")
+        return try await performRequest(request)
+    }
+
+    /// Ask the backend to fire `channels_recover` NOTIFY for this client.
+    /// The agent removes + re-adds us to each Advisory/Reports group,
+    /// generating fresh MLS welcomes that iOS picks up on next sync.
+    /// Used when local conversation count is below the active channel
+    /// count reported by `/v2/me/channels` — typically after a dropped
+    /// initial welcome or an installation rotation.
+    func recoverGoldilocksChannels() async throws {
+        var request = try authenticatedRequest(for: "v2/me/channels/recover", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([String: String]())
+        let _: EmptyResponse = try await performRequest(request)
+    }
+
+    // MARK: - Goldilocks billing
+
+    func createGoldilocksCheckout(_ checkout: ConvosAPI.GoldilocksCheckoutRequest) async throws -> ConvosAPI.GoldilocksCheckoutResponse {
+        var request = try authenticatedRequest(for: "v2/billing/checkout", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(checkout)
+        return try await performRequest(request)
+    }
+
+    func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        let request = try authenticatedRequest(for: "v2/billing/status", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func syncGoldilocksSeats(_ seats: ConvosAPI.GoldilocksSeatsRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        var request = try authenticatedRequest(for: "v2/billing/seats", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(seats)
+        return try await performRequest(request)
+    }
+
+    func setGoldilocksReportDay(_ reportDay: ConvosAPI.GoldilocksReportDayRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        var request = try authenticatedRequest(for: "v2/billing/report-day", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(reportDay)
+        return try await performRequest(request)
+    }
+
+    func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        let request = try authenticatedRequest(for: "v2/billing/checkout-status/\(sessionId)", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func claimGoldilocksReferral(code: String) async throws {
+        struct Body: Encodable { let referralCode: String }
+        var request = try authenticatedRequest(for: "v2/me/referral", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(Body(referralCode: code))
+        let _: EmptyResponse = try await performRequest(request)
+    }
+
+    func toggleGoldilocksCoverage(_ toggle: ConvosAPI.GoldilocksCoverageToggleRequest) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        var request = try authenticatedRequest(for: "v2/billing/coverage", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(toggle)
+        return try await performRequest(request)
+    }
+
+    func toggleGoldilocksPersonCoverage(_ toggle: ConvosAPI.GoldilocksPersonToggleRequest) async throws -> ConvosAPI.GoldilocksPersonToggleResponse {
+        var request = try authenticatedRequest(for: "v2/billing/person-toggle", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(toggle)
+        return try await performRequest(request)
+    }
+
+    func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
+        var request = try authenticatedRequest(for: "v2/billing/cancel", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([String: String]())
+        return try await performRequest(request)
+    }
+
+    func verifyApplePurchase(_ purchase: ConvosAPI.GoldilocksApplePurchaseRequest) async throws {
+        var request = try authenticatedRequest(for: "v2/billing/apple-purchase", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(purchase)
+        let _: EmptyResponse = try await performRequest(request)
+    }
+
+    // MARK: - Goldilocks people list
+
+    func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        let request = try authenticatedRequest(for: "v2/me/people-list", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func saveGoldilocksPeopleList(_ blob: ConvosAPI.GoldilocksPeopleListSaveRequest) async throws -> ConvosAPI.GoldilocksPeopleListSaveResponse {
+        var request = try authenticatedRequest(for: "v2/me/people-list", method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(blob)
+        return try await performRequest(request)
+    }
+
+    func fetchAdminPeopleList(clientInboxId: String) async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        let request = try authenticatedRequest(for: "v2/admin/clients/\(clientInboxId)/people-list", method: "GET")
+        return try await performRequest(request)
+    }
+
+    func saveAdminPeopleList(clientInboxId: String, _ blob: ConvosAPI.GoldilocksPeopleListSaveRequest) async throws -> ConvosAPI.GoldilocksPeopleListSaveResponse {
+        var request = try authenticatedRequest(for: "v2/admin/clients/\(clientInboxId)/people-list", method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(blob)
+        return try await performRequest(request)
     }
 
     // MARK: - Helper Methods
@@ -865,6 +1297,81 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
             }
         }
         return String(data: data, encoding: .utf8)
+    }
+}
+
+// MARK: - Refresh Tokens (extension)
+//
+// Pulled out of the main `ConvosAPIClient` body so the class stays under
+// SwiftLint's `type_body_length` ceiling. Same-file `private` access
+// means everything here still sees the class's private state.
+
+private extension ConvosAPIClient {
+    struct AuthTokensResponse: Codable {
+        let token: String
+        let refreshToken: String?
+        let refreshExpiresAt: String?
+    }
+
+    func saveAuthTokens(_ response: AuthTokensResponse, deviceId: String) throws {
+        try keychainService.saveString(
+            response.token,
+            account: KeychainAccount.jwt(deviceId: deviceId)
+        )
+        if let refresh = response.refreshToken, !refresh.isEmpty {
+            try keychainService.saveString(
+                refresh,
+                account: KeychainAccount.refreshToken(deviceId: deviceId)
+            )
+        }
+    }
+
+    /// Exchange the saved refresh token for a fresh access + refresh pair.
+    /// Throws `APIError.notAuthenticated` if there is no saved refresh
+    /// token, or if the backend rejects it (expired, invalid, or family
+    /// revoked due to replay). Callers should fall back to a full
+    /// `authenticate()` on failure.
+    func refreshAccessToken() async throws -> String {
+        let deviceId = DeviceInfo.deviceIdentifier
+        guard let savedRefresh = try? keychainService.retrieveString(
+            account: KeychainAccount.refreshToken(deviceId: deviceId)
+        ), !savedRefresh.isEmpty else {
+            throw APIError.notAuthenticated
+        }
+
+        let url = baseURL.appendingPathComponent("v2/auth/refresh")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        struct RefreshBody: Encodable { let refreshToken: String }
+        request.httpBody = try JSONEncoder().encode(RefreshBody(refreshToken: savedRefresh))
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        guard httpResponse.statusCode == 200 else {
+            // 401 from /v2/auth/refresh means the token is invalid,
+            // expired, or its family was revoked. Drop the saved refresh
+            // so we don't retry with a known-bad value. If the status
+            // indicates the backend explicitly revoked the family due to
+            // reuse, that's a critical security signal.
+            try? keychainService.delete(account: KeychainAccount.refreshToken(deviceId: deviceId))
+            let bodyText: String = String(data: data, encoding: .utf8) ?? ""
+            let isFamilyRevoked: Bool = bodyText.contains("refresh_token_reused")
+            SecurityLog.event(
+                isFamilyRevoked ? .authRefreshFamilyRevoked : .authRefreshRotationFailed,
+                severity: isFamilyRevoked ? .critical : .warn,
+                deviceId: deviceId,
+                context: ["status": String(httpResponse.statusCode)],
+            )
+            throw APIError.notAuthenticated
+        }
+        let parsed: AuthTokensResponse = try JSONDecoder().decode(AuthTokensResponse.self, from: data)
+        try saveAuthTokens(parsed, deviceId: deviceId)
+        SecurityLog.event(.authTokenRefreshed, deviceId: deviceId)
+        return parsed.token
     }
 }
 
@@ -886,6 +1393,10 @@ public enum APIError: Error {
     case agentPoolTimeout
     case agentProvisionFailed
     case templateArchived
+    case inviteCodeNotFound
+    case inviteCodeInvalidFormat
+    case inviteCodeFullyRedeemed
+    case notImplementedInGoldilocks
 }
 
 extension APIError: DisplayError {
@@ -921,6 +1432,15 @@ extension APIError: DisplayError {
             return "Couldn't add agent"
         case .templateArchived:
             return "Agent unavailable"
+            return "Couldn't add assistant"
+        case .inviteCodeNotFound:
+            return "Code not found"
+        case .inviteCodeInvalidFormat:
+            return "Invalid code"
+        case .inviteCodeFullyRedeemed:
+            return "Code already used up"
+        case .notImplementedInGoldilocks:
+            return "Not available"
         }
     }
 
@@ -956,6 +1476,15 @@ extension APIError: DisplayError {
             return "Something went wrong while adding an agent. Please try again."
         case .templateArchived:
             return "This agent has been archived and can't be added to a conversation."
+            return "Something went wrong while adding an assistant. Please try again."
+        case .inviteCodeNotFound:
+            return "No invite code found with that value."
+        case .inviteCodeInvalidFormat:
+            return "Code must be 8 letters."
+        case .inviteCodeFullyRedeemed:
+            return "That invite code has already been fully redeemed."
+        case .notImplementedInGoldilocks:
+            return "This feature isn't available in Goldilocks."
         }
     }
 }

@@ -924,7 +924,7 @@ extension MessagingService {
                 .fetchAll(db)
 
             if memberProfiles.isEmpty {
-                return "New Convo"
+                return "New Channel"
             }
 
             // Resolve each member like `Profile.formattedNamesString(memberNameOverride:)`:
@@ -975,11 +975,10 @@ extension MessagingService {
         }
     }
 
-    /// Resolves the name shown for a member in notification text, mirroring
-    /// `Profile.formattedNamesString(memberNameOverride:)`: the contact's
-    /// display name (the user's global profile snapshot for this inbox) wins
-    /// over the per-conversation profile name, and nameless members fall back
-    /// to "Agent" / "Somebody" keyed on the profile's agent flag.
+    /// Resolves the name shown for a member in notification text: the
+    /// contact's global display name wins, then the per-conversation profile
+    /// name, then the Goldilocks name registry (admin/agent names), and
+    /// nameless members fall back to "Agent" / "Somebody" by agent flag.
     static func notificationMemberDisplayName(
         db: Database,
         inboxId: String,
@@ -990,6 +989,9 @@ extension MessagingService {
         }
         let profile = try DBMemberProfile.fetchOne(db, conversationId: conversationId, inboxId: inboxId)
         if let name = profile?.name, !name.isEmpty { return name }
+        if let registryName = GoldilocksNameRegistry.displayName(forInboxId: inboxId) {
+            return registryName
+        }
         // Mirror `Profile.displayName`: known agents read as "Agent",
         // unknown / human profiles read as "Somebody".
         return profile?.isAgent == true ? "Agent" : "Somebody"
