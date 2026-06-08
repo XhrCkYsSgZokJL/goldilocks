@@ -20,7 +20,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.5.0"),
+        .package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.11.0"),
         .package(
             url: "https://github.com/xmtp/libxmtp.git",
             revision: "ios-4.10.0"
