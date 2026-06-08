@@ -153,6 +153,10 @@ export interface AdminChannel {
   monthlyRateCents: number;
   coverageActive: boolean;
   emeraldMembershipEnabled: boolean;
+  /** @swift default(0) */
+  emeraldSeatLimit: number;
+  /** @swift default(false) */
+  reviewOpen: boolean;
 }
 
 /** @swift GoldilocksAdminChannelsResponse */
@@ -231,6 +235,9 @@ export interface AdminStatsResponse {
 /** @swift GoldilocksEmeraldToggleRequest */
 export interface EmeraldToggleRequest {
   enabled: boolean;
+  /** How many people the Emerald client may enable. Omitted = unchanged. */
+  /** @swift optional */
+  seatLimit?: number;
 }
 
 /** @swift GoldilocksEmeraldToggleResponse */
@@ -238,6 +245,19 @@ export interface EmeraldToggleResponse {
   /** @swift Int64 */
   clientNumber: number;
   emeraldMembershipEnabled: boolean;
+  changed: boolean;
+}
+
+/** @swift GoldilocksReviewToggleRequest */
+export interface ReviewToggleRequest {
+  open: boolean;
+}
+
+/** @swift GoldilocksReviewToggleResponse */
+export interface ReviewToggleResponse {
+  /** @swift Int64 */
+  clientNumber: number;
+  reviewOpen: boolean;
   changed: boolean;
 }
 

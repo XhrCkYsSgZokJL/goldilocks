@@ -222,14 +222,24 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// admin Stats dashboard.
     func fetchAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse
 
-    /// Admin-only. Flip the Emerald membership flag on a client. The
+    /// Admin-only. Flip the Emerald membership flag on a client and,
+    /// optionally, set their people allowance (nil = unchanged). The
     /// backend posts an "Admin #N enabled/disabled Emerald membership
     /// for Client #M" line to the audit log when the flag actually
     /// changes.
     func setEmeraldMembership(
         clientInboxId: String,
-        enabled: Bool
+        enabled: Bool,
+        seatLimit: Int?
     ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse
+
+    /// Admin-only. Open or close a client review; the backend posts an
+    /// "Admin #N requested / closed Client #M review." audit line to the
+    /// Admins chat on any state change.
+    func setClientReview(
+        clientInboxId: String,
+        open: Bool
+    ) async throws -> ConvosAPI.GoldilocksReviewToggleResponse
 
     // MARK: Goldilocks channel lifecycle
 
@@ -467,11 +477,23 @@ extension SessionManagerProtocol {
 
     public func setEmeraldMembership(
         clientInboxId: String,
-        enabled: Bool
+        enabled: Bool,
+        seatLimit: Int?
     ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
         ConvosAPI.GoldilocksEmeraldToggleResponse(
             clientNumber: 0,
             emeraldMembershipEnabled: enabled,
+            changed: false
+        )
+    }
+
+    public func setClientReview(
+        clientInboxId: String,
+        open: Bool
+    ) async throws -> ConvosAPI.GoldilocksReviewToggleResponse {
+        ConvosAPI.GoldilocksReviewToggleResponse(
+            clientNumber: 0,
+            reviewOpen: open,
             changed: false
         )
     }

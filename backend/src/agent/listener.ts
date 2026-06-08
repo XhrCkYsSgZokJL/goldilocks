@@ -48,7 +48,7 @@ export interface PeopleListChangedPayload {
 // a tracked change. The admins-agent formats the payload into a
 // narrative line and posts it to the alerts group.
 export interface AuditEventPayload {
-  kind: 'emerald_enable' | 'emerald_disable' | 'people_enable' | 'people_disable';
+  kind: 'emerald_enable' | 'emerald_disable' | 'people_enable' | 'people_disable' | 'review_requested' | 'review_closed';
   admin_number: number;
   client_number: number;
 }

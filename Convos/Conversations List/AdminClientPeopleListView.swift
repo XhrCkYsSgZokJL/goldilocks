@@ -123,7 +123,8 @@ struct AdminClientPeopleListView: View {
         do {
             let response = try await session.setEmeraldMembership(
                 clientInboxId: channel.clientInboxId,
-                enabled: newValue
+                enabled: newValue,
+                seatLimit: nil
             )
             emeraldEnabled = response.emeraldMembershipEnabled
         } catch {
@@ -198,8 +199,8 @@ struct AdminClientPeopleListView: View {
                     .font(.caption)
                     .foregroundStyle(.colorTextSecondary)
             }
-            ForEach(member.addresses, id: \.self) { line in
-                Text(line)
+            ForEach(member.addresses, id: \.self) { address in
+                Text(address.display)
                     .font(.caption)
                     .foregroundStyle(.colorTextSecondary)
             }

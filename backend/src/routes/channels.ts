@@ -304,6 +304,8 @@ export default async function channelRoutes(app: FastifyInstance) {
         billingSeats: clients.billingSeats,
         billingBalanceAsOf: clients.billingBalanceAsOf,
         emeraldMembershipEnabled: clients.emeraldMembershipEnabled,
+        emeraldSeatLimit: clients.emeraldSeatLimit,
+        reviewOpen: clients.reviewOpen,
         coveredPeople: clients.coveredPeople,
         lastBalanceTickAt: clients.lastBalanceTickAt,
         coverageEnabled: clients.coverageEnabled,
@@ -325,6 +327,8 @@ export default async function channelRoutes(app: FastifyInstance) {
         monthlyRateCents: monthlyTotalCents(r.billingSeats),
         coverageActive: isCoverageActive(r),
         emeraldMembershipEnabled: r.emeraldMembershipEnabled,
+        emeraldSeatLimit: r.emeraldSeatLimit,
+        reviewOpen: r.reviewOpen,
         role: r.role,
         xmtpGroupId: r.xmtpGroupId,
         status: r.status,
@@ -347,8 +351,9 @@ export default async function channelRoutes(app: FastifyInstance) {
   const EmeraldBody = z.object({
     enabled: z.boolean(),
     // How many people the Emerald client may enable (billed externally).
-    // Optional; omitted = leave the current limit untouched.
-    seatLimit: z.number().int().min(0).max(999).optional(),
+    // Minimum 1. Optional; omitted = leave the current limit untouched
+    // (or default to 1 when activating with no limit set yet).
+    seatLimit: z.number().int().min(1).max(999).optional(),
   });
   app.post<{ Params: { inboxId: string } }>(
     '/v2/admin/clients/:inboxId/emerald',
@@ -364,7 +369,12 @@ export default async function channelRoutes(app: FastifyInstance) {
       }
       const targetInboxId: string = req.params.inboxId;
       const [target] = await db
-        .select({ id: clients.id, clientNumber: clients.clientNumber, current: clients.emeraldMembershipEnabled })
+        .select({
+          id: clients.id,
+          clientNumber: clients.clientNumber,
+          current: clients.emeraldMembershipEnabled,
+          currentLimit: clients.emeraldSeatLimit,
+        })
         .from(clients)
         .where(eq(clients.inboxId, targetInboxId))
         .limit(1);
@@ -380,28 +390,93 @@ export default async function channelRoutes(app: FastifyInstance) {
           changed: false,
         });
       }
+      // The limit is at least 1 once Emerald is active: explicit values
+      // win, otherwise activating with no allowance yet defaults to 1.
+      let newLimit: number | undefined = parsed.data.seatLimit;
+      if (newLimit === undefined && parsed.data.enabled && target.currentLimit < 1) {
+        newLimit = 1;
+      }
       await db
         .update(clients)
         .set({
           emeraldMembershipEnabled: parsed.data.enabled,
-          ...(parsed.data.seatLimit !== undefined ? { emeraldSeatLimit: parsed.data.seatLimit } : {}),
+          ...(newLimit !== undefined ? { emeraldSeatLimit: newLimit } : {}),
         })
         .where(eq(clients.id, target.id));
 
-      // Best-effort audit emit. If admin-number resolution fails
-      // (e.g. the caller was just demoted in a race), still return
-      // success — the DB change has landed.
+      // Best-effort audit emit, and only when the Emerald flag itself
+      // flipped — seat-limit-only updates shouldn't spam the audit log.
+      // If admin-number resolution fails (e.g. the caller was just
+      // demoted in a race), still return success — the DB change landed.
+      if (target.current !== parsed.data.enabled) {
+        const adminNumber: number | null = await adminNumberForInbox(caller.inboxId);
+        if (adminNumber !== null) {
+          await emitAuditEvent({
+            kind: parsed.data.enabled ? 'emerald_enable' : 'emerald_disable',
+            admin_number: adminNumber,
+            client_number: target.clientNumber,
+          });
+        }
+      }
+      return reply.code(200).send({
+        clientNumber: target.clientNumber,
+        emeraldMembershipEnabled: parsed.data.enabled,
+        changed: true,
+      });
+    },
+  );
+
+  // -------------------------------------------------------------------
+  // POST /v2/admin/clients/:inboxId/review — open or close a client
+  // review. Posts an "Admin #N requested / closed Client #M review."
+  // line to the Admins chat on any state change.
+  // -------------------------------------------------------------------
+  const ReviewBody = z.object({ open: z.boolean() });
+  app.post<{ Params: { inboxId: string } }>(
+    '/v2/admin/clients/:inboxId/review',
+    async (req, reply) => {
+      const caller = await resolveCaller(req, reply);
+      if (!caller) return;
+      if (!caller.isAdmin) {
+        return reply.code(403).send({ error: 'not_admin' });
+      }
+      const parsed = ReviewBody.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: 'invalid_body', details: parsed.error.flatten() });
+      }
+      const targetInboxId: string = req.params.inboxId;
+      const [target] = await db
+        .select({ id: clients.id, clientNumber: clients.clientNumber, current: clients.reviewOpen })
+        .from(clients)
+        .where(eq(clients.inboxId, targetInboxId))
+        .limit(1);
+      if (!target) {
+        return reply.code(404).send({ error: 'client_not_found' });
+      }
+      // No-op fast path — don't write or audit when nothing changes.
+      if (target.current === parsed.data.open) {
+        return reply.code(200).send({
+          clientNumber: target.clientNumber,
+          reviewOpen: parsed.data.open,
+          changed: false,
+        });
+      }
+      await db
+        .update(clients)
+        .set({ reviewOpen: parsed.data.open })
+        .where(eq(clients.id, target.id));
+
       const adminNumber: number | null = await adminNumberForInbox(caller.inboxId);
       if (adminNumber !== null) {
         await emitAuditEvent({
-          kind: parsed.data.enabled ? 'emerald_enable' : 'emerald_disable',
+          kind: parsed.data.open ? 'review_requested' : 'review_closed',
           admin_number: adminNumber,
           client_number: target.clientNumber,
         });
       }
       return reply.code(200).send({
         clientNumber: target.clientNumber,
-        emeraldMembershipEnabled: parsed.data.enabled,
+        reviewOpen: parsed.data.open,
         changed: true,
       });
     },

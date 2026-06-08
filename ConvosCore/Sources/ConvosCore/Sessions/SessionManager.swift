@@ -715,11 +715,25 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
     /// flag actually changed.
     public func setEmeraldMembership(
         clientInboxId: String,
-        enabled: Bool
+        enabled: Bool,
+        seatLimit: Int?
     ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
         try await apiClient.setGoldilocksEmeraldMembership(
             clientInboxId: clientInboxId,
-            enabled: enabled
+            enabled: enabled,
+            seatLimit: seatLimit
+        )
+    }
+
+    /// Admin: open or close a client review. The backend posts the
+    /// audit line to the Admins chat on any state change.
+    public func setClientReview(
+        clientInboxId: String,
+        open: Bool
+    ) async throws -> ConvosAPI.GoldilocksReviewToggleResponse {
+        try await apiClient.setGoldilocksClientReview(
+            clientInboxId: clientInboxId,
+            open: open
         )
     }
 

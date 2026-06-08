@@ -89,8 +89,13 @@ public protocol ConvosAPIClientProtocol: AnyObject, Sendable {
     func fetchGoldilocksAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse
     func setGoldilocksEmeraldMembership(
         clientInboxId: String,
-        enabled: Bool
+        enabled: Bool,
+        seatLimit: Int?
     ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse
+    func setGoldilocksClientReview(
+        clientInboxId: String,
+        open: Bool
+    ) async throws -> ConvosAPI.GoldilocksReviewToggleResponse
 
     // Goldilocks channel lifecycle.
     func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse
@@ -909,7 +914,8 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
     /// any state change.
     func setGoldilocksEmeraldMembership(
         clientInboxId: String,
-        enabled: Bool
+        enabled: Bool,
+        seatLimit: Int?
     ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
         var request = try authenticatedRequest(
             for: "v2/admin/clients/\(clientInboxId)/emerald",
@@ -917,7 +923,25 @@ final class ConvosAPIClient: ConvosAPIClientProtocol, Sendable {
         )
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(
-            ConvosAPI.GoldilocksEmeraldToggleRequest(enabled: enabled)
+            ConvosAPI.GoldilocksEmeraldToggleRequest(enabled: enabled, seatLimit: seatLimit)
+        )
+        return try await performRequest(request)
+    }
+
+    /// Open or close a client review. Admin-only; the backend posts an
+    /// "Admin #N requested / closed Client #M review." audit line on any
+    /// state change.
+    func setGoldilocksClientReview(
+        clientInboxId: String,
+        open: Bool
+    ) async throws -> ConvosAPI.GoldilocksReviewToggleResponse {
+        var request = try authenticatedRequest(
+            for: "v2/admin/clients/\(clientInboxId)/review",
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            ConvosAPI.GoldilocksReviewToggleRequest(open: open)
         )
         return try await performRequest(request)
     }

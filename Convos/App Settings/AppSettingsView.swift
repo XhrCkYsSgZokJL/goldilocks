@@ -651,7 +651,7 @@ struct MembershipView: View {
                         .font(.caption)
                         .foregroundStyle(.colorTextSecondary)
                     if isEmerald, emeraldSeatLimit > 0 {
-                        Text("Add up to \(emeraldSeatLimit) people.")
+                        Text("Add up to \(emeraldSeatLimit) people to your membership.")
                             .font(.caption)
                             .foregroundStyle(.colorTextSecondary)
                     }
@@ -1020,7 +1020,7 @@ struct MembershipView: View {
                         Text(rowLabel)
                             .font(.body)
                             .foregroundStyle(.colorTextPrimary)
-                        let summary: String = contactSummary(for: member)
+                        let summary: String = member.contactSummary
                         if !summary.isEmpty {
                             Text(summary)
                                 .font(.caption)
@@ -1034,26 +1034,6 @@ struct MembershipView: View {
             .buttonStyle(.plain)
             memberToggle(for: member)
         }
-    }
-
-    /// One-line summary of what's on file for a person, e.g.
-    /// "3 emails, 2 phones, 1 address". Zero-count items are skipped.
-    private func contactSummary(for member: SeatMember) -> String {
-        var parts: [String] = []
-        if !member.emails.isEmpty {
-            parts.append(countLabel(member.emails.count, singular: "email", plural: "emails"))
-        }
-        if !member.phones.isEmpty {
-            parts.append(countLabel(member.phones.count, singular: "phone", plural: "phones"))
-        }
-        if !member.addresses.isEmpty {
-            parts.append(countLabel(member.addresses.count, singular: "address", plural: "addresses"))
-        }
-        return parts.joined(separator: ", ")
-    }
-
-    private func countLabel(_ count: Int, singular: String, plural: String) -> String {
-        count == 1 ? "1 \(singular)" : "\(count) \(plural)"
     }
 
     private func memberToggle(for member: SeatMember) -> some View {
@@ -1349,11 +1329,15 @@ private struct PersonEditorSheet: View {
     @State private var lastName: String
     @State private var emails: [LabeledEmail]
     @State private var phones: [String]
-    @State private var addresses: [String]
+    @State private var addresses: [StoredAddress]
     @State private var showingRemoveConfirm: Bool = false
-    @State private var showingAddEmail: Bool = false
-    @State private var showingAddPhone: Bool = false
-    @State private var showingAddAddress: Bool = false
+    // Item-based sheet contexts: `index` nil = adding a new entry;
+    // otherwise the pop-up edits that entry, pre-populated with its
+    // current value. Item presentation guarantees the pop-up sees the
+    // tapped row's data (isPresented sheets can capture stale state).
+    @State private var emailSheet: EntryEditContext?
+    @State private var phoneSheet: EntryEditContext?
+    @State private var addressSheet: AddressEditContext?
 
     private let originalMember: SeatMember?
 
@@ -1418,19 +1402,32 @@ private struct PersonEditorSheet: View {
             } message: {
                 Text("They'll stop counting toward your coverage and be unsubscribed from the service.")
             }
-            .sheet(isPresented: $showingAddEmail) {
-                AddEmailSheet { added in
-                    emails.append(LabeledEmail(address: added, label: .other, verified: true))
+            .sheet(item: $emailSheet) { context in
+                AddEmailSheet(initialAddress: context.initialValue) { added in
+                    let email = LabeledEmail(address: added, label: .other, verified: true)
+                    if let index = context.index, emails.indices.contains(index) {
+                        emails[index] = email
+                    } else {
+                        emails.append(email)
+                    }
                 }
             }
-            .sheet(isPresented: $showingAddPhone) {
-                AddPhoneSheet { added in
-                    phones.append(added)
+            .sheet(item: $phoneSheet) { context in
+                AddPhoneSheet(initialPhone: context.initialValue) { added in
+                    if let index = context.index, phones.indices.contains(index) {
+                        phones[index] = added
+                    } else {
+                        phones.append(added)
+                    }
                 }
             }
-            .sheet(isPresented: $showingAddAddress) {
-                AddAddressSheet { added in
-                    addresses.append(added)
+            .sheet(item: $addressSheet) { context in
+                AddAddressSheet(initial: context.initial) { added in
+                    if let index = context.index, addresses.indices.contains(index) {
+                        addresses[index] = added
+                    } else {
+                        addresses.append(added)
+                    }
                 }
             }
         }
@@ -1551,48 +1548,94 @@ private struct PersonEditorSheet: View {
     private var emailsSection: some View {
         Section {
             ForEach(emails) { email in
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Text(email.address)
-                        .foregroundStyle(.colorTextPrimary)
-                    Spacer()
-                }
+                emailDisplayRow(email)
             }
             .onDelete(perform: deleteEmails)
-            addRowButton(label: "Add email") { showingAddEmail = true }
+            addRowButton(label: "Add email") { emailSheet = EntryEditContext.new }
         } header: {
             Text("Emails")
         } footer: {
-            Text("At least one verified email is required.")
+            Text("At least one verified email is required. Tap to edit, swipe to remove.")
                 .foregroundStyle(.colorTextSecondary)
         }
+    }
+
+    private func emailDisplayRow(_ email: LabeledEmail) -> some View {
+        let tapAction: () -> Void = {
+            emailSheet = EntryEditContext(
+                index: emails.firstIndex(where: { $0.id == email.id }),
+                initialValue: email.address
+            )
+        }
+        return Button(action: tapAction) {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text(email.address)
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var phonesSection: some View {
         Section {
             ForEach(phones, id: \.self) { phone in
-                Text(phone)
-                    .foregroundStyle(.colorTextPrimary)
+                phoneDisplayRow(phone)
             }
             .onDelete(perform: deletePhones)
-            addRowButton(label: "Add phone") { showingAddPhone = true }
+            addRowButton(label: "Add phone") { phoneSheet = EntryEditContext.new }
         } header: {
             Text("Phones (optional)")
         }
     }
 
+    private func phoneDisplayRow(_ phone: String) -> some View {
+        let tapAction: () -> Void = {
+            phoneSheet = EntryEditContext(index: phones.firstIndex(of: phone), initialValue: phone)
+        }
+        return Button(action: tapAction) {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text(phone)
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var addressesSection: some View {
         Section {
-            ForEach(addresses, id: \.self) { line in
-                Text(line)
-                    .foregroundStyle(.colorTextPrimary)
+            ForEach(addresses, id: \.self) { address in
+                addressDisplayRow(address)
             }
             .onDelete(perform: deleteAddresses)
-            addRowButton(label: "Add address") { showingAddAddress = true }
+            addRowButton(label: "Add address") { addressSheet = AddressEditContext.new }
         } header: {
             Text("Addresses (optional)")
         }
+    }
+
+    private func addressDisplayRow(_ address: StoredAddress) -> some View {
+        let tapAction: () -> Void = {
+            addressSheet = AddressEditContext(index: addresses.firstIndex(of: address), initial: address)
+        }
+        return Button(action: tapAction) {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text(address.display)
+                    .foregroundStyle(.colorTextPrimary)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func addRowButton(label: String, action: @escaping () -> Void) -> some View {
@@ -1685,6 +1728,28 @@ extension SeatMember {
     }
 }
 
+/// What an add/edit pop-up in the person editor is operating on.
+/// `index` nil = adding a new entry; otherwise the pop-up replaces that
+/// entry, pre-populated with `initialValue`. Item-based so the sheet
+/// always receives the tapped row's data.
+private struct EntryEditContext: Identifiable {
+    let id: UUID = UUID()
+    let index: Int?
+    let initialValue: String
+
+    static let new = EntryEditContext(index: nil, initialValue: "")
+}
+
+/// Address counterpart of `EntryEditContext`, carrying the structured
+/// fields so the dialog pre-fills exactly what the client entered.
+private struct AddressEditContext: Identifiable {
+    let id: UUID = UUID()
+    let index: Int?
+    let initial: StoredAddress?
+
+    static let new = AddressEditContext(index: nil, initial: nil)
+}
+
 /// Pop-up for adding one email: enter the address, receive a 6-digit
 /// code, verify, and the verified address is handed back to the editor.
 /// Validation is permissive and unicode-friendly — any non-empty user
@@ -1693,11 +1758,16 @@ private struct AddEmailSheet: View {
     @Environment(\.dismiss) private var dismiss: DismissAction
     let onAdd: (String) -> Void
 
-    @State private var address: String = ""
+    @State private var address: String
     @State private var codeSent: Bool = false
     @State private var code: String = ""
     @State private var attemptsLeft: Int = EmailCodeVerification.maxAttempts
     @State private var errorMessage: String?
+
+    init(initialAddress: String = "", onAdd: @escaping (String) -> Void) {
+        self.onAdd = onAdd
+        self._address = State(initialValue: initialAddress)
+    }
 
     var body: some View {
         NavigationStack {
@@ -1718,14 +1788,18 @@ private struct AddEmailSheet: View {
                         TextField("000000", text: $code)
                             .keyboardType(.numberPad)
                             .textContentType(.oneTimeCode)
+                            .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                            .multilineTextAlignment(.center)
                             .onChange(of: code) { _, newValue in
                                 code = String(newValue.filter { $0.isNumber }.prefix(EmailCodeVerification.codeLength))
                             }
                     } header: {
                         Text("Verification code")
                     } footer: {
-                        Text(codeFooter)
-                            .foregroundStyle(.colorTextSecondary)
+                        if let errorMessage {
+                            Text(errorMessage)
+                                .foregroundStyle(.red)
+                        }
                     }
                 }
                 Section {
@@ -1744,11 +1818,6 @@ private struct AddEmailSheet: View {
             }
         }
         .presentationDetents([.medium])
-    }
-
-    private var codeFooter: String {
-        if let errorMessage { return errorMessage }
-        return "A 6-digit code was sent to \(address)."
     }
 
     @ViewBuilder
@@ -1811,8 +1880,23 @@ private struct AddPhoneSheet: View {
     @Environment(\.dismiss) private var dismiss: DismissAction
     let onAdd: (String) -> Void
 
-    @State private var countryCode: String = "+1"
-    @State private var number: String = ""
+    @State private var countryCode: String
+    @State private var number: String
+
+    init(initialPhone: String = "", onAdd: @escaping (String) -> Void) {
+        self.onAdd = onAdd
+        let parts = initialPhone.split(separator: " ", maxSplits: 1)
+        if initialPhone.hasPrefix("+"), parts.count == 2 {
+            let code = String(parts[0])
+            let digits: String = String(parts[1].filter { $0.isNumber })
+            self._countryCode = State(initialValue: code)
+            let formatted: String = code == "+1" ? Self.dashFormat(digits) : String(digits.prefix(15))
+            self._number = State(initialValue: formatted)
+        } else {
+            self._countryCode = State(initialValue: "+1")
+            self._number = State(initialValue: Self.dashFormat(String(initialPhone.filter { $0.isNumber })))
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -1932,7 +2016,17 @@ private struct AddPhoneSheet: View {
 /// result is stored as a single line.
 private struct AddAddressSheet: View {
     @Environment(\.dismiss) private var dismiss: DismissAction
-    let onAdd: (String) -> Void
+    let onAdd: (StoredAddress) -> Void
+
+    init(initial: StoredAddress? = nil, onAdd: @escaping (StoredAddress) -> Void) {
+        self.onAdd = onAdd
+        let hasKnownCountry: Bool = Self.formats.contains { $0.name == initial?.country }
+        self._country = State(initialValue: hasKnownCountry ? (initial?.country ?? "United States") : "United States")
+        self._line1 = State(initialValue: initial?.line1 ?? "")
+        self._city = State(initialValue: initial?.city ?? "")
+        self._region = State(initialValue: initial?.region ?? "")
+        self._postal = State(initialValue: initial?.postalCode ?? "")
+    }
 
     /// One country's address-entry shape. This is the single config to
     /// edit when adding country support: the picker entry (flag + name),
@@ -1964,12 +2058,12 @@ private struct AddAddressSheet: View {
         CountryFormat(flag: "🇬🇧", name: "United Kingdom", cityLabel: "Town / City", regionLabel: nil, postalLabel: "Postcode", postalBeforeCity: false, numericPostal: false)
     ]
 
-    @State private var country: String = "United States"
+    @State private var country: String
     @State private var showingCountryPicker: Bool = false
-    @State private var line1: String = ""
-    @State private var city: String = ""
-    @State private var region: String = ""
-    @State private var postal: String = ""
+    @State private var line1: String
+    @State private var city: String
+    @State private var region: String
+    @State private var postal: String
 
     private var format: CountryFormat {
         Self.formats.first(where: { $0.name == country }) ?? Self.formats[0]
@@ -2100,7 +2194,7 @@ private struct AddAddressSheet: View {
 
     private var addButton: some View {
         let addAction: () -> Void = {
-            onAdd(singleLine)
+            onAdd(assembledAddress)
             dismiss()
         }
         return Button(action: addAction) {
@@ -2112,6 +2206,18 @@ private struct AddAddressSheet: View {
             }
         }
         .disabled(line1.trimmingCharacters(in: .whitespaces).isEmpty)
+    }
+
+    /// The structured fields as entered, plus the composed display line.
+    private var assembledAddress: StoredAddress {
+        StoredAddress(
+            line1: line1.trimmingCharacters(in: .whitespaces),
+            city: city.trimmingCharacters(in: .whitespaces),
+            region: region.trimmingCharacters(in: .whitespaces),
+            postalCode: postal.trimmingCharacters(in: .whitespaces),
+            country: country,
+            display: singleLine
+        )
     }
 
     /// Compose the parts in the country's reading order, skipping blanks.

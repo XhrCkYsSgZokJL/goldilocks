@@ -388,13 +388,26 @@ public enum ConvosAPI {
         /// Admin-controlled Emerald override. When true, the tier is
         /// Emerald regardless of `monthlyRateCents` / `coverageActive`.
         public let emeraldMembershipEnabled: Bool
+        /// How many people the Emerald client may enable (billed
+        /// externally). 0 when no allowance has been granted.
+        public let emeraldSeatLimit: Int
+        /// Admin-controlled "client review" flag — true while a review
+        /// is open for this client.
+        public let reviewOpen: Bool
     }
 
     /// Body for `POST /v2/admin/clients/:inboxId/emerald` — admins
-    /// toggle a client's Emerald membership status.
+    /// toggle a client's Emerald membership status and, optionally, set
+    /// the people allowance that comes with it.
     public struct GoldilocksEmeraldToggleRequest: Codable, Sendable {
         public let enabled: Bool
-        public init(enabled: Bool) { self.enabled = enabled }
+        /// Omitted = leave the stored limit unchanged.
+        public let seatLimit: Int?
+
+        public init(enabled: Bool, seatLimit: Int? = nil) {
+            self.enabled = enabled
+            self.seatLimit = seatLimit
+        }
     }
 
     /// Response for the Emerald toggle endpoint. `changed` is false
@@ -403,6 +416,27 @@ public enum ConvosAPI {
         public let clientNumber: Int64
         public let emeraldMembershipEnabled: Bool
         public let changed: Bool
+    }
+
+    /// Body for `POST /v2/admin/clients/:inboxId/review` — admins open
+    /// or close a client review; any change posts an audit line to the
+    /// Admins chat.
+    public struct GoldilocksReviewToggleRequest: Codable, Sendable {
+        public let open: Bool
+        public init(open: Bool) { self.open = open }
+    }
+
+    /// Response for the client-review toggle endpoint.
+    public struct GoldilocksReviewToggleResponse: Codable, Sendable {
+        public let clientNumber: Int64
+        public let reviewOpen: Bool
+        public let changed: Bool
+
+        public init(clientNumber: Int64, reviewOpen: Bool, changed: Bool) {
+            self.clientNumber = clientNumber
+            self.reviewOpen = reviewOpen
+            self.changed = changed
+        }
     }
 
     public struct GoldilocksAdminChannelsResponse: Codable, Sendable {

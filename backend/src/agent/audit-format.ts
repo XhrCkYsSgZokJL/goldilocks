@@ -16,5 +16,9 @@ export function formatAuditLine(payload: AuditEventPayload): string {
       return `${actor} enabled Emerald membership for ${target}`;
     case 'emerald_disable':
       return `${actor} disabled Emerald membership for ${target}`;
+    case 'review_requested':
+      return `${actor} requested ${target} review.`;
+    case 'review_closed':
+      return `${actor} closed ${target} review.`;
   }
 }

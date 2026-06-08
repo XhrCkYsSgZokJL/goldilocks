@@ -187,6 +187,9 @@ export const clients = pgTable('clients', {
   // Set true once the client completes the Stripe setup checkout and a card
   // is on file. Gates enabling people (the $100 fee is taken off-session).
   hasPaymentMethod: boolean('has_payment_method').notNull().default(false),
+  // Admin-controlled "client review" flag (migration 031). Toggling posts
+  // an audit line to the Admins chat.
+  reviewOpen: boolean('review_open').notNull().default(false),
 });
 
 // Referral tracking (migration 024). One row per referred client.
