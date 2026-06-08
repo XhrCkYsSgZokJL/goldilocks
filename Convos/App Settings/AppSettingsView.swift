@@ -1710,15 +1710,18 @@ private struct PersonEditorSheet: View {
 /// `SeatMember.iconColor`; the mapping to SwiftUI colors lives here so
 /// the model stays UI-framework-free.
 extension SeatMember {
-    static let iconColorNames: [String] = ["blue", "green", "orange", "purple", "pink", "red"]
+    /// Ordered to column-align with `iconChoices` (person, star, heart,
+    /// leaf, paw, crown): yellow sits under the star, green under the
+    /// leaf, a refined brown under the paw, and gold under the crown.
+    static let iconColorNames: [String] = ["blue", "yellow", "red", "green", "brown", "gold"]
 
     static func color(named name: String) -> Color {
         switch name {
-        case "green": return .green
-        case "orange": return .orange
-        case "purple": return .purple
-        case "pink": return .pink
+        case "yellow": return .yellow
         case "red": return .red
+        case "green": return .green
+        case "brown": return Color(red: 0.54, green: 0.40, blue: 0.30)
+        case "gold": return Color(red: 0.80, green: 0.61, blue: 0.13)
         default: return .blue
         }
     }

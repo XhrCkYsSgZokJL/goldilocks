@@ -858,9 +858,7 @@ private struct AdminEmeraldTierSection: View {
             if GoldilocksConfig.role == .admin, let channel {
                 Section {
                     toggleRow(for: channel)
-                    if channel.emeraldMembershipEnabled {
-                        seatLimitRow(for: channel)
-                    }
+                    seatLimitRow(for: channel)
                     if let errorMessage {
                         Text(errorMessage)
                             .font(.caption)
@@ -883,7 +881,9 @@ private struct AdminEmeraldTierSection: View {
                         }
                     let saveAction: () -> Void = {
                         guard let value = Int(limitInput), value >= 1 else { return }
-                        Task { await setEmerald(to: true, seatLimit: value, for: channel) }
+                        // Preserve the current activation state — setting
+                        // the limit alone must not flip Emerald on or off.
+                        Task { await setEmerald(to: channel.emeraldMembershipEnabled, seatLimit: value, for: channel) }
                     }
                     Button("Save", action: saveAction)
                     Button("Cancel", role: .cancel) {}
@@ -957,7 +957,6 @@ private struct AdminEmeraldTierSection: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(saving)
     }
 
     private func loadChannelIfAdmin() async {
