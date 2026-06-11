@@ -26,8 +26,8 @@ When ConvosCore needs iOS behavior, **define a protocol in ConvosCore and inject
 ### 5. The brand-config build phase
 A "Copy Brand Config" build phase copies `shared/brand.json` into the bundle for `BrandConfig` ([Branding](branding.md)). After any pbxproj regeneration, **re-add this phase** to upstream's project rather than text-merging.
 
-### 6. Strict type-check-time budget
-The project enforces `-warn-long-function-bodies` / `-warn-long-expression-type-checking` as hard errors under strict CI. Don't raise the thresholds; fix the expression. See the playbook's _Lessons_ and `CLAUDE.md` → _Build Performance_.
+### 6. Warnings posture + type-check budget (deliberate divergence)
+**Goldilocks builds with `SWIFT_TREAT_WARNINGS_AS_ERRORS = NO` and 500ms type-check thresholds** (`-warn-long-function-bodies` / `-warn-long-expression-type-checking`), restored 2026-06 to match what main shipped. Upstream uses warnings-as-errors with 100/300 — under which first-touch module-deserialization (~350-800ms on a loaded machine, e.g. a bare `UITextField()`) fails builds on trivial code, including upstream's own unmodified files. Slow-type-check warnings are advisory: fix genuine solver blowups (per-expression timings reveal which is which — see the playbook), ignore measurement artifacts. **Each upstream sync must re-apply both settings** in `project.pbxproj` (three `OTHER_SWIFT_FLAGS` sites + every `SWIFT_TREAT_WARNINGS_AS_ERRORS`).
 
 ## Files affected
 

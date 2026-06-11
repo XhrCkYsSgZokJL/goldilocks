@@ -37,7 +37,7 @@ Run in this order; each catches a class the previous misses:
 |------|---------|---------|
 | Syntax | `xcrun swiftc -parse <file>` | Brace/comma damage from conflict resolution |
 | Core compiles + links | Xcode build of the app (see flags below) | Semantic errors, API drift |
-| Strict CI | Same build **without** `SWIFT_TREAT_WARNINGS_AS_ERRORS=NO` | warnings-as-errors, type-check-time limits |
+| Warning sweep | Same build, `grep -c "warning:"` vs the pre-sync count | New deprecations / real warnings hiding in the log (the project builds with `SWIFT_TREAT_WARNINGS_AS_ERRORS=NO` — see Lessons) |
 | Codegen | `npm run codegen` (in `shared/codegen`) then build | Shared-type drift between Swift/Zod/TS |
 | Tests | `./dev/up && swift test --package-path ConvosCore` | Consent/sync + storage regressions (where silent bugs hide) |
 
@@ -49,8 +49,7 @@ xcodebuild build \
   -scheme "Convos (Dev)" \
   -destination "platform=iOS Simulator,id=<sim-id>" \
   -derivedDataPath .derivedData \
-  EXCLUDED_ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES \
-  SWIFT_TREAT_WARNINGS_AS_ERRORS=NO   # drop this flag for the strict gate
+  EXCLUDED_ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES
 ```
 
 Reconcile **consent/sync and storage hardest, and test them against a live node** — that's where a silent regression hides (agent-trust auto-allow, no-op consent delete, GRDB migrations).
@@ -65,8 +64,8 @@ The SwiftPM build cache returns **0 errors on syntactically-broken files**, even
 ### libxmtp is arm64-only
 `LibXMTPSwiftFFI.xcframework` ships no x86_64 slice. A normal simulator build fails at link with `undefined symbols ... XMTPiOS.*`. **Always build with `EXCLUDED_ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES`** (on an Apple-Silicon host). This is permanent, not a workaround.
 
-### `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` masks errors during reconciliation
-A single per-file fatal type-check-time warning aborts that file's compilation, hiding the *real* semantic errors behind it. While reconciling, build with `SWIFT_TREAT_WARNINGS_AS_ERRORS=NO` to surface the true error set; flip it back for the final strict gate.
+### Warnings posture is a deliberate divergence — re-apply it each sync
+Goldilocks builds with `SWIFT_TREAT_WARNINGS_AS_ERRORS=NO` (all pbxproj sites); upstream uses `YES`. **A merge will silently flip it back** — re-apply `NO` along with the 500ms thresholds. Two reasons for the divergence: (1) warnings-as-errors turns machine-dependent type-check-time measurements into build failures (upstream's own unmodified files fail on a loaded host), and (2) a single fatal warning aborts that file's compilation, *masking* the real semantic errors behind it — which made reconciliation actively harder. The cost: real warnings (e.g. new deprecations) no longer break the build, so run the warning-sweep gate above and read what it finds.
 
 ### Conflict-marker "union" resolution causes syntax damage
 Keeping *both* halves of a conflict that splits a brace, comma, or statement produces duplicate returns, unclosed methods, lost bodies, duplicate args. After any bulk resolution, run `xcrun swiftc -parse` on every touched file before trusting it. Prefer a proper 3-way merge (`git merge-file -p`) over hand-unioning.
@@ -88,7 +87,7 @@ grep "TheFile.swift" /tmp/build.log | grep -oE "^[0-9.]+ms.*" | sort -rn | head
 
 If one expression dominates (hundreds of ms), it's solver cost — fix that expression. If all expressions are tiny but the function warning persists, it's first-touch attribution or load — refactoring the body is wasted effort. Also note: **the strict build short-circuits at the first failing file**, hiding others behind it — the warnings-mode instrumented run reveals the full set at once.
 
-**Threshold history:** old `main` deliberately ran these limits at **500ms** (pbxproj), while upstream uses 100 (PR Preview) / 300 (Dev, Local) — which v2 inherited. Upstream-verbatim files (e.g. `DefaultMessagesLayoutDelegate`) can trip the 300ms limit on a loaded machine purely via first-touch attribution. Whether to restore 500 is a standing decision; do not change it silently in either direction.
+**Thresholds are a deliberate Goldilocks divergence: 500ms** (decided 2026-06, matching old main). Upstream uses 100 (PR Preview) / 300 (Dev, Local), and upstream-verbatim files (e.g. `DefaultMessagesLayoutDelegate`) trip the 300ms limit on a loaded machine purely via first-touch attribution. **Each sync must re-apply 500** to the three `OTHER_SWIFT_FLAGS` sites in `project.pbxproj` (a merge will bring upstream's 100/300 back). See [Platform build constraints](design-choices/platform-build-constraints.md).
 
 ### Synchronized file groups removed most of the pbxproj pain
 `Convos`, `ConvosAppClip`, `NotificationService` are `PBXFileSystemSynchronizedRootGroup` — they compile whatever is on disk. So **adding/deleting a Swift file needs no pbxproj edit**. Deleting a file from disk drops it from the build (this is how we removed the upstream tab shell). Only build phases and package refs still need pbxproj work.
@@ -110,3 +109,9 @@ The v2 reconciliation (2026-06) was the one-time catch-up after ~160 PRs of drif
 - Inventory lists: `docs/plans/rebase-inventory/{additive,reconcile,redundant-cherrypicks}*.txt`
 
 Those are the *one-time* record. This playbook is the *durable* process. Keep this one current.
+
+## Sync log
+
+| Date | Drift | Notes |
+|------|-------|-------|
+| 2026-06-10 | 15 PRs (#1003-#1029) | First post-rebase sync, ~2h. 9 conflicts: tab-shell deletes (kept deleted, incl. the StuffTab→ThingsTab rename), Package.swift re-strip (Sentry back out, kept upstream's convos-shared branch pin), AppEnvironment (kept our `xmtp-logs` name inside upstream's new self-diagnosing helper), AvatarView (upstream's no-GeometryReader sizes + our bot/group branches), ConversationsView (ours — upstream's side was the tab-shell rewrite). Re-strips beyond conflicts: PostHogCollector's new bare `import Sentry` (took ours), Sentry MCP out of `.mcp.json`. New `AssistantJoinSurface` enum needed the retroactive-Sendable shim. Two app-test mocks needed the new `registerClaimedConversation(id:)` stub. |

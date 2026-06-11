@@ -245,13 +245,18 @@ extension URL {
     public var convosInviteCode: String? {
         let pathComponents = pathComponents.filter { $0 != "/" }
 
-        // Handle convos:// and convos-{env}:// schemes
-        if let scheme, scheme == "convos" || scheme.hasPrefix("convos-") {
-            // convos://join/{code} (legacy)
+        // Handle custom app schemes (convos://, convos-{env}://,
+        // goldilocks-{env}://, any brand). The package stays brand-agnostic:
+        // callers (InviteURLDetector, DeepLinkHandler) validate the scheme
+        // against the app's configured scheme before extraction, so any
+        // non-https scheme with the invite/join shape is treated as an
+        // app-scheme invite link here.
+        if let scheme, scheme != "https" {
+            // {scheme}://join/{code} (legacy)
             if host == "join", pathComponents.count >= 1 {
                 return pathComponents[0]
             }
-            // convos://invite/{code}
+            // {scheme}://invite/{code}
             if host == "invite" || pathComponents.first == "invite" {
                 return pathComponents.last
             }

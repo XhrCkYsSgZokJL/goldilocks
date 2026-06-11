@@ -206,6 +206,8 @@ private final class DelayedConsentWriter: ConversationConsentWriterProtocol, @un
 }
 
 private final class TestSessionManager: SessionManagerProtocol, @unchecked Sendable {
+    func registerClaimedConversation(id conversationId: String) async {}
+
     private let base: MockInboxesService
     private let customMessagingService: any MessagingServiceProtocol
 

@@ -2,7 +2,7 @@
 
 The reverse index: **"I'm touching this file / I hit a conflict here — which [design choice](design-choices/) owns it, and what's the [strategy](reconciliation-strategies.md)?"**
 
-There are ~349 files that differ from `upstream/dev`. Most are **OWN** (additive — `backend/`, `shared/`, assets, our views) and never conflict. This map focuses on the files that *do* conflict during a sync, and the markers that route any file to its owner.
+There are ~357 files that differ from `upstream/dev` (as of the 2026-06-10 sync). Most are **OWN** (additive — `backend/`, `shared/`, `documentation/`, assets, our views) and never conflict. This map focuses on the files that *do* conflict during a sync, and the markers that route any file to its owner.
 
 > Keep this current after each sync. A stale map implies coverage that isn't there.
 

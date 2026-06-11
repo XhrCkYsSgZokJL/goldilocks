@@ -15,12 +15,21 @@ public final class CaptureMonitor {
 
     public init() {}
 
+    /// True when any connected scene's screen is being captured.
+    /// `UIScreen.main` is deprecated in iOS 26; capture state is read
+    /// from the scenes instead (also handles multi-scene correctly).
+    private var isAnyScreenCaptured: Bool {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .contains { $0.screen.isCaptured }
+    }
+
     /// Begin observing capture / screenshot notifications. Idempotent —
     /// call once from `AppDelegate.didFinishLaunching`.
     public func start() {
         guard captureObserver == nil, screenshotObserver == nil else { return }
 
-        isCapturing = UIScreen.main.isCaptured
+        isCapturing = isAnyScreenCaptured
 
         captureObserver = NotificationCenter.default.addObserver(
             forName: UIScreen.capturedDidChangeNotification,
@@ -44,7 +53,7 @@ public final class CaptureMonitor {
     }
 
     private func handleCaptureChange() {
-        let nowCapturing = UIScreen.main.isCaptured
+        let nowCapturing = isAnyScreenCaptured
         guard nowCapturing != isCapturing else { return }
         isCapturing = nowCapturing
         if nowCapturing {

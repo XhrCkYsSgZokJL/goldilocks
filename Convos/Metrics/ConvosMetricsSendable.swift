@@ -8,6 +8,7 @@ import ConvosMetrics
 // They carry no storage, so the conformance is sound; declared retroactively
 // here to avoid forking the dependency.
 extension ConvosMetrics.AgentBuilderEntryMode: @retroactive @unchecked Sendable {}
+extension AssistantJoinSurface: @retroactive @unchecked Sendable {}
 extension ConversationSource: @retroactive @unchecked Sendable {}
 extension ShareTarget: @retroactive @unchecked Sendable {}
 extension PaywallSource: @retroactive @unchecked Sendable {}

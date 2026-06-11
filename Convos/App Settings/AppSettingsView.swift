@@ -983,7 +983,7 @@ struct MembershipView: View {
                 let dollars: Int = response.deductedCents / 100
                 showBillingResult("Coverage activated for \(member.displayName). $\(dollars) deducted.")
             }
-        } catch let apiError as APIError {
+        } catch is APIError {
             showBillingResult("Not enough balance to activate.")
         } catch {
             showBillingResult(error.localizedDescription)

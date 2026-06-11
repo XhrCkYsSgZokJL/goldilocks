@@ -203,6 +203,8 @@ private final class TestDraftConversationRepository: DraftConversationRepository
 }
 
 private final class TestSessionManager: SessionManagerProtocol, @unchecked Sendable {
+    func registerClaimedConversation(id conversationId: String) async {}
+
     private let base: MockInboxesService
     private let customPhotoPreferencesRepository: MockPhotoPreferencesRepository
     private let customPhotoPreferencesWriter: MockPhotoPreferencesWriter
