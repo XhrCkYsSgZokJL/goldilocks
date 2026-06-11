@@ -51,6 +51,11 @@ final class GoldilocksSession {
     /// `ensureGoldilocksChannelsPresent` coalesce into a single run.
     @ObservationIgnored
     private var isEnsuringChannels: Bool = false
+    /// Set by `retryNow()` (the empty-state "Retry now" button) to
+    /// short-circuit the registration backoff sleep and attempt
+    /// immediately.
+    @ObservationIgnored
+    private var retryNowRequested: Bool = false
 
     var clientNumber: Int64? { identity?.clientNumber }
     var isAdmin: Bool { identity?.isAdmin ?? false }
@@ -71,9 +76,16 @@ final class GoldilocksSession {
         }
     }
 
-    /// Run the SIWE handshake exactly once per app launch, then fetch the
-    /// admin inbox list. Subsequent calls are no-ops while a registration
+    /// Run the SIWE handshake until it succeeds, then fetch the admin
+    /// inbox list. Subsequent calls are no-ops while a registration loop
     /// is in flight or once one has succeeded.
+    ///
+    /// Failures retry automatically with capped exponential backoff and
+    /// publish `lastError` so the empty-state UI can show what's wrong
+    /// instead of an indefinite spinner. The loop never gives up: a
+    /// transient backend outage, a node race, or a config problem fixed
+    /// out from under a running app all recover without a relaunch.
+    /// `retryNow()` short-circuits the current backoff sleep.
     ///
     /// Every install registers as a plain client. A user becomes an admin
     /// only by entering the upgrade code in the debug area's "Upgrade"
@@ -85,27 +97,52 @@ final class GoldilocksSession {
         isRegistering = true
         defer { isRegistering = false }
 
-        do {
-            let result = try await session.registerWithGoldilocks(claimAdminRole: false)
-            self.identity = result
-            self.lastError = nil
-            Log.info("[Goldilocks] Registered as client #\(result.clientNumber), isAdmin=\(result.isAdmin)")
-        } catch {
-            Log.warning("[Goldilocks] Registration failed: \(error.localizedDescription). Trying /v2/me fallback...")
+        var attempt: Int = 0
+        while identity == nil {
+            attempt += 1
             do {
-                let fallback = try await session.refreshGoldilocksIdentity()
-                self.identity = fallback
+                let result = try await session.registerWithGoldilocks(claimAdminRole: false)
+                self.identity = result
                 self.lastError = nil
-                Log.info("[Goldilocks] Recovered identity via /v2/me: client #\(fallback.clientNumber), isAdmin=\(fallback.isAdmin)")
+                Log.info("[Goldilocks] Registered as client #\(result.clientNumber), isAdmin=\(result.isAdmin) (attempt \(attempt))")
             } catch {
-                self.lastError = error.localizedDescription
-                Log.warning("[Goldilocks] /v2/me fallback also failed: \(error.localizedDescription)")
-                return
+                Log.warning("[Goldilocks] Registration attempt \(attempt) failed: \(error.localizedDescription). Trying /v2/me fallback...")
+                do {
+                    let fallback = try await session.refreshGoldilocksIdentity()
+                    self.identity = fallback
+                    self.lastError = nil
+                    Log.info("[Goldilocks] Recovered identity via /v2/me: client #\(fallback.clientNumber), isAdmin=\(fallback.isAdmin)")
+                } catch {
+                    self.lastError = error.localizedDescription
+                    let delay: TimeInterval = min(30.0, pow(2.0, Double(min(attempt, 5))))
+                    Log.warning("[Goldilocks] /v2/me fallback also failed: \(error.localizedDescription). Retrying in \(Int(delay))s (attempt \(attempt))")
+                    await sleepAllowingManualRetry(seconds: delay)
+                }
             }
         }
 
         await refreshAdminInboxes(session: session)
         await refreshAgentInboxes(session: session)
+    }
+
+    /// Requests an immediate registration retry, skipping the remainder of
+    /// the current backoff sleep. Wired to the empty-state "Retry now"
+    /// button; a no-op when no registration loop is sleeping.
+    func retryNow() {
+        retryNowRequested = true
+    }
+
+    /// Sleep in half-second slices so `retryNow()` can interrupt the
+    /// backoff without cancellation plumbing.
+    private func sleepAllowingManualRetry(seconds: TimeInterval) async {
+        let deadline: Date = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if retryNowRequested {
+                retryNowRequested = false
+                return
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
     }
 
     /// Pull the inbox IDs of the server agents (admins-agent, reports-agent)

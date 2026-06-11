@@ -28,6 +28,7 @@ Goldilocks has its own backend (`backend/`) with its own auth, accounts, roles, 
 - `ConvosCore/Sources/ConvosCore/API/ConvosAPIClient+Models.swift` — our request/response models (e.g. `InviteCodeStatus`, redeem responses).
 - `ConvosCore/Sources/ConvosCore/API/MockAPIClient.swift` — mock parity.
 - `ConvosCore/Sources/ConvosCore/Shared/ConvosKeychainItem.swift` — union of upstream `siweJwt`/`siweAccountId` accounts **and** our `refreshToken` account.
+- `Convos/Config/config.{local,dev,prod}.json` — backend URLs, SIWE domains, and `xmtpNetwork`. **`"xmtpNetwork": "local"` in `config.local.json` is load-bearing**: the local backend validates SIWE registration against the local node's inbox ledger, so a Local build on any other XMTP network gets `address_not_bound` 401s and never provisions channels (upstream's value is `"dev"` — a merge regression waiting to happen; `ConvosApp` logs a config-drift error at launch if it recurs).
 - `Convos/Config/*.xcconfig`, `ConfigManager` overrides — Goldilocks API base URL, gateway, XMTP host.
 
 ## Markers

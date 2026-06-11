@@ -25,6 +25,21 @@ struct ConvosApp: App {
         let environment = ConfigManager.shared.currentEnvironment
         ConvosLog.configure(environment: environment)
 
+        // Config-drift tripwire: the local stack's backend validates SIWE
+        // registration against the local XMTP node, so a Local build pointed
+        // at any other XMTP network can never register (the node's inbox
+        // ledger is empty for it -> address_not_bound 401s, and the app sits
+        // on "Setting up your channels..."). Name the misconfiguration at
+        // launch instead of letting it manifest downstream.
+        if case .local = environment, environment.xmtpEnv != .local {
+            Log.error(
+                "[Goldilocks] Config drift: the Local environment is paired with XMTP network " +
+                "\(environment.xmtpEnv) instead of .local. The local backend validates inbox " +
+                "ledgers against the local node, so registration will fail with address_not_bound. " +
+                "Set \"xmtpNetwork\": \"local\" in config.local.json."
+            )
+        }
+
         if !environment.isProduction {
             Log.info("Activating LibXMTP Log Writer...")
             Client.activatePersistentLibXMTPLogWriter(

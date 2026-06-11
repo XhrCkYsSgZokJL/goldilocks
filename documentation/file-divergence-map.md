@@ -24,6 +24,7 @@ Grep the conflicting file for these. A hit routes it to a design choice (and usu
 | `ProfileSettingsViewModel` (Quickname fully removed) | [Profile (formerly Quickname)](design-choices/profile-vs-quickname.md) | TAKE-UPSTREAM (resolved) |
 | `EXCLUDED_ARCHS`, `ImageType`, `ConvosCoreiOS`, "Copy Brand Config" phase | [Platform build constraints](design-choices/platform-build-constraints.md) | MECHANICAL / bridge |
 | paths under `backend/`, `shared/` | [Backend & shared monorepo](design-choices/backend-and-shared-monorepo.md) | OWN (never conflicts) |
+| `Convos/Config/config.{local,dev,prod}.json` — `"xmtpNetwork": "local"` in the local config is **load-bearing**: the local backend validates SIWE against the local node (wrong network → `address_not_bound` 401s → "Setting up your channels…" forever) | [Auth against Goldilocks backend](design-choices/auth-against-goldilocks-backend.md) | REPLACE-EXTEND |
 
 ## 2. By area (where conflicts cluster)
 
