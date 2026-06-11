@@ -103,13 +103,13 @@ struct ContactsListSectionHeader: View {
 /// Header for the trailing "Suggested agents" section, shared by the contacts
 /// browser and the picker. A single caption line that aligns with the
 /// alphabetical letter headers: the title in `.colorTextSecondary` followed by
-/// a "Chat to customize" hint in `.colorTextTertiary`.
+/// a "Chat to personalize" hint in `.colorTextTertiary`.
 struct SuggestedAgentsSectionHeader: View {
     var body: some View {
         HStack(spacing: 0.0) {
             Text(SuggestedAgentsSection.title)
                 .foregroundStyle(.colorTextSecondary)
-            Text(" · Chat to customize")
+            Text(" · Chat to personalize")
                 .foregroundStyle(.colorTextTertiary)
         }
         .font(.caption)
@@ -117,28 +117,5 @@ struct SuggestedAgentsSectionHeader: View {
         .padding(.leading, DesignConstants.Spacing.step2x)
         .padding(.top, DesignConstants.Spacing.step2x)
         .listRowBackground(Color.colorBackgroundRaisedSecondary)
-    }
-}
-
-/// Shared "no contacts" empty state for the contacts browser and the picker
-/// so both read the same. Callers supply their own background.
-struct ContactsEmptyStateView: View {
-    var body: some View {
-        VStack(spacing: DesignConstants.Spacing.step3x) {
-            Image(systemName: "person.2.fill")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 56, height: 56)
-                .foregroundStyle(.colorTextTertiary)
-            Text("No contacts yet")
-                .font(.headline)
-                .foregroundStyle(.colorTextPrimary)
-            Text("People you message in groups will show up here.")
-                .font(.subheadline)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.colorTextSecondary)
-                .padding(.horizontal, DesignConstants.Spacing.step6x)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

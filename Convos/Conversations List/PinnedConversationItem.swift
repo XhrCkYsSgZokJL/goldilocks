@@ -5,6 +5,10 @@ struct PinnedConversationItem: View {
     let conversation: Conversation
     var avatarSize: CGFloat = 96
     var animateOnAppear: Bool = true
+    /// Width of the unread message preview bubble. Defaults to the avatar
+    /// width (the pinned-grid look); the empty-state CTA carousel passes a
+    /// wider bubble to fit a longer mock message.
+    var messagePreviewWidth: CGFloat?
     @State private var showingMessagePreview: Bool = false
 
     @Environment(\.memberNameOverride) private var memberNameOverride: @Sendable (String) -> String?
@@ -29,7 +33,7 @@ struct PinnedConversationItem: View {
 
     var body: some View {
         VStack(alignment: .center, spacing: DesignConstants.Spacing.step2x) {
-            ConversationAvatarView(conversation: conversation, conversationImage: nil)
+            ConversationAvatarView(conversation: conversation, conversationImage: nil, size: avatarSize)
                 .frame(width: avatarSize, height: avatarSize)
                 .padding(.top, DesignConstants.Spacing.stepX)
                 .overlay(alignment: .top) {
@@ -102,7 +106,7 @@ struct PinnedConversationItem: View {
                 .truncationMode(.tail)
                 .padding(.horizontal, DesignConstants.Spacing.step3x)
                 .padding(.vertical, DesignConstants.Spacing.step2x)
-                .frame(width: avatarSize, alignment: .center)
+                .frame(width: messagePreviewWidth ?? avatarSize, alignment: .center)
                 .background(Color.colorBackgroundRaised)
                 .cornerRadius(DesignConstants.CornerRadius.medium)
                 .overlay(
@@ -144,7 +148,7 @@ struct PinnedConversationContextPreview: View {
                     )
             }
 
-            ConversationAvatarView(conversation: conversation, conversationImage: nil)
+            ConversationAvatarView(conversation: conversation, conversationImage: nil, size: avatarSize)
                 .frame(width: avatarSize, height: avatarSize)
 
             HStack(spacing: DesignConstants.Spacing.stepX) {

@@ -37,7 +37,10 @@ let package = Package(
         // Sentry stripped (Goldilocks security): no third-party crash/telemetry
         // SDK. SecurityLog's Sentry calls are `#if canImport(Sentry)`-guarded,
         // so removing the dependency drops them to no-ops cleanly.
-        .package(url: "https://github.com/xmtplabs/convos-shared.git", branch: "main"),
+        // Interim pin while the assistant-join metrics land: flip back to
+        // branch "main" once xmtplabs/convos-shared#2 merges (upstream pin,
+        // carried for CoreActions interface parity).
+        .package(url: "https://github.com/xmtplabs/convos-shared.git", branch: "jarod/assistant-join-metrics"),
         .package(path: "../ConvosLogging"),
         .package(path: "../ConvosInvites"),
         .package(path: "../ConvosAppData"),
