@@ -134,8 +134,11 @@ private final class StubCreditBalanceAPIClient: ConvosAPIClientProtocol, @unchec
     func registerDevice(deviceId: String, pushToken: String?) async throws {
         try await delegate.registerDevice(deviceId: deviceId, pushToken: pushToken)
     }
-    func authenticate(appCheckToken: String, retryCount: Int) async throws -> String {
-        try await delegate.authenticate(appCheckToken: appCheckToken, retryCount: retryCount)
+    func authenticate(retryCount: Int) async throws -> String {
+        try await delegate.authenticate(retryCount: retryCount)
+    }
+    func logout() async {
+        await delegate.logout()
     }
     func authenticateWithSIWE(appCheckToken: String, signing: BackendAuthSigningContext) async throws -> String {
         try await delegate.authenticateWithSIWE(appCheckToken: appCheckToken, signing: signing)

@@ -640,9 +640,16 @@ class ConversationWriter: ConversationWriterProtocol, @unchecked Sendable {
         // Apply the preserved timestamp
         var conversationToSave = dbConversation.with(imageLastRenewed: imageLastRenewed)
 
-        if dbConversation.inviteTag.isEmpty,
+        // The incoming tag counts as missing when it's empty or when it's the
+        // Goldilocks group-id fallback (applied at DBConversation construction
+        // when the group's app-data carries no tag) -- otherwise the fallback
+        // masks the emptiness here and a real local tag gets overwritten
+        // instead of healed back onto the group.
+        let incomingTagMissing: Bool = dbConversation.inviteTag.isEmpty || dbConversation.inviteTag == dbConversation.id
+        if incomingTagMissing,
            let existingConversation,
-           !existingConversation.inviteTag.isEmpty {
+           !existingConversation.inviteTag.isEmpty,
+           existingConversation.inviteTag != dbConversation.id {
             conversationToSave = conversationToSave.with(inviteTag: existingConversation.inviteTag)
             Log.warning(
                 "[MetadataDebug] preserving existing local invite tag for conversationId=\(dbConversation.id) preservedTag=\(existingConversation.inviteTag)"

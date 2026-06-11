@@ -15,8 +15,8 @@ Goldilocks needs server-side logic upstream doesn't have: our auth/accounts, rol
 | Path | Contents |
 |------|----------|
 | `backend/src/agent/` | Backend agents (admins-agent, reports-agent) + report-agent (Venice) plumbing |
-| `backend/src/auth/` | SIWE / accounts / tokens (the backend side of [[auth-against-goldilocks-backend]]) |
-| `backend/src/billing/` | Credits / subscriptions ([[goldilocks-billing-credits]]) |
+| `backend/src/auth/` | SIWE / accounts / tokens (the backend side of [Auth against Goldilocks backend](auth-against-goldilocks-backend.md)) |
+| `backend/src/billing/` | Credits / subscriptions ([Goldilocks billing & credits](goldilocks-billing-credits.md)) |
 | `backend/src/xmtp/`, `crypto/`, `storage/`, `db/` | Messaging, crypto, storage, persistence |
 | `backend/src/observability/`, `audit-events.ts` | Server-side logging / audit |
 | `backend/migrations/` | DB migrations |
@@ -38,9 +38,9 @@ The `backend/` and `shared/` trees themselves; `REPORTS_LLM_ENABLED`, `venice`, 
 ## Upstream-sync guidance
 
 - **Free at sync time.** Because upstream has no backend, nothing here ever conflicts with an upstream merge. A sync touches `backend/`/`shared/` only when *we* change them.
-- **Codegen is the coupling point.** The one place backend meets app is shared types ([[auth-against-goldilocks-backend]], [[goldilocks-billing-credits]], [[branding]]). After changing a shared type, run `npm run codegen` and rebuild so the Swift/Zod sides stay aligned. Add `npm run codegen:check` to the sync gate.
+- **Codegen is the coupling point.** The one place backend meets app is shared types ([Auth against Goldilocks backend](auth-against-goldilocks-backend.md), [Goldilocks billing & credits](goldilocks-billing-credits.md), [Branding](branding.md)). After changing a shared type, run `npm run codegen` and rebuild so the Swift/Zod sides stay aligned. Add `npm run codegen:check` to the sync gate.
 - **Keep Venice disabled** until the product decision to enable it is made; don't let a refactor flip `REPORTS_LLM_ENABLED`.
 
 ## Related
 
-[[auth-against-goldilocks-backend]] · [[goldilocks-billing-credits]] · [[roles-and-managed-groups]] (channel provisioning) · [[gated-agents]] (our agents) · [[branding]] (`brand.json`)
+[Auth against Goldilocks backend](auth-against-goldilocks-backend.md) · [Goldilocks billing & credits](goldilocks-billing-credits.md) · [Roles & managed groups](roles-and-managed-groups.md) (channel provisioning) · [Gated agents](gated-agents.md) (our agents) · [Branding](branding.md) (`brand.json`)

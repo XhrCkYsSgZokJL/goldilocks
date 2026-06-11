@@ -42,4 +42,4 @@ Composio is a third-party broker that data passes through — incompatible with 
 
 ## Related
 
-[[no-telemetry-no-egress]] · [[gated-agents]] · [[reconciliation-strategies]] (GATE)
+[No telemetry / no-egress](no-telemetry-no-egress.md) · [Gated agents](gated-agents.md) · [Reconciliation Strategies](../reconciliation-strategies.md) (GATE)

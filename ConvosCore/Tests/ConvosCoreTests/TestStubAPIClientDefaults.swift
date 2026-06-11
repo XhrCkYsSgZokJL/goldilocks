@@ -66,6 +66,52 @@ extension ConvosAPIClientProtocol {
     func getFeaturedAgentTemplates(limit: Int, cursor: String?) async throws -> ConvosAPI.AgentTemplatesPage {
         ConvosAPI.AgentTemplatesPage(data: [], hasMore: false, nextCursor: nil)
     }
+
+    // Goldilocks auth (no App Check), identity registration, admin, and
+    // channel lifecycle. Response-returning defaults throw so an unexpected
+    // call surfaces as a test error instead of fabricating backend state;
+    // Void defaults no-op. Tests that exercise these should override them
+    // on their fixture.
+    func authenticate(retryCount: Int) async throws -> String { "" }
+    func logout() async {}
+    func fetchGoldilocksChallenge(inboxId: String, ethAddress: String) async throws -> ConvosAPI.GoldilocksChallengeResponse {
+        throw CancellationError()
+    }
+    func registerWithGoldilocks(inboxId: String, siweMessage: String, signature: String, claimAdminRole: Bool) async throws -> ConvosAPI.GoldilocksMeResponse {
+        throw CancellationError()
+    }
+    func fetchGoldilocksMe() async throws -> ConvosAPI.GoldilocksMeResponse {
+        throw CancellationError()
+    }
+    func promoteSelfToAdminDev() async throws {}
+    func upgradeGoldilocksAdmin(code: String) async throws {}
+    func downgradeGoldilocksAdmin() async throws {}
+    func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse {
+        throw CancellationError()
+    }
+    func fetchGoldilocksAgents() async throws -> ConvosAPI.GoldilocksAgentsResponse {
+        throw CancellationError()
+    }
+    func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse {
+        throw CancellationError()
+    }
+    func fetchGoldilocksAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse {
+        throw CancellationError()
+    }
+    func setGoldilocksEmeraldMembership(clientInboxId: String, enabled: Bool) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
+        throw CancellationError()
+    }
+    func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse {
+        throw CancellationError()
+    }
+    func markGoldilocksChannelExploded(role: String) async throws {}
+    func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse {
+        throw CancellationError()
+    }
+    func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse {
+        throw CancellationError()
+    }
+    func recoverGoldilocksChannels() async throws {}
 }
 
 /// Open, fully-conforming `ConvosAPIClientProtocol` base for test fixtures that
@@ -77,7 +123,8 @@ class TestStubAPIClient: ConvosAPIClientProtocol, @unchecked Sendable {
         URLRequest(url: URL(string: "https://example.com/\(path)") ?? URL(string: "https://example.com")!)
     }
     func registerDevice(deviceId: String, pushToken: String?) async throws {}
-    func authenticate(appCheckToken: String, retryCount: Int) async throws -> String { "" }
+    func authenticate(retryCount: Int) async throws -> String { "" }
+    func logout() async {}
     func authenticateWithSIWE(appCheckToken: String, signing: BackendAuthSigningContext) async throws -> String { "" }
     func updateSIWESigningContext(_ context: BackendAuthSigningContext?) {}
     func accountAuthCheck(jwt: String?) async throws -> ConvosAPI.AuthCheckResponse {
@@ -102,6 +149,49 @@ class TestStubAPIClient: ConvosAPIClientProtocol, @unchecked Sendable {
     }
     func listCloudConnections() async throws -> [CloudConnectionsAPI.ConnectionResponse] { [] }
     func revokeCloudConnection(connectionId: String) async throws {}
+
+    // Goldilocks identity registration, admin, and channel lifecycle.
+    // Response-returning defaults throw so an unexpected call surfaces as a
+    // test error instead of fabricating backend state; Void defaults no-op.
+    // Tests that exercise these should override them on their fixture.
+    func fetchGoldilocksChallenge(inboxId: String, ethAddress: String) async throws -> ConvosAPI.GoldilocksChallengeResponse {
+        throw CancellationError()
+    }
+    func registerWithGoldilocks(inboxId: String, siweMessage: String, signature: String, claimAdminRole: Bool) async throws -> ConvosAPI.GoldilocksMeResponse {
+        throw CancellationError()
+    }
+    func fetchGoldilocksMe() async throws -> ConvosAPI.GoldilocksMeResponse {
+        throw CancellationError()
+    }
+    func promoteSelfToAdminDev() async throws {}
+    func upgradeGoldilocksAdmin(code: String) async throws {}
+    func downgradeGoldilocksAdmin() async throws {}
+    func fetchGoldilocksAdmins() async throws -> ConvosAPI.GoldilocksAdminsResponse {
+        throw CancellationError()
+    }
+    func fetchGoldilocksAgents() async throws -> ConvosAPI.GoldilocksAgentsResponse {
+        throw CancellationError()
+    }
+    func fetchGoldilocksAdminChannels() async throws -> ConvosAPI.GoldilocksAdminChannelsResponse {
+        throw CancellationError()
+    }
+    func fetchGoldilocksAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse {
+        throw CancellationError()
+    }
+    func setGoldilocksEmeraldMembership(clientInboxId: String, enabled: Bool) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
+        throw CancellationError()
+    }
+    func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse {
+        throw CancellationError()
+    }
+    func markGoldilocksChannelExploded(role: String) async throws {}
+    func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse {
+        throw CancellationError()
+    }
+    func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse {
+        throw CancellationError()
+    }
+    func recoverGoldilocksChannels() async throws {}
 
     /// Declared on the base (not just the protocol-extension default) so
     /// subclasses can `override` it.

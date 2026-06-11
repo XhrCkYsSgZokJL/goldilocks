@@ -5,8 +5,8 @@ import Foundation
 final class FeatureFlags {
     static let shared: FeatureFlags = FeatureFlags()
 
-    /// Off by default — gates the testtube debug-injector button in the composer
-    /// media bar. Toggle from App Settings → Debug. Hard-locked off in production
+    /// Off by default - gates the testtube debug-injector button in the composer
+    /// media bar. Toggle from App Settings -> Debug. Hard-locked off in production
     /// builds so the flag can never be `true` for end users, even if a UserDefaults
     /// value somehow leaks in from a dev build with the same bundle id.
     var isDebugInjectorEnabled: Bool {

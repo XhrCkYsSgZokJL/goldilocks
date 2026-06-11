@@ -60,4 +60,4 @@ This *is* the product. Upstream is a peer-to-peer messenger; Goldilocks is a con
 
 ## Related
 
-[[branding]] (role/tier chips use `BrandConfig`) · [[goldilocks-billing-credits]] (tier chips) · [[backend-and-shared-monorepo]] (the agents that provision channels) · [[auth-against-goldilocks-backend]] (role comes from our backend)
+[Branding](branding.md) (role/tier chips use `BrandConfig`) · [Goldilocks billing & credits](goldilocks-billing-credits.md) (tier chips) · [Backend & shared monorepo](backend-and-shared-monorepo.md) (the agents that provision channels) · [Auth against Goldilocks backend](auth-against-goldilocks-backend.md) (role comes from our backend)

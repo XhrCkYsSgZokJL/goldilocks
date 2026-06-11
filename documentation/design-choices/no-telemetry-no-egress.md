@@ -47,4 +47,4 @@ The key nuance: we **keep the `CoreActions`/metrics *interface*** (it's threaded
 
 ## Related
 
-[[cloud-connections-gated]] (the other no-egress strip) · [[gated-agents]] · [[platform-build-constraints]]
+[Cloud Connections gated](cloud-connections-gated.md) (the other no-egress strip) · [Gated agents](gated-agents.md) · [Platform build constraints](platform-build-constraints.md)

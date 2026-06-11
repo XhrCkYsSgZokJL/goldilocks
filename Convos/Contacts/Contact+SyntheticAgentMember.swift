@@ -62,48 +62,6 @@ extension AgentShareInfo {
     }
 }
 
-extension ConversationMember {
-    /// Returns a copy with the supplied description merged into the profile
-    /// metadata when the member's own profile doesn't carry one yet. Used to
-    /// keep the template description on the agent contact card after the real
-    /// agent joins but before it writes its `description` metadata -- a no-op
-    /// when the profile already has a description or none is supplied. Like
-    /// the optimistic card member, the copy is only ever handed to the
-    /// messages-list repository, never inserted into `conversation.members`.
-    func withFallbackAgentDescription(_ description: String?) -> ConversationMember {
-        guard let description, !description.isEmpty, profile.agentDescription == nil else { return self }
-        let updatedProfile: Profile = profile.withFallbackDescriptionMetadata(description)
-        return ConversationMember(
-            profile: updatedProfile,
-            role: role,
-            isCurrentUser: isCurrentUser,
-            isAgent: isAgent,
-            agentVerification: agentVerification,
-            invitedBy: invitedBy,
-            joinedAt: joinedAt
-        )
-    }
-}
-
-private extension Profile {
-    /// Returns a copy carrying `description` in its `description` metadata.
-    /// Split into its own body so the multi-argument `Profile` initializer
-    /// is type-checked separately from `withFallbackAgentDescription`'s
-    /// `ConversationMember` construction (keeps both under the limit).
-    func withFallbackDescriptionMetadata(_ description: String) -> Profile {
-        var metadata: ProfileMetadata = self.metadata ?? [:]
-        metadata["description"] = .string(description)
-        return Profile(
-            inboxId: inboxId,
-            conversationId: conversationId,
-            name: name,
-            avatar: avatar,
-            avatarSalt: avatarSalt,
-            avatarNonce: avatarNonce,
-            avatarKey: avatarKey,
-            isAgent: isAgent,
-            imageSourceContentDigest: imageSourceContentDigest,
-            metadata: metadata
-        )
-    }
-}
+// `ConversationMember.withFallbackAgentDescription` lives in ConvosCore
+// (ConversationMember+AgentDescription.swift) alongside the model types it
+// transforms.

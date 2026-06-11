@@ -13,7 +13,7 @@ Put it on a schedule. The reconciliation surface grows super-linearly with drift
 1. `git fetch upstream`
 2. Read `git log --oneline <last-sync>..upstream/dev` and skim the merged PRs. Flag anything touching a [design choice](design-choices/) — those are your reconciliation targets.
 3. Branch: `git checkout -b sync/<date>` from current `main`.
-4. Make sure Docker is up (`./dev/up`) — you'll need it for the test gate.
+4. Make sure Docker is up (`./dev/up`) — you'll need it for the test gate. If `dev/compose` fails with `docker-compose: command not found`, the wrapper (upstream-verbatim) calls compose v1; run `docker compose -f dev/docker-compose.yml -p convos-ios up -d` directly.
 
 ## The process
 
@@ -72,9 +72,23 @@ A single per-file fatal type-check-time warning aborts that file's compilation, 
 Keeping *both* halves of a conflict that splits a brace, comma, or statement produces duplicate returns, unclosed methods, lost bodies, duplicate args. After any bulk resolution, run `xcrun swiftc -parse` on every touched file before trusting it. Prefer a proper 3-way merge (`git merge-file -p`) over hand-unioning.
 
 ### Type-check-time limits are real and partly machine-dependent
-The project enforces `-warn-long-function-bodies` / `-warn-long-expression-type-checking` as **hard errors** under strict CI. Two distinct causes:
-- **Genuine solver cost** — labeled-tuple arrays, stacked ternaries in modifier args, big multi-arg inits, untyped `let`s. Fix by: struct-ifying labeled tuples, hoisting ternaries to typed `let`s, splitting multi-arg inits into their own function body, annotating `let` types. (These fixes *stick*.)
-- **Machine load** — on a loaded host, even a trivial function reports 300ms+. If a one-line function trips the limit, suspect load, not code. Also watch `lldb-rpc-server` memory: a known leak balloons it to 15–20 GB, thrashes the module cache, and inflates every type-check; `killall lldb-rpc-server` fixes it. (See `CLAUDE.md` → _Build Performance_.)
+The project enforces `-warn-long-function-bodies` / `-warn-long-expression-type-checking` as **hard errors** under strict CI. Three distinct causes, and you must diagnose before "fixing":
+- **Genuine solver cost** — labeled-tuple arrays, stacked ternaries in modifier args, untyped `let`s. Fix by: struct-ifying labeled tuples, hoisting ternaries to typed `let`s, annotating `let` types. (These fixes *stick* — the reported time drops.)
+- **First-touch attribution** — the per-function timer is wall-clock and *includes lazy module work* (deserializing member tables for the first named-member lookup of a big type like `Profile` or `UITextField` in that compile batch). Signature: the function's reported time barely moves no matter how you shrink its body, and the per-expression timings sum to almost nothing. Refactoring cannot fix this — it just relocates the charge. If the code is a model-layer transform, moving it into ConvosCore (SwiftPM, no warn-long flags, module-local member tables) is a legitimate cure.
+- **Machine load** — on a loaded host, everything inflates. Watch `lldb-rpc-server` memory (known leak; `killall lldb-rpc-server`) and overall load. (See `CLAUDE.md` → _Build Performance_.)
+
+**How to diagnose — measure expressions, not functions.** Re-run the failing target with per-expression instrumentation and compare:
+
+```bash
+xcodebuild build ... SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
+  OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -debug-time-expression-type-checking' \
+  > /tmp/build.log 2>&1
+grep "TheFile.swift" /tmp/build.log | grep -oE "^[0-9.]+ms.*" | sort -rn | head
+```
+
+If one expression dominates (hundreds of ms), it's solver cost — fix that expression. If all expressions are tiny but the function warning persists, it's first-touch attribution or load — refactoring the body is wasted effort. Also note: **the strict build short-circuits at the first failing file**, hiding others behind it — the warnings-mode instrumented run reveals the full set at once.
+
+**Threshold history:** old `main` deliberately ran these limits at **500ms** (pbxproj), while upstream uses 100 (PR Preview) / 300 (Dev, Local) — which v2 inherited. Upstream-verbatim files (e.g. `DefaultMessagesLayoutDelegate`) can trip the 300ms limit on a loaded machine purely via first-touch attribution. Whether to restore 500 is a standing decision; do not change it silently in either direction.
 
 ### Synchronized file groups removed most of the pbxproj pain
 `Convos`, `ConvosAppClip`, `NotificationService` are `PBXFileSystemSynchronizedRootGroup` — they compile whatever is on disk. So **adding/deleting a Swift file needs no pbxproj edit**. Deleting a file from disk drops it from the build (this is how we removed the upstream tab shell). Only build phases and package refs still need pbxproj work.

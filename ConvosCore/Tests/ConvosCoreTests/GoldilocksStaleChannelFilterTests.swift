@@ -133,6 +133,7 @@ private func makeConversation(id: String, creatorInboxId: String) -> Conversatio
         isUnread: false,
         isMuted: false,
         pinnedOrder: nil,
+        hidesInviteCard: false,
         lastMessage: nil,
         imageURL: nil,
         imageSalt: nil,
@@ -145,7 +146,8 @@ private func makeConversation(id: String, creatorInboxId: String) -> Conversatio
         expiresAt: nil,
         debugInfo: .empty,
         isLocked: false,
-        assistantJoinStatus: nil,
-        hasHadVerifiedAssistant: false
+        agentJoinStatus: nil,
+        hasHadVerifiedAgent: false,
+        wasCreatedFromAgentBuilder: false
     )
 }

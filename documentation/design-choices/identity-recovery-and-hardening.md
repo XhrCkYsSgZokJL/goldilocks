@@ -10,7 +10,7 @@ Goldilocks adds a hardened identity-key lifecycle on top of upstream's XMTP iden
 - **iCloud key backup** (adopted from upstream #971) — a synced backup slot so a user can recover their identity on a new device. The two-slot keychain holds an SE-wrapped device-local primary **and** a synced iCloud raw-key backup.
 - **Capture protection** — `SecureWindow` / `CaptureMonitor` blur sensitive UI under screen recording / screenshots.
 - **File protection** — `NSFileProtectionComplete` entitlement; `ProtectedFile` for at-rest data.
-- **Cert pinning + SIWE** in the API client (see [[auth-against-goldilocks-backend]]).
+- **Cert pinning + SIWE** in the API client (see [Auth against Goldilocks backend](auth-against-goldilocks-backend.md)).
 
 ## Why
 
@@ -54,4 +54,4 @@ This is the security spine of the product. Every item here is a deliberate harde
 
 ## Related
 
-[[auth-against-goldilocks-backend]] (cert pinning + SIWE) · [[platform-build-constraints]] (the `ConvosCoreiOS` bridge) · [[no-telemetry-no-egress]]
+[Auth against Goldilocks backend](auth-against-goldilocks-backend.md) (cert pinning + SIWE) · [Platform build constraints](platform-build-constraints.md) (the `ConvosCoreiOS` bridge) · [No telemetry / no-egress](no-telemetry-no-egress.md)

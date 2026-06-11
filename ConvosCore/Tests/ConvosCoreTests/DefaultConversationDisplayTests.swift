@@ -277,11 +277,11 @@ struct DefaultConversationDisplayTests {
         #expect(conversation.computedDisplayName == "Alice")
     }
 
-    @Test("Empty conversation shows New Convo")
+    @Test("Empty conversation shows New Channel (Goldilocks default name)")
     func emptyConversationShowsNewConvo() {
         let members = [ConversationMember.mock(isCurrentUser: true, name: "You")]
         let conversation = Conversation.mock(name: nil, members: members)
-        #expect(conversation.computedDisplayName == "New Convo")
+        #expect(conversation.computedDisplayName == "New Channel")
     }
 
     // MARK: - Conversation isFullyAnonymous Tests
@@ -666,7 +666,7 @@ struct DefaultConversationDisplayTests {
         let members = [ConversationMember.mock(isCurrentUser: true, name: "You")]
         let conversation = Conversation.mock(name: nil, members: members)
         #expect(conversation.isPendingAgentBuilderDraft == false)
-        #expect(conversation.computedDisplayName == "New Convo")
+        #expect(conversation.computedDisplayName == "New Channel")
     }
 
     @Test("Builder conversation that has had a verified agent is no longer pending")

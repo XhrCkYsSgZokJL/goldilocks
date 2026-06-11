@@ -8,7 +8,7 @@ Goldilocks authenticates against **our backend**, not upstream's. The API client
 
 ## Why
 
-Goldilocks has its own backend (`backend/`) with its own auth, accounts, roles, billing, and agent provisioning. The app must talk to it. Auth is also security-sensitive (cert pinning, token lifecycle), so it's reconciled with the same care as [[identity-recovery-and-hardening]].
+Goldilocks has its own backend (`backend/`) with its own auth, accounts, roles, billing, and agent provisioning. The app must talk to it. Auth is also security-sensitive (cert pinning, token lifecycle), so it's reconciled with the same care as [Identity recovery & hardening](identity-recovery-and-hardening.md).
 
 ## Upstream vs Goldilocks
 
@@ -19,7 +19,7 @@ Goldilocks has its own backend (`backend/`) with its own auth, accounts, roles, 
 | Token model | JWT | JWT + **refresh-token** chain (`refreshToken(deviceId:)`) |
 | Account keys | `siweJwt` / `siweAccountId` | same keychain accounts **plus** our refresh slot |
 | Transport | — | cert pinning |
-| App Check | Firebase | removed (see [[no-telemetry-no-egress]]) |
+| App Check | Firebase | removed (see [No telemetry / no-egress](no-telemetry-no-egress.md)) |
 
 ## Files affected
 
@@ -38,10 +38,10 @@ Goldilocks has its own backend (`backend/`) with its own auth, accounts, roles, 
 
 - **Keep ours; don't adopt upstream's SIWE by accident.** When upstream refactors its API client or SIWE, re-apply our endpoints + refresh-token chain + cert pinning on top. A 3-way diff that "cleanly" takes upstream's auth is a regression — verify the endpoints still point at the Goldilocks backend.
 - **`ConvosKeychainItem` is a union** — preserve both upstream's SIWE accounts and our refresh-token account; a take-ours or take-upstream resolution drops one set.
-- **No Firebase App Check** — `reAuthenticate` must not reintroduce it (see [[no-telemetry-no-egress]]).
+- **No Firebase App Check** — `reAuthenticate` must not reintroduce it (see [No telemetry / no-egress](no-telemetry-no-egress.md)).
 - Endpoints the app calls but the backend doesn't implement yet should `throw APIError.notImplementedInGoldilocks` rather than hit a missing route.
-- Keep request/response models in sync with the backend via shared codegen ([[backend-and-shared-monorepo]]).
+- Keep request/response models in sync with the backend via shared codegen ([Backend & shared monorepo](backend-and-shared-monorepo.md)).
 
 ## Related
 
-[[identity-recovery-and-hardening]] (cert pinning, keychain) · [[backend-and-shared-monorepo]] · [[goldilocks-billing-credits]] · [[no-telemetry-no-egress]]
+[Identity recovery & hardening](identity-recovery-and-hardening.md) (cert pinning, keychain) · [Backend & shared monorepo](backend-and-shared-monorepo.md) · [Goldilocks billing & credits](goldilocks-billing-credits.md) · [No telemetry / no-egress](no-telemetry-no-egress.md)

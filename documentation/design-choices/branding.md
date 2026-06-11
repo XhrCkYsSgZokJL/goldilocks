@@ -35,7 +35,7 @@ Goldilocks is a distinct product, not "Convos with a different icon." Centralizi
 - `Convos/Conversations List/ConversationsListEmptyCTA.swift`, `Shared Views/AvatarView.swift`, `Window/CaptureOverlay.swift` — branded glyphs/fallbacks.
 
 ### Mechanical (config / build)
-- xcconfig domains + URL schemes, `Info.plist` display names, the "Copy Brand Config" build phase (see [[platform-build-constraints]]).
+- xcconfig domains + URL schemes, `Info.plist` display names, the "Copy Brand Config" build phase (see [Platform build constraints](platform-build-constraints.md)).
 
 ## Markers
 
@@ -45,9 +45,9 @@ Goldilocks is a distinct product, not "Convos with a different icon." Centralizi
 
 - **Mechanical but pervasive — batch it.** When upstream adds a new "Convos" string literal or bundled asset reference in a file we render, re-point it at `BrandConfig.shared`. Low-risk, just tedious; do it in one pass.
 - **Owned brand files are free** — assets, `brand.json`, `BrandConfig`, icons have no upstream equivalent.
-- **The build phase is the one gotcha** — re-add the "Copy Brand Config" build phase to upstream's project after a pbxproj regeneration ([[platform-build-constraints]]).
+- **The build phase is the one gotcha** — re-add the "Copy Brand Config" build phase to upstream's project after a pbxproj regeneration ([Platform build constraints](platform-build-constraints.md)).
 - Prefer adding any *new* brand value to `brand.json` + `BrandConfig` rather than a literal, so the next sync stays mechanical.
 
 ## Related
 
-[[platform-build-constraints]] (brand build phase, codegen) · [[roles-and-managed-groups]] (chips use brand colors) · [[backend-and-shared-monorepo]] (`shared/` codegen)
+[Platform build constraints](platform-build-constraints.md) (brand build phase, codegen) · [Roles & managed groups](roles-and-managed-groups.md) (chips use brand colors) · [Backend & shared monorepo](backend-and-shared-monorepo.md) (`shared/` codegen)

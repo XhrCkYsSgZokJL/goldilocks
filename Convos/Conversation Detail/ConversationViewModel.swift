@@ -3977,5 +3977,4 @@ extension ConversationViewModel {
                 }
         }
     }
-
 }

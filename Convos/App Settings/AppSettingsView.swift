@@ -168,7 +168,7 @@ struct AppSettingsView: View {
             profile: .constant(.empty()),
             profileImage: .constant(nil),
             editingDisplayName: .constant(""),
-            profileSettingsViewModel: .shared,
+            profileSettingsViewModel: profileSettingsViewModel,
             showsCancelButton: false,
             showsProfile: false,
             showsUseProfileButton: false,

@@ -94,5 +94,4 @@ enum StatsFormat {
         result.append(StatsTierStat(id: "emerald", label: "Emerald", count: counts.emerald, mrrCents: mrr.emerald, color: .statsEmerald))
         return result
     }
-
 }

@@ -43,4 +43,4 @@ The Quickname *randomizer* (auto-generating pseudonymous names) was removed with
 
 ## Related
 
-[[branding]] (Quickname-as-brand-string is the clean way to keep the name) · [[app-shell-direct-root]] · [[roles-and-managed-groups]]
+[Branding](branding.md) (Quickname-as-brand-string is the clean way to keep the name) · [App shell: direct root](app-shell-direct-root.md) · [Roles & managed groups](roles-and-managed-groups.md)

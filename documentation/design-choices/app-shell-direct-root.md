@@ -22,7 +22,7 @@ Goldilocks is conversation-first with [managed channels](roles-and-managed-group
 ## Files affected
 
 ### Dropped (upstream files removed from the target)
-- `Convos/MainTabView.swift`, `MainTabView+MetricsObservers.swift`, `Convos/Conversations List/StuffTabView.swift` — the #918 tab shell. Deleting the files removes them from the build (synchronized file group — see [[platform-build-constraints]]).
+- `Convos/MainTabView.swift`, `MainTabView+MetricsObservers.swift`, `Convos/Conversations List/StuffTabView.swift` — the #918 tab shell. Deleting the files removes them from the build (synchronized file group — see [Platform build constraints](platform-build-constraints.md)).
 - **Kept:** `Convos/Metrics/MainTabNavigatorImpls.swift` — it also defines the `NavigatorLifecycle` protocol that ~40 metrics-navigator files depend on; the 3 tab-navigator impls inside are unused but harmless.
 
 ### Extended (REPLACE-EXTEND — our standalone root)
@@ -42,4 +42,4 @@ Absence of `MainTabView` in the target; `ConvosApp` body rooting on `Conversatio
 
 ## Related
 
-[[gated-agents]] (why no Agents tab) · [[profile-vs-quickname]] (the list's settings VM) · [[platform-build-constraints]] (synchronized file groups)
+[Gated agents](gated-agents.md) (why no Agents tab) · [Profile (formerly Quickname)](profile-vs-quickname.md) (the list's settings VM) · [Platform build constraints](platform-build-constraints.md) (synchronized file groups)

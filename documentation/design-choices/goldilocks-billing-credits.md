@@ -29,7 +29,7 @@ Goldilocks bills through its own backend (membership tiers, credits, upgrade cod
 
 ### Extended (REPLACE-EXTEND)
 - `ConvosCore/Sources/ConvosCore/ConvosClient+App.swift` — wires `CreditsServices` to the DB + API at construction.
-- `ConvosCore/Sources/ConvosCore/API/ConvosAPIClient.swift` — credits/subscription endpoints (see [[auth-against-goldilocks-backend]]).
+- `ConvosCore/Sources/ConvosCore/API/ConvosAPIClient.swift` — credits/subscription endpoints (see [Auth against Goldilocks backend](auth-against-goldilocks-backend.md)).
 - `Convos/App Settings/AppSettingsView.swift` — membership tier UI, upgrade prompt.
 - `Convos/Conversation Detail/ConversationView.swift` / `ConversationViewModel.swift`, `…/ConversationOnboardingView.swift` — low-balance banner, paywall step.
 
@@ -45,9 +45,9 @@ Goldilocks bills through its own backend (membership tiers, credits, upgrade cod
 - **Don't let a sync adopt StoreKit as the billing source.** Upstream's IAP evolution is GATE/compatibility-only — keep `BackendCreditsService` as the live path.
 - **The credits service is owned** — bring it as-is; only its wiring in `ConvosClient+App` is REPLACE-EXTEND.
 - When upstream changes the paywall/subscription UI, re-apply the tier/credits binding on top of their structure.
-- Backend billing lives in `backend/src/billing/` (see [[backend-and-shared-monorepo]]); keep the iOS credit model and shared types in sync via codegen.
+- Backend billing lives in `backend/src/billing/` (see [Backend & shared monorepo](backend-and-shared-monorepo.md)); keep the iOS credit model and shared types in sync via codegen.
 - Reference: `docs/plans/in-app-purchases-and-credits.md`, `docs/plans/subscription-product-catalog.md`.
 
 ## Related
 
-[[auth-against-goldilocks-backend]] · [[roles-and-managed-groups]] (tier chips) · [[backend-and-shared-monorepo]]
+[Auth against Goldilocks backend](auth-against-goldilocks-backend.md) · [Roles & managed groups](roles-and-managed-groups.md) (tier chips) · [Backend & shared monorepo](backend-and-shared-monorepo.md)
