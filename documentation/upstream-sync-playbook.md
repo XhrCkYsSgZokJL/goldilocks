@@ -101,6 +101,13 @@ The v2 rebase's biggest dead-end: taking our *old* app-UI files wholesale, then 
 ### Cross-module enums need explicit `Sendable`
 A public enum from a dependency module (e.g. `ConvosMetrics`'s `ConversationSource`) is **not** implicitly `Sendable` across the module boundary, so passing it into a `Task` trips strict concurrency. Add a retroactive conformance in our module (`extension X: @retroactive @unchecked Sendable {}`) for the payload-free ones rather than forking the dependency. Qualify the name if it collides with an app-local type.
 
+### Stale SPM binary artifacts survive dependency-pin changes — wipe build state after a sync
+SwiftPM's extracted artifact cache (`.derivedData/SourcePackages/artifacts/`) is **not reliably invalidated** when a `binaryTarget` dependency's pin changes. After a sync bumps libxmtp, the source checkout updates but the old `LibXMTPSwiftFFI.xcframework` extract can stay — and the first *from-scratch* compile of `XMTPiOS` fails with uniffi generation-mismatch errors (`cannot convert 'UInt64' to 'UnsafeMutableRawPointer'`, missing `UniffiForeignFuture*` types). Warm builds hide it (the package target isn't recompiled), so it bites the *next person who builds clean* — days later, looking unrelated.
+
+Two corollaries:
+- **After any sync that touches `Package.resolved`/pins, wipe `SourcePackages`** (`rm -rf .derivedData/SourcePackages`, or `./dev/sim --clean` which now does this) and do one from-scratch build as a gate.
+- **`./dev/reset` wipes backend/simulator state only — not build state.** A "full reset" that still fails to build is almost always this artifact cache, not the reset.
+
 ## History
 
 The v2 reconciliation (2026-06) was the one-time catch-up after ~160 PRs of drift made cherry-picking impossible. Full record:

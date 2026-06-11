@@ -201,6 +201,17 @@ fi
 
 # --- Build ---
 
+if $CLEAN && ! $SKIP_BUILD; then
+  # Wipe SPM build state before building: the package artifact cache can
+  # go stale when a binaryTarget dependency pin changes (libxmtp's
+  # LibXMTPSwiftFFI), which surfaces as uniffi type errors compiling
+  # XMTPiOS (UInt64 vs UnsafeMutableRawPointer). A fresh resolve
+  # re-downloads the checksum-verified binary that matches the
+  # checked-out bindings.
+  echo "→ --clean: wiping SPM package state ($DERIVED_DATA/SourcePackages)"
+  rm -rf "$DERIVED_DATA/SourcePackages"
+fi
+
 if ! $SKIP_BUILD; then
   echo "→ building $SCHEME"
   xcodebuild build \
