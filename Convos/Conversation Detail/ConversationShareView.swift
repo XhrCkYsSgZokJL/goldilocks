@@ -135,16 +135,14 @@ struct ConversationShareOverlay: View {
                             .fill(.colorBackgroundSurfaceless)
                             .frame(width: centerBackgroundSize, height: centerBackgroundSize)
 
-                        ZStack {
-                            Rectangle()
-                                .fill(Color.colorBackgroundSurfaceless)
-                            conversationImage
-                                .resizable()
-                                .renderingMode(.original)
-                                .aspectRatio(contentMode: .fill)
-                        }
-                        .frame(width: centerImageSize, height: centerImageSize)
-                        .clipShape(RoundedRectangle(cornerRadius: DesignConstants.CornerRadius.small))
+                        // No backing tile behind the logo: the SVG is
+                        // transparent and sits directly on the knockout
+                        // square above.
+                        conversationImage
+                            .resizable()
+                            .renderingMode(.original)
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: centerImageSize, height: centerImageSize)
                     }
                 }
                 .padding([.leading, .trailing, .bottom], cardInternalPadding)

@@ -54,15 +54,13 @@ struct QRCodeView: View {
             } else {
                 ZStack {
                     if let centerImage {
-                        ZStack {
-                            Rectangle()
-                                .fill(foregroundColor)
-                            centerImage
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        }
-                        .frame(width: 50.0, height: 50.0)
-                        .clipShape(RoundedRectangle(cornerRadius: DesignConstants.CornerRadius.small))
+                        // No backing tile: the logo SVG is transparent and sits
+                        // directly on the knockout square that blanks the QR
+                        // modules (drawn by `body`, in the QR's background color).
+                        centerImage
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 50.0, height: 50.0)
                     } else {
                         ShareLink(item: url) {
                             Image(systemName: "square.and.arrow.up")
