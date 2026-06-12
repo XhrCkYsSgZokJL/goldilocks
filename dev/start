@@ -36,18 +36,21 @@ start_process() {
 # Stripe CLI webhook forwarder — forwards checkout.session.completed
 # events to the local server so balance crediting works in dev.
 # The signing secret is captured and written to .env.dev so the server
-# can verify webhook signatures. Stripe CLI must be installed and
-# logged in (`stripe login`).
+# can verify webhook signatures. Authenticates with --api-key from
+# STRIPE_SECRET_KEY in .env.dev, so no interactive `stripe login` is
+# needed; the listener then comes up and down with ./dev/start|stop.
 if command -v stripe >/dev/null 2>&1 && grep -q "STRIPE_SECRET_KEY=sk_" .env.dev 2>/dev/null; then
   if [ -f ".dev-run/stripe.pid" ] && kill -0 "$(cat ".dev-run/stripe.pid" 2>/dev/null)" 2>/dev/null; then
     echo "  stripe listener already running"
   else
     clean_old_logs stripe
     local_log=".dev-run/stripe-$(date +%Y%m%d-%H%M%S).log"
+    stripe_key="$(grep '^STRIPE_SECRET_KEY=' .env.dev | head -1 | cut -d'=' -f2-)"
 
     # Start stripe listen in background and capture the webhook secret
     # from its initial output (line: "whsec_...").
     nohup stripe listen \
+      --api-key "$stripe_key" \
       --forward-to "localhost:${PORT:-4000}/api/v2/stripe/webhook" \
       > "$local_log" 2>&1 &
     echo $! > ".dev-run/stripe.pid"
@@ -75,7 +78,12 @@ if command -v stripe >/dev/null 2>&1 && grep -q "STRIPE_SECRET_KEY=sk_" .env.dev
   fi
 else
   if ! command -v stripe >/dev/null 2>&1; then
-    echo "  ⚠ stripe CLI not installed — webhook forwarding disabled (brew install stripe/stripe-cli/stripe)"
+    echo "  ⚠ stripe CLI not installed — webhook forwarding disabled (brew install stripe/stripe-cli/stripe,"
+    echo "    or grab the binary from github.com/stripe/stripe-cli/releases into ~/.local/bin)"
+  else
+    echo "  ⚠ STRIPE_SECRET_KEY missing from .env.dev — stripe listener disabled."
+    echo "    Paste your test-mode key (dashboard.stripe.com/test/apikeys) into backend/.env.dev,"
+    echo "    then re-run ./dev/start. See docs/operations/local-notifications-and-payments-setup.md."
   fi
 fi
 
