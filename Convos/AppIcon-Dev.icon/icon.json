@@ -48,7 +48,7 @@
             }
           ],
           "glass" : true,
-          "hidden" : true,
+          "hidden" : false,
           "image-name" : "4 – Layerb.svg",
           "name" : "4 – Layerb",
           "opacity-specializations" : [
@@ -83,6 +83,31 @@
       "hidden" : false,
       "layers" : [
         {
+          "glass" : false,
+          "image-name" : "Goldilocks Logo (1).svg",
+          "name" : "Goldilocks Logo (1)",
+          "position" : {
+            "scale" : 1.8,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "glass" : false,
+          "hidden" : true,
+          "image-name" : "Goldilocks Logo.svg",
+          "name" : "Goldilocks Logo",
+          "position" : {
+            "scale" : 18,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
           "blend-mode-specializations" : [
             {
               "appearance" : "tinted",
@@ -114,7 +139,7 @@
               "value" : true
             }
           ],
-          "hidden" : false,
+          "hidden" : true,
           "image-name" : "2 – Layer.svg",
           "name" : "2 – Layer",
           "opacity-specializations" : [
@@ -171,7 +196,7 @@
               }
             }
           ],
-          "hidden" : false,
+          "hidden" : true,
           "image-name" : "1 – Layer.svg",
           "name" : "1 – Layer",
           "opacity-specializations" : [
