@@ -37,6 +37,7 @@ public struct GoldilocksMeResponse: Codable, Sendable {
     public let isAdmin: Bool
     public let inboxId: String
     public let emeraldMembershipEnabled: Bool
+    public let emeraldSeatLimit: Int
     public let referralCode: String?
     public let referralCreditCents: Int
     public let payingReferralCount: Int
@@ -47,6 +48,7 @@ public struct GoldilocksMeResponse: Codable, Sendable {
         isAdmin: Bool,
         inboxId: String,
         emeraldMembershipEnabled: Bool = false,
+        emeraldSeatLimit: Int = 0,
         referralCode: String? = nil,
         referralCreditCents: Int = 0,
         payingReferralCount: Int = 0,
@@ -56,6 +58,7 @@ public struct GoldilocksMeResponse: Codable, Sendable {
         self.isAdmin = isAdmin
         self.inboxId = inboxId
         self.emeraldMembershipEnabled = emeraldMembershipEnabled
+        self.emeraldSeatLimit = emeraldSeatLimit
         self.referralCode = referralCode
         self.referralCreditCents = referralCreditCents
         self.payingReferralCount = payingReferralCount
@@ -129,6 +132,38 @@ public struct GoldilocksAdminChannel: Codable, Sendable {
     public let monthlyRateCents: Int
     public let coverageActive: Bool
     public let emeraldMembershipEnabled: Bool
+    public let emeraldSeatLimit: Int
+    public let reviewOpen: Bool
+
+    public init(
+        clientNumber: Int64,
+        clientInboxId: String,
+        role: String,
+        xmtpGroupId: String? = nil,
+        status: String,
+        createdAt: String,
+        explodedAt: String? = nil,
+        recreatedAt: String? = nil,
+        monthlyRateCents: Int,
+        coverageActive: Bool,
+        emeraldMembershipEnabled: Bool,
+        emeraldSeatLimit: Int = 0,
+        reviewOpen: Bool = false
+    ) {
+        self.clientNumber = clientNumber
+        self.clientInboxId = clientInboxId
+        self.role = role
+        self.xmtpGroupId = xmtpGroupId
+        self.status = status
+        self.createdAt = createdAt
+        self.explodedAt = explodedAt
+        self.recreatedAt = recreatedAt
+        self.monthlyRateCents = monthlyRateCents
+        self.coverageActive = coverageActive
+        self.emeraldMembershipEnabled = emeraldMembershipEnabled
+        self.emeraldSeatLimit = emeraldSeatLimit
+        self.reviewOpen = reviewOpen
+    }
 }
 
 public struct GoldilocksAdminChannelsResponse: Codable, Sendable {
@@ -185,11 +220,22 @@ public struct GoldilocksAdminStatsResponse: Codable, Sendable {
 
 public struct GoldilocksEmeraldToggleRequest: Codable, Sendable {
     public let enabled: Bool
+    public let seatLimit: Int?
 }
 
 public struct GoldilocksEmeraldToggleResponse: Codable, Sendable {
     public let clientNumber: Int64
     public let emeraldMembershipEnabled: Bool
+    public let changed: Bool
+}
+
+public struct GoldilocksReviewToggleRequest: Codable, Sendable {
+    public let open: Bool
+}
+
+public struct GoldilocksReviewToggleResponse: Codable, Sendable {
+    public let clientNumber: Int64
+    public let reviewOpen: Bool
     public let changed: Bool
 }
 
@@ -201,6 +247,19 @@ public struct GoldilocksCheckoutRequest: Codable, Sendable {
 public struct GoldilocksCheckoutResponse: Codable, Sendable {
     public let checkoutUrl: String
     public let sessionId: String
+}
+
+public struct GoldilocksPaymentMethodSetupResponse: Codable, Sendable {
+    public let checkoutUrl: String
+    public let sessionId: String
+}
+
+public struct GoldilocksPaymentMethodConfirmRequest: Codable, Sendable {
+    public let sessionId: String
+}
+
+public struct GoldilocksPaymentMethodConfirmResponse: Codable, Sendable {
+    public let hasPaymentMethod: Bool
 }
 
 public struct GoldilocksSeatsRequest: Codable, Sendable {
@@ -216,6 +275,7 @@ public struct GoldilocksBillingStatusResponse: Codable, Sendable {
     public let seats: Int
     public let coveredPeople: Int
     public let reportDay: String
+    public let hasPaymentMethod: Bool
 
     public init(
         activeUntil: String? = nil,
@@ -225,7 +285,8 @@ public struct GoldilocksBillingStatusResponse: Codable, Sendable {
         monthlyRateCents: Int,
         seats: Int,
         coveredPeople: Int,
-        reportDay: String
+        reportDay: String,
+        hasPaymentMethod: Bool = false
     ) {
         self.activeUntil = activeUntil
         self.coverageActive = coverageActive
@@ -235,6 +296,7 @@ public struct GoldilocksBillingStatusResponse: Codable, Sendable {
         self.seats = seats
         self.coveredPeople = coveredPeople
         self.reportDay = reportDay
+        self.hasPaymentMethod = hasPaymentMethod
     }
 }
 

@@ -98,7 +98,7 @@ extension ConvosAPIClientProtocol {
     func fetchGoldilocksAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse {
         throw CancellationError()
     }
-    func setGoldilocksEmeraldMembership(clientInboxId: String, enabled: Bool) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
+    func setGoldilocksEmeraldMembership(clientInboxId: String, enabled: Bool, seatLimit: Int?) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
         throw CancellationError()
     }
     func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse {
@@ -112,6 +112,18 @@ extension ConvosAPIClientProtocol {
         throw CancellationError()
     }
     func recoverGoldilocksChannels() async throws {}
+    func setupGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodSetupResponse {
+        throw CancellationError()
+    }
+    func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        throw CancellationError()
+    }
+    func removeGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        throw CancellationError()
+    }
+    func setGoldilocksClientReview(clientInboxId: String, open: Bool) async throws -> ConvosAPI.GoldilocksReviewToggleResponse {
+        throw CancellationError()
+    }
 }
 
 /// Open, fully-conforming `ConvosAPIClientProtocol` base for test fixtures that
@@ -178,7 +190,7 @@ class TestStubAPIClient: ConvosAPIClientProtocol, @unchecked Sendable {
     func fetchGoldilocksAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse {
         throw CancellationError()
     }
-    func setGoldilocksEmeraldMembership(clientInboxId: String, enabled: Bool) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
+    func setGoldilocksEmeraldMembership(clientInboxId: String, enabled: Bool, seatLimit: Int?) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
         throw CancellationError()
     }
     func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse {

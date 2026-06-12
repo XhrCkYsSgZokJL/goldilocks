@@ -362,7 +362,7 @@ struct ConversationInfoView: View {
 
             membersSection
 
-            PeopleAndCoverageSection(viewModel: viewModel, selectedPerson: $selectedPerson)
+            PeopleAndCoverageSection(viewModel: viewModel, selectedPerson: $selectedPerson, channel: $emeraldChannel)
 
             AdminEmeraldTierSection(viewModel: viewModel, channel: $emeraldChannel)
 
@@ -397,23 +397,8 @@ struct ConversationInfoView: View {
             debugInfoSection
         }
         .sheet(item: $selectedPerson) { member in
-            AdvisoryPersonSheet(
-                member: member,
-                enabled: personEnabledBinding(for: member.id)
-            )
+            AdvisoryPersonSheet(member: member)
         }
-    }
-
-    private func personEnabledBinding(for id: UUID) -> Binding<Bool> {
-        let seatPlan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
-        return Binding(
-            get: { seatPlan.members.first(where: { $0.id == id })?.enabled ?? false },
-            set: { newValue in
-                guard let index = seatPlan.members.firstIndex(where: { $0.id == id }) else { return }
-                seatPlan.members[index].enabled = newValue
-                Task { await viewModel.saveGoldilocksPeopleList() }
-            }
-        )
     }
 
     private func loadEmeraldChannelIfNeeded() async {
@@ -755,29 +740,25 @@ private struct ConversationPreferencesSection: View {
     }
 }
 
-/// Admin-side companion to the client's `PersonEditorSheet`. Name and
-/// email are owned by the client (set when they verify the person), so
-/// both are read-only here. The one admin lever is the enabled toggle,
-/// which acts as a kill switch on the third-party subscription and the
-/// per-client billing rate.
+/// Admin-side companion to the client's `PersonEditorSheet`. All the
+/// person's details are owned by the client (set when they verify the
+/// person), so this sheet is read-only.
 private struct AdvisoryPersonSheet: View {
     @Environment(\.dismiss) private var dismiss: DismissAction
 
     let member: SeatMember
-    @Binding var enabled: Bool
 
     var body: some View {
         NavigationStack {
             Form {
                 identitySection
                 emailsSection
-                if !member.phone.isEmpty {
+                if !member.phones.isEmpty {
                     phoneSection
                 }
-                if !member.address.isEmpty {
+                if !member.addresses.isEmpty {
                     addressSection
                 }
-                enabledSection
             }
             .scrollContentBackground(.hidden)
             .background(.colorBackgroundRaisedSecondary)
@@ -794,22 +775,20 @@ private struct AdvisoryPersonSheet: View {
 
     private var identitySection: some View {
         Section {
-            LabeledContent("First name") {
-                Text(member.firstName.isEmpty ? "—" : member.firstName)
-                    .foregroundStyle(.colorTextSecondary)
+            if !member.firstName.isEmpty {
+                Text(member.firstName)
+                    .foregroundStyle(.colorTextPrimary)
             }
             if !member.middleName.isEmpty {
-                LabeledContent("Middle name") {
-                    Text(member.middleName)
-                        .foregroundStyle(.colorTextSecondary)
-                }
+                Text(member.middleName)
+                    .foregroundStyle(.colorTextPrimary)
             }
-            LabeledContent("Last name") {
-                Text(member.lastName.isEmpty ? "—" : member.lastName)
-                    .foregroundStyle(.colorTextSecondary)
+            if !member.lastName.isEmpty {
+                Text(member.lastName)
+                    .foregroundStyle(.colorTextPrimary)
             }
-        } footer: {
-            Text("The client owns this person's name and contact info. Reach out to them if anything needs to change.")
+        } header: {
+            Text("Name")
         }
     }
 
@@ -830,49 +809,31 @@ private struct AdvisoryPersonSheet: View {
 
     private func emailRow(_ email: LabeledEmail) -> some View {
         HStack {
-            VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
-                Text(email.address)
-                    .foregroundStyle(.colorTextPrimary)
-                Text(email.label.displayName)
-                    .font(.caption)
-                    .foregroundStyle(.colorTextSecondary)
-            }
+            Text(email.address)
+                .foregroundStyle(.colorTextPrimary)
             Spacer()
-            if email.verified {
-                Text("Verified")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.colorTextSecondary)
-            } else {
-                Text("Unverified")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.colorTextTertiary)
-            }
         }
     }
 
     private var phoneSection: some View {
         Section {
-            LabeledContent("Phone") {
-                Text(member.phone)
+            ForEach(member.phones, id: \.self) { phone in
+                Text(phone)
                     .foregroundStyle(.colorTextSecondary)
             }
+        } header: {
+            Text("Phones")
         }
     }
 
     private var addressSection: some View {
         Section {
-            Text(member.address.singleLine)
-                .foregroundStyle(.colorTextSecondary)
+            ForEach(member.addresses, id: \.self) { address in
+                Text(address.display)
+                    .foregroundStyle(.colorTextSecondary)
+            }
         } header: {
-            Text("Address")
-        }
-    }
-
-    private var enabledSection: some View {
-        Section {
-            Toggle("Enabled", isOn: $enabled)
-        } footer: {
-            Text("Enabled people are subscribed to the service and count toward this client's monthly rate.")
+            Text("Addresses")
         }
     }
 }
@@ -896,25 +857,47 @@ private struct AdminEmeraldTierSection: View {
 
     @State private var saving: Bool = false
     @State private var errorMessage: String?
+    @State private var showingLimitDialog: Bool = false
+    @State private var limitInput: String = ""
+
+    private static let rowIconWidth: CGFloat = 28.0
 
     var body: some View {
         Group {
             if GoldilocksConfig.role == .admin, let channel {
                 Section {
                     toggleRow(for: channel)
+                    seatLimitRow(for: channel)
                     if let errorMessage {
                         Text(errorMessage)
                             .font(.caption)
                             .foregroundStyle(.red)
                     }
                 } header: {
-                    Text("Tier override")
+                    Text("Emerald")
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(.colorTextSecondary)
                 } footer: {
-                    Text("Emerald overrides automatic tier selection.")
+                    Text("Emerald overrides automatic tier selection. The limit caps how many people the client can enable.")
                         .font(.caption)
                         .foregroundStyle(.colorTextSecondary)
+                }
+                .alert("Set limit", isPresented: $showingLimitDialog) {
+                    TextField("1", text: $limitInput)
+                        .keyboardType(.numberPad)
+                        .onChange(of: limitInput) { _, newValue in
+                            limitInput = String(newValue.filter { $0.isNumber }.prefix(3))
+                        }
+                    let saveAction: () -> Void = {
+                        guard let value = Int(limitInput), value >= 1 else { return }
+                        // Preserve the current activation state — setting
+                        // the limit alone must not flip Emerald on or off.
+                        Task { await setEmerald(to: channel.emeraldMembershipEnabled, seatLimit: value, for: channel) }
+                    }
+                    Button("Save", action: saveAction)
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("How many people this client can add to their membership.")
                 }
             }
         }
@@ -922,9 +905,19 @@ private struct AdminEmeraldTierSection: View {
     }
 
     private func toggleRow(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
-        HStack {
-            Text("Emerald membership")
-                .foregroundStyle(.colorTextPrimary)
+        let emeraldTier: GoldilocksMembershipTier = .emerald
+        return HStack(spacing: DesignConstants.Spacing.step2x) {
+            Image(systemName: emeraldTier.iconName)
+                .font(.body)
+                .foregroundStyle(emeraldTier.accentColor)
+                .frame(width: Self.rowIconWidth, alignment: .center)
+            VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                Text("Activate")
+                    .foregroundStyle(.colorTextPrimary)
+                Text("Posts alert to admin group.")
+                    .font(.caption)
+                    .foregroundStyle(.colorTextSecondary)
+            }
             Spacer()
             Toggle("", isOn: binding(for: channel))
                 .labelsHidden()
@@ -940,6 +933,39 @@ private struct AdminEmeraldTierSection: View {
                 Task { await setEmerald(to: newValue, for: channel) }
             }
         )
+    }
+
+    /// Row for the Emerald people allowance, shown while the toggle is
+    /// on. Tapping opens a number-entry dialog; minimum (and default)
+    /// is 1.
+    private func seatLimitRow(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
+        let tapAction: () -> Void = {
+            limitInput = String(max(1, channel.emeraldSeatLimit))
+            showingLimitDialog = true
+        }
+        return Button(action: tapAction) {
+            HStack(spacing: DesignConstants.Spacing.step2x) {
+                Image(systemName: "person.2.fill")
+                    .font(.body)
+                    .foregroundStyle(.colorFillPrimary)
+                    .frame(width: Self.rowIconWidth, alignment: .center)
+                VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                    Text("Set limit")
+                        .foregroundStyle(.colorTextPrimary)
+                    Text("Add up to this number of people.")
+                        .font(.caption)
+                        .foregroundStyle(.colorTextSecondary)
+                }
+                Spacer()
+                Text("\(max(1, channel.emeraldSeatLimit))")
+                    .foregroundStyle(.colorTextSecondary)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.colorTextTertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func loadChannelIfAdmin() async {
@@ -964,13 +990,15 @@ private struct AdminEmeraldTierSection: View {
 
     private func setEmerald(
         to newValue: Bool,
+        seatLimit: Int? = nil,
         for channel: ConvosAPI.GoldilocksAdminChannel
     ) async {
         saving = true
         errorMessage = nil
         let result: Bool? = await viewModel.setAdvisoryEmeraldMembership(
             clientInboxId: channel.clientInboxId,
-            enabled: newValue
+            enabled: newValue,
+            seatLimit: seatLimit
         )
         if result != nil {
             self.channel = await viewModel.loadAdminChannelForCurrentConversation()
@@ -996,21 +1024,20 @@ private struct AdminEmeraldTierSection: View {
 private struct PeopleAndCoverageSection: View {
     let viewModel: ConversationViewModel
     @Binding var selectedPerson: SeatMember?
+    @Binding var channel: ConvosAPI.GoldilocksAdminChannel?
 
     @State private var seatPlan: GoldilocksSeatPlan = GoldilocksSeatPlan.shared
-    @State private var coverage: ConvosAPI.GoldilocksBillingStatusResponse?
+    @State private var reviewSaving: Bool = false
 
-    private static let coverageDateFormatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
+    private static let rowIconWidth: CGFloat = 28.0
 
     var body: some View {
         Group {
             if shouldShow {
                 Section {
-                    coverageRow
+                    if let channel {
+                        reviewToggleRow(for: channel)
+                    }
                     if seatPlan.members.isEmpty {
                         Text("No people added yet.")
                             .foregroundStyle(.colorTextSecondary)
@@ -1020,19 +1047,14 @@ private struct PeopleAndCoverageSection: View {
                         }
                     }
                 } header: {
-                    Text("People & coverage")
+                    Text("Client")
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(.colorTextSecondary)
                 } footer: {
-                    Text("Tap a person to view their info or toggle their coverage.")
+                    Text("Tap a person to view their info.")
                         .font(.caption)
                         .foregroundStyle(.colorTextSecondary)
                 }
-            }
-        }
-        .task {
-            if shouldShow {
-                coverage = await viewModel.loadGoldilocksAdvisoryInfo()
             }
         }
     }
@@ -1044,24 +1066,43 @@ private struct PeopleAndCoverageSection: View {
         return name.hasPrefix("Advisory") || name.hasPrefix("Back Office")
     }
 
-    private var coverageRow: some View {
-        HStack {
-            Text("Coverage")
-                .foregroundStyle(.colorTextPrimary)
+    private func reviewToggleRow(for channel: ConvosAPI.GoldilocksAdminChannel) -> some View {
+        let binding = Binding<Bool>(
+            get: { channel.reviewOpen },
+            set: { newValue in
+                Task { await setReview(to: newValue, for: channel) }
+            }
+        )
+        return HStack(spacing: DesignConstants.Spacing.step2x) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.body)
+                .foregroundStyle(.colorFillPrimary)
+                .frame(width: Self.rowIconWidth, alignment: .center)
+            VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
+                Text("Review")
+                    .foregroundStyle(.colorTextPrimary)
+                Text("Posts alert to admin group.")
+                    .font(.caption)
+                    .foregroundStyle(.colorTextSecondary)
+            }
             Spacer()
-            Text(coverageSummary)
-                .font(.footnote)
-                .foregroundStyle(.colorTextSecondary)
+            Toggle("", isOn: binding)
+                .labelsHidden()
+                .disabled(reviewSaving)
+                .opacity(reviewSaving ? 0.4 : 1.0)
         }
     }
 
-    private var coverageSummary: String {
-        guard let coverage else { return "Loading…" }
-        guard let activeUntil = coverage.activeUntil,
-              let date = Self.coverageDateFormatter.date(from: activeUntil) else {
-            return "No active coverage"
+    private func setReview(to newValue: Bool, for channel: ConvosAPI.GoldilocksAdminChannel) async {
+        reviewSaving = true
+        let result: Bool? = await viewModel.setAdvisoryClientReview(
+            clientInboxId: channel.clientInboxId,
+            open: newValue
+        )
+        if result != nil {
+            self.channel = await viewModel.loadAdminChannelForCurrentConversation()
         }
-        return "Active until \(date.formatted(date: .abbreviated, time: .omitted))"
+        reviewSaving = false
     }
 
     private func personRow(_ member: SeatMember) -> some View {
@@ -1069,14 +1110,19 @@ private struct PeopleAndCoverageSection: View {
         let tapAction = { selectedPerson = member }
         return Button(action: tapAction) {
             HStack(spacing: DesignConstants.Spacing.step2x) {
+                Image(systemName: member.icon)
+                    .font(.body)
+                    .foregroundStyle(member.iconSwiftUIColor)
+                    .frame(width: Self.rowIconWidth, alignment: .center)
                 VStack(alignment: .leading, spacing: DesignConstants.Spacing.stepHalf) {
                     Text(name)
                         .font(.body)
                         .foregroundStyle(.colorTextPrimary)
-                    if !member.enabled {
-                        Text("Disabled")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.colorTextTertiary)
+                    let summary: String = member.contactSummary
+                    if !summary.isEmpty {
+                        Text(summary)
+                            .font(.caption)
+                            .foregroundStyle(.colorTextSecondary)
                     }
                 }
                 Spacer()

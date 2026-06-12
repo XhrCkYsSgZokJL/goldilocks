@@ -49,6 +49,7 @@ export const meResponseSchema = z.object({
   isAdmin: z.boolean(),
   inboxId: z.string(),
   emeraldMembershipEnabled: z.boolean(),
+  emeraldSeatLimit: z.number(),
   referralCode: z.string().optional(),
   referralCreditCents: z.number(),
   payingReferralCount: z.number(),
@@ -143,6 +144,8 @@ export const adminChannelSchema = z.object({
   monthlyRateCents: z.number(),
   coverageActive: z.boolean(),
   emeraldMembershipEnabled: z.boolean(),
+  emeraldSeatLimit: z.number(),
+  reviewOpen: z.boolean(),
 });
 
 export type AdminChannel = z.infer<typeof adminChannelSchema>;
@@ -215,6 +218,7 @@ export type AdminStatsResponse = z.infer<typeof adminStatsResponseSchema>;
 
 export const emeraldToggleRequestSchema = z.object({
   enabled: z.boolean(),
+  seatLimit: z.number().optional(),
 });
 
 export type EmeraldToggleRequest = z.infer<typeof emeraldToggleRequestSchema>;
@@ -226,6 +230,20 @@ export const emeraldToggleResponseSchema = z.object({
 });
 
 export type EmeraldToggleResponse = z.infer<typeof emeraldToggleResponseSchema>;
+
+export const reviewToggleRequestSchema = z.object({
+  open: z.boolean(),
+});
+
+export type ReviewToggleRequest = z.infer<typeof reviewToggleRequestSchema>;
+
+export const reviewToggleResponseSchema = z.object({
+  clientNumber: z.number(),
+  reviewOpen: z.boolean(),
+  changed: z.boolean(),
+});
+
+export type ReviewToggleResponse = z.infer<typeof reviewToggleResponseSchema>;
 
 export const checkoutRequestSchema = z.object({
   paymentMethod: z.enum(["card", "crypto"]),
@@ -240,6 +258,25 @@ export const checkoutResponseSchema = z.object({
 });
 
 export type CheckoutResponse = z.infer<typeof checkoutResponseSchema>;
+
+export const paymentMethodSetupResponseSchema = z.object({
+  checkoutUrl: z.string(),
+  sessionId: z.string(),
+});
+
+export type PaymentMethodSetupResponse = z.infer<typeof paymentMethodSetupResponseSchema>;
+
+export const paymentMethodConfirmRequestSchema = z.object({
+  sessionId: z.string(),
+});
+
+export type PaymentMethodConfirmRequest = z.infer<typeof paymentMethodConfirmRequestSchema>;
+
+export const paymentMethodConfirmResponseSchema = z.object({
+  hasPaymentMethod: z.boolean(),
+});
+
+export type PaymentMethodConfirmResponse = z.infer<typeof paymentMethodConfirmResponseSchema>;
 
 export const seatsRequestSchema = z.object({
   seats: z.number(),
@@ -256,6 +293,7 @@ export const billingStatusResponseSchema = z.object({
   seats: z.number(),
   coveredPeople: z.number(),
   reportDay: z.string(),
+  hasPaymentMethod: z.boolean(),
 });
 
 export type BillingStatusResponse = z.infer<typeof billingStatusResponseSchema>;

@@ -132,6 +132,8 @@ const schema = z.object({
   STRIPE_WEBHOOK_SECRET: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
   STRIPE_SUCCESS_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
   STRIPE_CANCEL_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
+  // Recurring per-seat Price ID ($100/mo) used for the subscription model.
+  STRIPE_SEAT_PRICE_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
 
   // Apple In-App Purchase (StoreKit 2 / App Store Server API v2).
   //   APPLE_BUNDLE_ID          — your app's bundle ID (e.g. com.hopscotch.goldilocks)

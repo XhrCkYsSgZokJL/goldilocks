@@ -21,7 +21,9 @@ export type AuditEventKind =
   | 'emerald_enable'
   | 'emerald_disable'
   | 'people_enable'
-  | 'people_disable';
+  | 'people_disable'
+  | 'review_requested'
+  | 'review_closed';
 
 export interface AuditEventPayload {
   kind: AuditEventKind;

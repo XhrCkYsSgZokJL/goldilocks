@@ -1,99 +1,49 @@
-// Prepaid-balance accounting — monthly model.
+// Coverage + pricing helpers (subscription model).
 //
-// A client holds a prepaid balance (in cents). $125 is deducted per
-// person when they are enabled (handled by person-activation.ts), then
-// $125/person is charged on the 1st of every month (handled by
-// monthly-tick.ts). Between charges the balance is static.
-//
-// Emerald clients can go negative — coverage never lapses for them.
-// Non-Emerald clients stop at zero and coverage lapses.
+// The prepaid-balance model has been replaced by Stripe subscriptions
+// (see billing/subscriptions.ts). Coverage is now a function of the
+// client's coverage toggle and enabled headcount; Stripe owns the money.
+// These helpers remain as the single source of truth for "is this client
+// covered" and "what's their monthly rate", read by the billing status,
+// admin stats, channels, and reports paths.
 
 import { monthlyTotalCents } from './pricing.js';
 
-export interface BalanceState {
-  billingBalanceCents: number;
-  referralCreditCents: number;
-  billingSeats: number;
-  coveredPeople: number;
-  lastBalanceTickAt: Date | null;
-  emeraldMembershipEnabled: boolean;
-  coverageEnabled: boolean;
-}
-
-// Monthly burn rate based on seats (used for top-up cost display).
+// Monthly burn rate based on enabled seats, in cents.
 export function monthlyRateCents(state: { billingSeats: number }): number {
   return monthlyTotalCents(state.billingSeats);
 }
 
-// The stored balance.
-export function liveBalanceCents(state: { billingBalanceCents: number }): number {
-  return state.billingBalanceCents;
-}
-
-// Whether the client currently has active coverage.
-export function isCoverageActive(state: BalanceState): boolean {
+// Whether the client currently has active coverage. In the subscription
+// model a client is covered when coverage is enabled and they have at
+// least one enabled person. Stripe keeps the subscription paid; a lapse
+// is reflected by turning coverage off (via webhook) rather than by a
+// balance hitting zero.
+export function isCoverageActive(state: {
+  coverageEnabled: boolean;
+  coveredPeople: number;
+  emeraldMembershipEnabled: boolean;
+}): boolean {
   if (!state.coverageEnabled) return false;
   if (state.emeraldMembershipEnabled) return true;
-  if (state.coveredPeople <= 0) return false;
-  return (state.referralCreditCents + state.billingBalanceCents) >= 0;
+  return state.coveredPeople > 0;
 }
 
-// Projected date when coverage will run out, or null if coverage is
-// inactive or infinite (Emerald). In the monthly model, coverage
-// extends through the end of the current paid period.
-export function activeUntil(state: BalanceState): Date | null {
-  if (!state.coverageEnabled) return null;
-  if (state.emeraldMembershipEnabled) return null;
-  if (state.coveredPeople <= 0) return null;
-  const totalBalance: number = state.referralCreditCents + state.billingBalanceCents;
-  if (totalBalance < 0) return null;
-
-  const monthlyBurn = monthlyTotalCents(state.coveredPeople);
-  if (monthlyBurn <= 0) return null;
-  const monthsRemaining = totalBalance / monthlyBurn;
-  const now = new Date();
-  return new Date(now.getTime() + monthsRemaining * 30 * 24 * 60 * 60 * 1000);
+// Auto-renewing subscriptions have no fixed end date, so "active until"
+// is open-ended. Retained for billing-status response shape compatibility.
+export function activeUntil(_state: unknown): Date | null {
+  return null;
 }
 
-// Compute the monthly charge for all covered persons. Returns the new
-// balance after deduction. Emerald clients can go negative; others
-// floor at zero.
-export interface MonthlyTickResult {
-  newBalanceCents: number;
-  newReferralCreditCents: number;
-  deductedCents: number;
-  coverageLapsed: boolean;
+// The prepaid balance is gone — always zero. Retained so existing read
+// paths (billing status, channels) keep compiling until they drop the
+// field entirely.
+export function liveBalanceCents(_state: { billingBalanceCents: number }): number {
+  return 0;
 }
 
-export function computeMonthlyTick(state: BalanceState): MonthlyTickResult {
-  const deduction = monthlyTotalCents(state.coveredPeople);
-  if (deduction <= 0) {
-    return { newBalanceCents: state.billingBalanceCents, newReferralCreditCents: state.referralCreditCents, deductedCents: 0, coverageLapsed: false };
-  }
-
-  // Draw from referral credit first, then prepaid balance.
-  let remaining: number = deduction;
-  let referralCredit: number = state.referralCreditCents;
-  let balance: number = state.billingBalanceCents;
-
-  const fromReferral: number = Math.min(referralCredit, remaining);
-  referralCredit -= fromReferral;
-  remaining -= fromReferral;
-
-  balance -= remaining;
-
-  if (state.emeraldMembershipEnabled) {
-    return { newBalanceCents: balance, newReferralCreditCents: referralCredit, deductedCents: deduction, coverageLapsed: false };
-  }
-
-  if (balance < 0) {
-    return { newBalanceCents: 0, newReferralCreditCents: 0, deductedCents: state.billingBalanceCents + state.referralCreditCents, coverageLapsed: true };
-  }
-
-  return { newBalanceCents: balance, newReferralCreditCents: referralCredit, deductedCents: deduction, coverageLapsed: false };
-}
-
-// Snapshot the balance at a point in time before applying a mutation.
-export function settle(state: { billingBalanceCents: number }): { balanceCents: number; asOf: Date } {
-  return { balanceCents: state.billingBalanceCents, asOf: new Date() };
+// No-op settle retained for the legacy deposit/reconcile path. Returns a
+// zero balance snapshot.
+export function settle(_state: { billingBalanceCents: number }): { balanceCents: number; asOf: Date } {
+  return { balanceCents: 0, asOf: new Date() };
 }

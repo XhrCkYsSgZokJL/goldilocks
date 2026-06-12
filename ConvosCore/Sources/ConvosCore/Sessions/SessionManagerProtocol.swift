@@ -274,6 +274,18 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// status (`GET /v2/billing/checkout-status/:sessionId`).
     func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse
 
+    /// Start a Stripe Checkout (setup mode) to save a card on file
+    /// (`POST /v2/billing/payment-method`).
+    func setupGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodSetupResponse
+
+    /// Confirm the saved card after the setup checkout completes
+    /// (`POST /v2/billing/payment-method/confirm`).
+    func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse
+
+    /// Detach the saved card from the Stripe customer
+    /// (`POST /v2/billing/payment-method/remove`).
+    func removeGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse
+
     func claimGoldilocksReferral(code: String) async throws
 
     /// Enable or disable coverage (`POST /v2/billing/coverage`).
@@ -335,14 +347,24 @@ public protocol SessionManagerProtocol: AnyObject, Sendable {
     /// admin Stats dashboard.
     func fetchAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse
 
-    /// Admin-only. Flip the Emerald membership flag on a client. The
+    /// Admin-only. Flip the Emerald membership flag on a client and,
+    /// optionally, set their people allowance (nil = unchanged). The
     /// backend posts an "Admin #N enabled/disabled Emerald membership
     /// for Client #M" line to the audit log when the flag actually
     /// changes.
     func setEmeraldMembership(
         clientInboxId: String,
-        enabled: Bool
+        enabled: Bool,
+        seatLimit: Int?
     ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse
+
+    /// Admin-only. Open or close a client review; the backend posts an
+    /// "Admin #N requested / closed Client #M review." audit line to the
+    /// Admins chat on any state change.
+    func setClientReview(
+        clientInboxId: String,
+        open: Bool
+    ) async throws -> ConvosAPI.GoldilocksReviewToggleResponse
 
     // MARK: Goldilocks channel lifecycle
 
@@ -496,6 +518,18 @@ extension SessionManagerProtocol {
         ConvosAPI.GoldilocksBillingStatusResponse(activeUntil: nil, balanceCents: 0, monthlyRateCents: 0, seats: 0)
     }
 
+    public func setupGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodSetupResponse {
+        ConvosAPI.GoldilocksPaymentMethodSetupResponse(checkoutUrl: "", sessionId: "")
+    }
+
+    public func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        ConvosAPI.GoldilocksPaymentMethodConfirmResponse(hasPaymentMethod: false)
+    }
+
+    public func removeGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        ConvosAPI.GoldilocksPaymentMethodConfirmResponse(hasPaymentMethod: false)
+    }
+
     public func claimGoldilocksReferral(code: String) async throws {}
 
     public func toggleGoldilocksCoverage(enabled: Bool) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
@@ -596,11 +630,23 @@ extension SessionManagerProtocol {
 
     public func setEmeraldMembership(
         clientInboxId: String,
-        enabled: Bool
+        enabled: Bool,
+        seatLimit: Int?
     ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
         ConvosAPI.GoldilocksEmeraldToggleResponse(
             clientNumber: 0,
             emeraldMembershipEnabled: enabled,
+            changed: false
+        )
+    }
+
+    public func setClientReview(
+        clientInboxId: String,
+        open: Bool
+    ) async throws -> ConvosAPI.GoldilocksReviewToggleResponse {
+        ConvosAPI.GoldilocksReviewToggleResponse(
+            clientNumber: 0,
+            reviewOpen: open,
             changed: false
         )
     }

@@ -57,7 +57,7 @@ const REPORTS_AUTO_REPLY =
 // Posted into a Reports group the first time it is provisioned, so the
 // feed opens with an explanation. Recreates do not repeat it.
 const REPORTS_INTRO_MESSAGE =
-  'Goldilocks Digital uses this group chat to send you live alerts, monthly reports, and advisory files.';
+  'Goldilocks Digital uses this group chat to send you live alerts and member reports.';
 
 // Permission policy baked into the Reports group at creation time.
 // Same shape as the admins-agent's lock: name / description / image

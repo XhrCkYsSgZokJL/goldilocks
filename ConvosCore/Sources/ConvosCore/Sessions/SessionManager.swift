@@ -660,244 +660,6 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
         DatabaseInviteMembershipResolver(databaseReader: databaseReader)
     }
 
-    /// SIWE handshake against the Goldilocks backend. Loads the device's
-    /// XMTP private key from the keychain, has it sign a challenge, posts
-    /// the message + signature to /v2/me, returns the assigned client info.
-    public func registerWithGoldilocks(claimAdminRole: Bool) async throws -> GoldilocksAuth.Identity {
-        // Ensure the XMTP inbox is authorized before reading its keys. On a
-        // fresh install nothing else has triggered AuthorizeInboxOperation
-        // yet, so `identityStore.load()` would otherwise race ahead and
-        // return nil. (The unused-conversation prewarm used to warm this
-        // early as a side effect; that prewarm is intentionally disabled.)
-        let service = loadOrCreateService()
-        _ = try await service.sessionStateManager.waitForInboxReadyResult()
-
-        guard let identity = try await identityStore.load() else {
-            throw GoldilocksAuth.AuthError.missingPrivateKey
-        }
-        return try await GoldilocksAuth.register(
-            inboxId: identity.inboxId,
-            privateKey: identity.keys.privateKey,
-            apiClient: apiClient,
-            claimAdminRole: claimAdminRole
-        )
-    }
-
-    public func refreshGoldilocksIdentity() async throws -> GoldilocksAuth.Identity {
-        let response = try await apiClient.fetchGoldilocksMe()
-        return GoldilocksAuth.Identity(from: response)
-    }
-
-    public func promoteSelfToAdminDev() async throws {
-        try await apiClient.promoteSelfToAdminDev()
-    }
-
-    public func upgradeGoldilocksAdmin(code: String) async throws {
-        try await apiClient.upgradeGoldilocksAdmin(code: code)
-    }
-
-    public func downgradeGoldilocksAdmin() async throws {
-        try await apiClient.downgradeGoldilocksAdmin()
-    }
-
-    public func createGoldilocksCheckout(
-        paymentMethod: GoldilocksPaymentMethod,
-        amountCents: Int
-    ) async throws -> ConvosAPI.GoldilocksCheckoutResponse {
-        let request = ConvosAPI.GoldilocksCheckoutRequest(
-            paymentMethod: paymentMethod.rawValue,
-            amountCents: amountCents
-        )
-        return try await apiClient.createGoldilocksCheckout(request)
-    }
-
-    public func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
-        try await apiClient.fetchGoldilocksBillingStatus()
-    }
-
-    public func syncGoldilocksSeats(seats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
-        let request = ConvosAPI.GoldilocksSeatsRequest(seats: seats)
-        return try await apiClient.syncGoldilocksSeats(request)
-    }
-
-    public func setGoldilocksReportDay(reportDay: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
-        let request = ConvosAPI.GoldilocksReportDayRequest(reportDay: reportDay)
-        return try await apiClient.setGoldilocksReportDay(request)
-    }
-
-    public func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
-        try await apiClient.reconcileGoldilocksCheckout(sessionId: sessionId)
-    }
-
-    public func claimGoldilocksReferral(code: String) async throws {
-        try await apiClient.claimGoldilocksReferral(code: code)
-    }
-
-    public func toggleGoldilocksCoverage(enabled: Bool) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
-        let request = ConvosAPI.GoldilocksCoverageToggleRequest(enabled: enabled)
-        return try await apiClient.toggleGoldilocksCoverage(request)
-    }
-
-    public func toggleGoldilocksPersonCoverage(
-        personId: String,
-        displayName: String,
-        enabled: Bool
-    ) async throws -> ConvosAPI.GoldilocksPersonToggleResponse {
-        let request = ConvosAPI.GoldilocksPersonToggleRequest(
-            personId: personId,
-            displayName: displayName,
-            enabled: enabled
-        )
-        return try await apiClient.toggleGoldilocksPersonCoverage(request)
-    }
-
-    public func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
-        try await apiClient.cancelGoldilocksBilling()
-    }
-
-    public func verifyApplePurchase(
-        transactionId: String,
-        productId: String,
-        amountCents: Int
-    ) async throws {
-        let request = ConvosAPI.GoldilocksApplePurchaseRequest(
-            transactionId: transactionId,
-            productId: productId,
-            amountCents: amountCents
-        )
-        try await apiClient.verifyApplePurchase(request)
-    }
-
-    public func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse {
-        try await apiClient.fetchGoldilocksPeopleList()
-    }
-
-    public func saveGoldilocksPeopleList(ciphertext: String, salt: String, nonce: String, baseVersion: Int) async throws -> Int {
-        let request = ConvosAPI.GoldilocksPeopleListSaveRequest(ciphertext: ciphertext, salt: salt, nonce: nonce, baseVersion: baseVersion)
-        let response = try await apiClient.saveGoldilocksPeopleList(request)
-        return response.version
-    }
-
-    public func groupEncryptionKey(forConversationId conversationId: String) async throws -> Data {
-        let inboxReady = try await messagingService().sessionStateManager.waitForInboxReadyResult()
-        guard let conversation = try await inboxReady.client.conversation(with: conversationId),
-              case .group(let group) = conversation else {
-            throw ImageEncryptionError.missingEncryptionKey
-        }
-        return try await group.ensureImageEncryptionKey()
-    }
-
-    public func fetchAdminPeopleList(clientInboxId: String) async throws -> ConvosAPI.GoldilocksPeopleListResponse {
-        try await apiClient.fetchAdminPeopleList(clientInboxId: clientInboxId)
-    }
-
-    public func saveAdminPeopleList(
-        clientInboxId: String,
-        ciphertext: String,
-        salt: String,
-        nonce: String,
-        baseVersion: Int,
-        auditHint: ConvosAPI.GoldilocksPeopleListSaveRequest.AuditHint? = nil
-    ) async throws -> Int {
-        let request = ConvosAPI.GoldilocksPeopleListSaveRequest(
-            ciphertext: ciphertext,
-            salt: salt,
-            nonce: nonce,
-            baseVersion: baseVersion,
-            auditHint: auditHint
-        )
-        let response = try await apiClient.saveAdminPeopleList(clientInboxId: clientInboxId, request)
-        return response.version
-    }
-
-    public func fetchGoldilocksAdminInboxIds() async throws -> [String] {
-        let response = try await apiClient.fetchGoldilocksAdmins()
-        return response.inboxes.map { $0.inboxId }
-    }
-
-    public func fetchGoldilocksAdminProfiles() async throws -> [ConvosAPI.GoldilocksAdminInbox] {
-        let response = try await apiClient.fetchGoldilocksAdmins()
-        return response.inboxes
-    }
-
-    public func fetchGoldilocksAgentInboxIds() async throws -> [String] {
-        let response = try await apiClient.fetchGoldilocksAgents()
-        return response.agents.map { $0.inboxId }
-    }
-
-    public func fetchGoldilocksAdminsGroupId() async throws -> String? {
-        let response = try await apiClient.fetchGoldilocksAgents()
-        return response.adminsGroupId
-    }
-
-    public func fetchGoldilocksAlertsGroupId() async throws -> String? {
-        let response = try await apiClient.fetchGoldilocksAgents()
-        return response.alertsGroupId
-    }
-
-    public func fetchAdminChannels() async throws -> [ConvosAPI.GoldilocksAdminChannel] {
-        let response = try await apiClient.fetchGoldilocksAdminChannels()
-        return response.channels
-    }
-
-    public func fetchAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse {
-        try await apiClient.fetchGoldilocksAdminStats()
-    }
-
-    /// Admin: flip the Emerald membership flag on a client. Returns
-    /// the new state; the backend posts an audit-log line if the
-    /// flag actually changed.
-    public func setEmeraldMembership(
-        clientInboxId: String,
-        enabled: Bool
-    ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
-        try await apiClient.setGoldilocksEmeraldMembership(
-            clientInboxId: clientInboxId,
-            enabled: enabled
-        )
-    }
-
-    public func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws {
-        _ = try await apiClient.registerGoldilocksChannel(role: role, xmtpGroupId: xmtpGroupId)
-    }
-
-    public func markGoldilocksChannelExploded(role: String) async throws {
-        try await apiClient.markGoldilocksChannelExploded(role: role)
-    }
-
-    public func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws {
-        _ = try await apiClient.recreateGoldilocksChannel(role: role, xmtpGroupId: xmtpGroupId)
-    }
-
-    public func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse {
-        try await apiClient.listGoldilocksChannels()
-    }
-
-    public func recoverGoldilocksChannels() async throws {
-        try await apiClient.recoverGoldilocksChannels()
-    }
-
-    public func goldilocksManagedConversationCount() async throws -> Int {
-        try await databaseReader.read { db in
-            let trustedIds = GoldilocksAgentTrust.snapshot()
-            guard !trustedIds.isEmpty else { return 0 }
-            return try DBConversation
-                .filter(trustedIds.contains(DBConversation.Columns.creatorId))
-                .fetchCount(db)
-        }
-    }
-
-    public func missingGoldilocksConversationIds(_ xmtpGroupIds: [String]) async throws -> [String] {
-        guard !xmtpGroupIds.isEmpty else { return [] }
-        return try await databaseReader.read { db in
-            let presentIds = try String.fetchAll(db, DBConversation
-                .filter(xmtpGroupIds.contains(DBConversation.Columns.id))
-                .select(DBConversation.Columns.id, as: String.self))
-            let presentSet = Set(presentIds)
-            return xmtpGroupIds.filter { !presentSet.contains($0) }
-        }
-    }
-
     public func conversationRepository(for conversationId: String) -> any ConversationRepositoryProtocol {
         ConversationRepository(
             conversationId: conversationId,
@@ -974,29 +736,6 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
 
     public func pinnedConversationsCountRepo() -> any PinnedConversationsCountRepositoryProtocol {
         PinnedConversationsCountRepository(databaseReader: databaseReader)
-    }
-
-    // MARK: Notifications
-
-    public func shouldDisplayNotification(for conversationId: String) async -> Bool {
-        let state = screenStateLock.withLock { $0 }
-        if state.isOnConversationsList { return false }
-        if state.activeConversationId == conversationId { return false }
-        return true
-    }
-
-    public func setIsOnConversationsList(_ isOn: Bool) {
-        screenStateLock.withLock { state in
-            state.isOnConversationsList = isOn
-        }
-    }
-
-    public func notifyChangesInDatabase() {
-        notificationChangeReporter.notifyChangesInDatabase()
-    }
-
-    public func wakeInboxForNotification(conversationId: String) {
-        _ = loadOrCreateService()
     }
 
     // MARK: Debug
@@ -1198,6 +937,299 @@ public final class SessionManager: SessionManagerProtocol, @unchecked Sendable {
                     )
                 }
             }
+        }
+    }
+}
+
+// MARK: - Notifications
+
+extension SessionManager {
+    public func shouldDisplayNotification(for conversationId: String) async -> Bool {
+        let state = screenStateLock.withLock { $0 }
+        if state.isOnConversationsList { return false }
+        if state.activeConversationId == conversationId { return false }
+        return true
+    }
+
+    public func setIsOnConversationsList(_ isOn: Bool) {
+        screenStateLock.withLock { state in
+            state.isOnConversationsList = isOn
+        }
+    }
+
+    public func notifyChangesInDatabase() {
+        notificationChangeReporter.notifyChangesInDatabase()
+    }
+
+    public func wakeInboxForNotification(conversationId: String) {
+        _ = loadOrCreateService()
+    }
+}
+
+// MARK: - Goldilocks backend (registration, billing, channels, people list)
+
+extension SessionManager {
+    /// SIWE handshake against the Goldilocks backend. Loads the device's
+    /// XMTP private key from the keychain, has it sign a challenge, posts
+    /// the message + signature to /v2/me, returns the assigned client info.
+    public func registerWithGoldilocks(claimAdminRole: Bool) async throws -> GoldilocksAuth.Identity {
+        // Ensure the XMTP inbox is authorized before reading its keys. On a
+        // fresh install nothing else has triggered AuthorizeInboxOperation
+        // yet, so `identityStore.load()` would otherwise race ahead and
+        // return nil. (The unused-conversation prewarm used to warm this
+        // early as a side effect; that prewarm is intentionally disabled.)
+        let service = loadOrCreateService()
+        _ = try await service.sessionStateManager.waitForInboxReadyResult()
+
+        guard let identity = try await identityStore.load() else {
+            throw GoldilocksAuth.AuthError.missingPrivateKey
+        }
+        return try await GoldilocksAuth.register(
+            inboxId: identity.inboxId,
+            privateKey: identity.keys.privateKey,
+            apiClient: apiClient,
+            claimAdminRole: claimAdminRole
+        )
+    }
+
+    public func refreshGoldilocksIdentity() async throws -> GoldilocksAuth.Identity {
+        let response = try await apiClient.fetchGoldilocksMe()
+        return GoldilocksAuth.Identity(from: response)
+    }
+
+    public func promoteSelfToAdminDev() async throws {
+        try await apiClient.promoteSelfToAdminDev()
+    }
+
+    public func upgradeGoldilocksAdmin(code: String) async throws {
+        try await apiClient.upgradeGoldilocksAdmin(code: code)
+    }
+
+    public func downgradeGoldilocksAdmin() async throws {
+        try await apiClient.downgradeGoldilocksAdmin()
+    }
+
+    public func createGoldilocksCheckout(
+        paymentMethod: GoldilocksPaymentMethod,
+        amountCents: Int
+    ) async throws -> ConvosAPI.GoldilocksCheckoutResponse {
+        let request = ConvosAPI.GoldilocksCheckoutRequest(
+            paymentMethod: paymentMethod.rawValue,
+            amountCents: amountCents
+        )
+        return try await apiClient.createGoldilocksCheckout(request)
+    }
+
+    public func fetchGoldilocksBillingStatus() async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        try await apiClient.fetchGoldilocksBillingStatus()
+    }
+
+    public func syncGoldilocksSeats(seats: Int) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        let request = ConvosAPI.GoldilocksSeatsRequest(seats: seats)
+        return try await apiClient.syncGoldilocksSeats(request)
+    }
+
+    public func setGoldilocksReportDay(reportDay: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        let request = ConvosAPI.GoldilocksReportDayRequest(reportDay: reportDay)
+        return try await apiClient.setGoldilocksReportDay(request)
+    }
+
+    public func reconcileGoldilocksCheckout(sessionId: String) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        try await apiClient.reconcileGoldilocksCheckout(sessionId: sessionId)
+    }
+
+    public func setupGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodSetupResponse {
+        try await apiClient.setupGoldilocksPaymentMethod()
+    }
+
+    public func confirmGoldilocksPaymentMethod(sessionId: String) async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        try await apiClient.confirmGoldilocksPaymentMethod(sessionId: sessionId)
+    }
+
+    public func removeGoldilocksPaymentMethod() async throws -> ConvosAPI.GoldilocksPaymentMethodConfirmResponse {
+        try await apiClient.removeGoldilocksPaymentMethod()
+    }
+
+    public func claimGoldilocksReferral(code: String) async throws {
+        try await apiClient.claimGoldilocksReferral(code: code)
+    }
+
+    public func toggleGoldilocksCoverage(enabled: Bool) async throws -> ConvosAPI.GoldilocksBillingStatusResponse {
+        let request = ConvosAPI.GoldilocksCoverageToggleRequest(enabled: enabled)
+        return try await apiClient.toggleGoldilocksCoverage(request)
+    }
+
+    public func toggleGoldilocksPersonCoverage(
+        personId: String,
+        displayName: String,
+        enabled: Bool
+    ) async throws -> ConvosAPI.GoldilocksPersonToggleResponse {
+        let request = ConvosAPI.GoldilocksPersonToggleRequest(
+            personId: personId,
+            displayName: displayName,
+            enabled: enabled
+        )
+        return try await apiClient.toggleGoldilocksPersonCoverage(request)
+    }
+
+    public func cancelGoldilocksBilling() async throws -> ConvosAPI.GoldilocksCancelResponse {
+        try await apiClient.cancelGoldilocksBilling()
+    }
+
+    public func verifyApplePurchase(
+        transactionId: String,
+        productId: String,
+        amountCents: Int
+    ) async throws {
+        let request = ConvosAPI.GoldilocksApplePurchaseRequest(
+            transactionId: transactionId,
+            productId: productId,
+            amountCents: amountCents
+        )
+        try await apiClient.verifyApplePurchase(request)
+    }
+
+    public func fetchGoldilocksPeopleList() async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        try await apiClient.fetchGoldilocksPeopleList()
+    }
+
+    public func saveGoldilocksPeopleList(ciphertext: String, salt: String, nonce: String, baseVersion: Int) async throws -> Int {
+        let request = ConvosAPI.GoldilocksPeopleListSaveRequest(ciphertext: ciphertext, salt: salt, nonce: nonce, baseVersion: baseVersion)
+        let response = try await apiClient.saveGoldilocksPeopleList(request)
+        return response.version
+    }
+
+    public func groupEncryptionKey(forConversationId conversationId: String) async throws -> Data {
+        let inboxReady = try await messagingService().sessionStateManager.waitForInboxReadyResult()
+        guard let conversation = try await inboxReady.client.conversation(with: conversationId),
+              case .group(let group) = conversation else {
+            throw ImageEncryptionError.missingEncryptionKey
+        }
+        return try await group.ensureImageEncryptionKey()
+    }
+
+    public func fetchAdminPeopleList(clientInboxId: String) async throws -> ConvosAPI.GoldilocksPeopleListResponse {
+        try await apiClient.fetchAdminPeopleList(clientInboxId: clientInboxId)
+    }
+
+    public func saveAdminPeopleList(
+        clientInboxId: String,
+        ciphertext: String,
+        salt: String,
+        nonce: String,
+        baseVersion: Int,
+        auditHint: ConvosAPI.GoldilocksPeopleListSaveRequest.AuditHint? = nil
+    ) async throws -> Int {
+        let request = ConvosAPI.GoldilocksPeopleListSaveRequest(
+            ciphertext: ciphertext,
+            salt: salt,
+            nonce: nonce,
+            baseVersion: baseVersion,
+            auditHint: auditHint
+        )
+        let response = try await apiClient.saveAdminPeopleList(clientInboxId: clientInboxId, request)
+        return response.version
+    }
+
+    public func fetchGoldilocksAdminInboxIds() async throws -> [String] {
+        let response = try await apiClient.fetchGoldilocksAdmins()
+        return response.inboxes.map { $0.inboxId }
+    }
+
+    public func fetchGoldilocksAdminProfiles() async throws -> [ConvosAPI.GoldilocksAdminInbox] {
+        let response = try await apiClient.fetchGoldilocksAdmins()
+        return response.inboxes
+    }
+
+    public func fetchGoldilocksAgentInboxIds() async throws -> [String] {
+        let response = try await apiClient.fetchGoldilocksAgents()
+        return response.agents.map { $0.inboxId }
+    }
+
+    public func fetchGoldilocksAdminsGroupId() async throws -> String? {
+        let response = try await apiClient.fetchGoldilocksAgents()
+        return response.adminsGroupId
+    }
+
+    public func fetchGoldilocksAlertsGroupId() async throws -> String? {
+        let response = try await apiClient.fetchGoldilocksAgents()
+        return response.alertsGroupId
+    }
+
+    public func fetchAdminChannels() async throws -> [ConvosAPI.GoldilocksAdminChannel] {
+        let response = try await apiClient.fetchGoldilocksAdminChannels()
+        return response.channels
+    }
+
+    public func fetchAdminStats() async throws -> ConvosAPI.GoldilocksAdminStatsResponse {
+        try await apiClient.fetchGoldilocksAdminStats()
+    }
+
+    /// Admin: flip the Emerald membership flag on a client. Returns
+    /// the new state; the backend posts an audit-log line if the
+    /// flag actually changed.
+    public func setEmeraldMembership(
+        clientInboxId: String,
+        enabled: Bool,
+        seatLimit: Int?
+    ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
+        try await apiClient.setGoldilocksEmeraldMembership(
+            clientInboxId: clientInboxId,
+            enabled: enabled,
+            seatLimit: seatLimit
+        )
+    }
+
+    /// Admin: open or close a client review. The backend posts the
+    /// audit line to the Admins chat on any state change.
+    public func setClientReview(
+        clientInboxId: String,
+        open: Bool
+    ) async throws -> ConvosAPI.GoldilocksReviewToggleResponse {
+        try await apiClient.setGoldilocksClientReview(
+            clientInboxId: clientInboxId,
+            open: open
+        )
+    }
+
+    public func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws {
+        _ = try await apiClient.registerGoldilocksChannel(role: role, xmtpGroupId: xmtpGroupId)
+    }
+
+    public func markGoldilocksChannelExploded(role: String) async throws {
+        try await apiClient.markGoldilocksChannelExploded(role: role)
+    }
+
+    public func recreateGoldilocksChannel(role: String, xmtpGroupId: String) async throws {
+        _ = try await apiClient.recreateGoldilocksChannel(role: role, xmtpGroupId: xmtpGroupId)
+    }
+
+    public func listGoldilocksChannels() async throws -> ConvosAPI.GoldilocksChannelsListResponse {
+        try await apiClient.listGoldilocksChannels()
+    }
+
+    public func recoverGoldilocksChannels() async throws {
+        try await apiClient.recoverGoldilocksChannels()
+    }
+
+    public func goldilocksManagedConversationCount() async throws -> Int {
+        try await databaseReader.read { db in
+            let trustedIds = GoldilocksAgentTrust.snapshot()
+            guard !trustedIds.isEmpty else { return 0 }
+            return try DBConversation
+                .filter(trustedIds.contains(DBConversation.Columns.creatorId))
+                .fetchCount(db)
+        }
+    }
+
+    public func missingGoldilocksConversationIds(_ xmtpGroupIds: [String]) async throws -> [String] {
+        guard !xmtpGroupIds.isEmpty else { return [] }
+        return try await databaseReader.read { db in
+            let presentIds = try String.fetchAll(db, DBConversation
+                .filter(xmtpGroupIds.contains(DBConversation.Columns.id))
+                .select(DBConversation.Columns.id, as: String.self))
+            let presentSet = Set(presentIds)
+            return xmtpGroupIds.filter { !presentSet.contains($0) }
         }
     }
 }

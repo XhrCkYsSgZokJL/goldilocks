@@ -8,6 +8,13 @@ public enum GoldilocksPaymentMethod: String, Codable, Sendable, Equatable, CaseI
     case card
     case crypto
 
+    /// Payment methods currently offered in the UI. Only Stripe (Card) is
+    /// live for now; Apple and Crypto are hidden until they're wired up —
+    /// restore them here to re-enable.
+    public static var selectableCases: [GoldilocksPaymentMethod] {
+        [.card]
+    }
+
     /// Human-facing label.
     public var displayName: String {
         switch self {

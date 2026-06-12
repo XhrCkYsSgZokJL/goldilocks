@@ -3648,14 +3648,35 @@ extension ConversationViewModel {
     /// session handle. Returns the new state, or nil on failure.
     func setAdvisoryEmeraldMembership(
         clientInboxId: String,
-        enabled: Bool
+        enabled: Bool,
+        seatLimit: Int? = nil
     ) async -> Bool? {
         do {
             let response = try await session.setEmeraldMembership(
                 clientInboxId: clientInboxId,
-                enabled: enabled
+                enabled: enabled,
+                seatLimit: seatLimit
             )
             return response.emeraldMembershipEnabled
+        } catch {
+            return nil
+        }
+    }
+
+    /// Goldilocks (admin): open or close a client review. The backend
+    /// posts an "Admin #N requested / closed Client #M review." line to
+    /// the Admins chat on any change. Returns the new state, or nil on
+    /// failure.
+    func setAdvisoryClientReview(
+        clientInboxId: String,
+        open: Bool
+    ) async -> Bool? {
+        do {
+            let response = try await session.setClientReview(
+                clientInboxId: clientInboxId,
+                open: open
+            )
+            return response.reviewOpen
         } catch {
             return nil
         }

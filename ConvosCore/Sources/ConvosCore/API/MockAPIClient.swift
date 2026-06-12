@@ -251,9 +251,17 @@ final class MockAPIClient: ConvosAPIClientProtocol, Sendable {
 
     func setGoldilocksEmeraldMembership(
         clientInboxId: String,
-        enabled: Bool
+        enabled: Bool,
+        seatLimit: Int?
     ) async throws -> ConvosAPI.GoldilocksEmeraldToggleResponse {
         .init(clientNumber: 0, emeraldMembershipEnabled: enabled, changed: true)
+    }
+
+    func setGoldilocksClientReview(
+        clientInboxId: String,
+        open: Bool
+    ) async throws -> ConvosAPI.GoldilocksReviewToggleResponse {
+        .init(clientNumber: 0, reviewOpen: open, changed: true)
     }
 
     func registerGoldilocksChannel(role: String, xmtpGroupId: String) async throws -> ConvosAPI.GoldilocksChannelResponse {

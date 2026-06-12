@@ -84,6 +84,39 @@ struct PersonAddress: Codable, Equatable {
     }
 }
 
+/// One mailing address: the structured fields the client entered (so the
+/// edit dialog can pre-fill exactly what they typed) plus the composed,
+/// country-ordered single line used by display rows. Older rows stored
+/// just a string; those decode with the whole line in `line1`.
+struct StoredAddress: Codable, Equatable, Hashable {
+    var line1: String
+    var city: String
+    var region: String
+    var postalCode: String
+    var country: String
+    var display: String
+
+    init(
+        line1: String = "",
+        city: String = "",
+        region: String = "",
+        postalCode: String = "",
+        country: String = "",
+        display: String = ""
+    ) {
+        self.line1 = line1
+        self.city = city
+        self.region = region
+        self.postalCode = postalCode
+        self.country = country
+        self.display = display
+    }
+
+    static func legacy(_ line: String) -> StoredAddress {
+        StoredAddress(line1: line, display: line)
+    }
+}
+
 /// One person on the plan. There is a single Goldilocks plan today
 /// (`GoldilocksPlan.monthlyPricePerPerson` per person, per month) so each
 /// person is just one seat. Entry is gated by an email-code handshake
@@ -101,13 +134,25 @@ struct SeatMember: Codable, Identifiable, Equatable {
     /// be present + verified for the person to count as added; further
     /// emails track their own verified state independently.
     var emails: [LabeledEmail]
-    var phone: String
-    var address: PersonAddress
+    /// Phone numbers, stored already formatted ("+1 555-123-4567").
+    var phones: [String]
+    /// Mailing addresses — structured for editing, with a composed
+    /// single line for display.
+    var addresses: [StoredAddress]
     /// Admin-controlled kill switch. Defaults to `true` for newly
     /// verified people. When an admin disables a person the backend
     /// unsubscribes them from the third-party service; flipping it back
     /// on resubscribes.
     var enabled: Bool
+    /// SF Symbol name shown as the person's avatar/adornment in the people
+    /// list. Picked in the person editor.
+    var icon: String
+    /// Palette name for the icon tint ("blue", "green", …) — mapped to a
+    /// SwiftUI color at display time.
+    var iconColor: String
+
+    static let defaultIcon: String = "person.circle.fill"
+    static let defaultIconColor: String = "blue"
 
     init(
         id: UUID = UUID(),
@@ -115,18 +160,22 @@ struct SeatMember: Codable, Identifiable, Equatable {
         middleName: String = "",
         lastName: String = "",
         emails: [LabeledEmail] = [],
-        phone: String = "",
-        address: PersonAddress = PersonAddress(),
-        enabled: Bool = true
+        phones: [String] = [],
+        addresses: [StoredAddress] = [],
+        enabled: Bool = true,
+        icon: String = SeatMember.defaultIcon,
+        iconColor: String = SeatMember.defaultIconColor
     ) {
         self.id = id
         self.firstName = firstName
         self.middleName = middleName
         self.lastName = lastName
         self.emails = emails
-        self.phone = phone
-        self.address = address
+        self.phones = phones
+        self.addresses = addresses
         self.enabled = enabled
+        self.icon = icon
+        self.iconColor = iconColor
     }
 
     /// Concatenated first / middle / last, skipping blanks so a
@@ -153,15 +202,35 @@ struct SeatMember: Codable, Identifiable, Equatable {
         return "Unnamed person"
     }
 
+    /// One-line summary of what's on file, e.g. "3 emails, 2 phones,
+    /// 1 address". Zero-count items are skipped.
+    var contactSummary: String {
+        var parts: [String] = []
+        if !emails.isEmpty {
+            parts.append(Self.countLabel(emails.count, singular: "email", plural: "emails"))
+        }
+        if !phones.isEmpty {
+            parts.append(Self.countLabel(phones.count, singular: "phone", plural: "phones"))
+        }
+        if !addresses.isEmpty {
+            parts.append(Self.countLabel(addresses.count, singular: "address", plural: "addresses"))
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private static func countLabel(_ count: Int, singular: String, plural: String) -> String {
+        count == 1 ? "1 \(singular)" : "\(count) \(plural)"
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case id, firstName, middleName, lastName, emails, phone, address, enabled
+        case id, firstName, middleName, lastName, emails, phones, addresses, enabled, icon, iconColor
     }
 
     /// Keys that don't map to a stored property, used only by the decoder
     /// to detect legacy on-disk shapes. Kept separate from `CodingKeys`
     /// so Swift's synthesized `encode(to:)` doesn't try to encode them.
     private enum LegacyKeys: String, CodingKey {
-        case name, email, approvalStatus
+        case name, email, approvalStatus, phone, address
     }
 
     init(from decoder: any Decoder) throws {
@@ -200,8 +269,29 @@ struct SeatMember: Codable, Identifiable, Equatable {
             }
         }
 
-        self.phone = try container.decodeIfPresent(String.self, forKey: .phone) ?? ""
-        self.address = try container.decodeIfPresent(PersonAddress.self, forKey: .address) ?? PersonAddress()
+        // Phones / addresses are lists now. Older rows carried a single
+        // `phone` string and a structured `address`; migrate both into
+        // one-element lists (the address flattened to a single line).
+        if container.contains(.phones) {
+            self.phones = try container.decodeIfPresent([String].self, forKey: .phones) ?? []
+        } else {
+            let legacyPhone: String = (try? legacyContainer.decodeIfPresent(String.self, forKey: .phone)) ?? ""
+            self.phones = legacyPhone.isEmpty ? [] : [legacyPhone]
+        }
+        if container.contains(.addresses) {
+            // Current rows are structured; an interim schema stored plain
+            // single-line strings — migrate those with the line in line1.
+            if let structured = try? container.decode([StoredAddress].self, forKey: .addresses) {
+                self.addresses = structured
+            } else {
+                let lines: [String] = (try? container.decode([String].self, forKey: .addresses)) ?? []
+                self.addresses = lines.map(StoredAddress.legacy)
+            }
+        } else {
+            let legacyAddress: PersonAddress? = try? legacyContainer.decodeIfPresent(PersonAddress.self, forKey: .address)
+            let line: String = legacyAddress?.singleLine ?? ""
+            self.addresses = line.isEmpty ? [] : [StoredAddress.legacy(line)]
+        }
 
         // Older shapes carried an `approvalStatus` field and used
         // `enabled` only as the admin's kill switch on top of an
@@ -217,6 +307,9 @@ struct SeatMember: Codable, Identifiable, Equatable {
         } else {
             self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
         }
+
+        self.icon = try container.decodeIfPresent(String.self, forKey: .icon) ?? SeatMember.defaultIcon
+        self.iconColor = try container.decodeIfPresent(String.self, forKey: .iconColor) ?? SeatMember.defaultIconColor
     }
 
     /// Best-effort split of a legacy single-string name into first /

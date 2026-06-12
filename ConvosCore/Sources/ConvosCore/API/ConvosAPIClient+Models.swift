@@ -307,6 +307,62 @@ public enum ConvosAPI {
         }
     }
 
+    // MARK: - Common Error Response
+
+    public struct ErrorResponse: Codable {
+        public let error: String
+        public let details: [ValidationError]?
+        public let hint: String?
+    }
+
+    public struct ValidationError: Codable {
+        public let code: String
+        public let expected: String?
+        public let received: String?
+        public let path: [String]
+        public let message: String
+    }
+
+    // MARK: - v2/assets/renew-batch
+    // POST /v2/assets/renew-batch
+    // Purpose: Renew (copy-to-self) multiple S3 assets to reset their lifecycle expiration
+    // Returns: 200 with BatchRenewResponse body
+    // Errors: 400 (invalid body), 401 (unauthorized), 500 (server error)
+
+    struct BatchRenewRequest: Codable {
+        let assetKeys: [String]
+    }
+
+    struct BatchRenewResponse: Codable {
+        let renewed: Int
+        let failed: Int
+        let results: [AssetResult]
+
+        struct AssetResult: Codable {
+            let key: String
+            let success: Bool
+            let error: String?
+        }
+    }
+
+    // MARK: - IAP Subscription verify
+
+    /// Verify body is just the signed Apple JWS. The `appAccountToken` lives
+    /// inside the signed payload and the backend extracts it from there + binds
+    /// it to the JWT-authenticated account on first call; sending it in the
+    /// body too would let a caller claim someone else's transaction.
+    struct VerifySubscriptionRequest: Encodable {
+        let jwsRepresentation: String
+    }
+
+    struct VerifySubscriptionResponse: Decodable {
+        let subscription: UserSubscription
+    }
+}
+
+// MARK: - Goldilocks API models (registration, agents, channels, admin, billing)
+
+extension ConvosAPI {
     // MARK: - Goldilocks identity registration (SIWE)
 
     public struct GoldilocksChallengeRequest: Codable {
@@ -351,6 +407,9 @@ public enum ConvosAPI {
         /// regardless of seats / coverage, and the Membership screen
         /// hides the "Add coverage" purchase flow + enables Invoices.
         public let emeraldMembershipEnabled: Bool
+        /// How many people an Emerald client may enable (billed
+        /// externally). 0 when no Emerald allowance has been granted.
+        public let emeraldSeatLimit: Int
         public let referralCode: String?
         public let referralCreditCents: Int
         public let payingReferralCount: Int
@@ -361,6 +420,7 @@ public enum ConvosAPI {
             isAdmin: Bool,
             inboxId: String,
             emeraldMembershipEnabled: Bool = false,
+            emeraldSeatLimit: Int = 0,
             referralCode: String? = nil,
             referralCreditCents: Int = 0,
             payingReferralCount: Int = 0,
@@ -370,6 +430,7 @@ public enum ConvosAPI {
             self.isAdmin = isAdmin
             self.inboxId = inboxId
             self.emeraldMembershipEnabled = emeraldMembershipEnabled
+            self.emeraldSeatLimit = emeraldSeatLimit
             self.referralCode = referralCode
             self.referralCreditCents = referralCreditCents
             self.payingReferralCount = payingReferralCount
@@ -377,7 +438,7 @@ public enum ConvosAPI {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case clientNumber, isAdmin, inboxId, emeraldMembershipEnabled, referralCode, referralCreditCents, payingReferralCount, hasAppliedReferralCode
+            case clientNumber, isAdmin, inboxId, emeraldMembershipEnabled, emeraldSeatLimit, referralCode, referralCreditCents, payingReferralCount, hasAppliedReferralCode
         }
 
         public init(from decoder: any Decoder) throws {
@@ -386,6 +447,7 @@ public enum ConvosAPI {
             self.isAdmin = try container.decode(Bool.self, forKey: .isAdmin)
             self.inboxId = try container.decode(String.self, forKey: .inboxId)
             self.emeraldMembershipEnabled = try container.decodeIfPresent(Bool.self, forKey: .emeraldMembershipEnabled) ?? false
+            self.emeraldSeatLimit = try container.decodeIfPresent(Int.self, forKey: .emeraldSeatLimit) ?? 0
             self.referralCode = try container.decodeIfPresent(String.self, forKey: .referralCode)
             self.referralCreditCents = try container.decodeIfPresent(Int.self, forKey: .referralCreditCents) ?? 0
             self.payingReferralCount = try container.decodeIfPresent(Int.self, forKey: .payingReferralCount) ?? 0
@@ -482,13 +544,26 @@ public enum ConvosAPI {
         /// Admin-controlled Emerald override. When true, the tier is
         /// Emerald regardless of `monthlyRateCents` / `coverageActive`.
         public let emeraldMembershipEnabled: Bool
+        /// How many people the Emerald client may enable (billed
+        /// externally). 0 when no allowance has been granted.
+        public let emeraldSeatLimit: Int
+        /// Admin-controlled "client review" flag — true while a review
+        /// is open for this client.
+        public let reviewOpen: Bool
     }
 
     /// Body for `POST /v2/admin/clients/:inboxId/emerald` — admins
-    /// toggle a client's Emerald membership status.
+    /// toggle a client's Emerald membership status and, optionally, set
+    /// the people allowance that comes with it.
     public struct GoldilocksEmeraldToggleRequest: Codable, Sendable {
         public let enabled: Bool
-        public init(enabled: Bool) { self.enabled = enabled }
+        /// Omitted = leave the stored limit unchanged.
+        public let seatLimit: Int?
+
+        public init(enabled: Bool, seatLimit: Int? = nil) {
+            self.enabled = enabled
+            self.seatLimit = seatLimit
+        }
     }
 
     /// Response for the Emerald toggle endpoint. `changed` is false
@@ -497,6 +572,27 @@ public enum ConvosAPI {
         public let clientNumber: Int64
         public let emeraldMembershipEnabled: Bool
         public let changed: Bool
+    }
+
+    /// Body for `POST /v2/admin/clients/:inboxId/review` — admins open
+    /// or close a client review; any change posts an audit line to the
+    /// Admins chat.
+    public struct GoldilocksReviewToggleRequest: Codable, Sendable {
+        public let open: Bool
+        public init(open: Bool) { self.open = open }
+    }
+
+    /// Response for the client-review toggle endpoint.
+    public struct GoldilocksReviewToggleResponse: Codable, Sendable {
+        public let clientNumber: Int64
+        public let reviewOpen: Bool
+        public let changed: Bool
+
+        public init(clientNumber: Int64, reviewOpen: Bool, changed: Bool) {
+            self.clientNumber = clientNumber
+            self.reviewOpen = reviewOpen
+            self.changed = changed
+        }
     }
 
     public struct GoldilocksAdminChannelsResponse: Codable, Sendable {
@@ -676,6 +772,7 @@ public enum ConvosAPI {
         public let seats: Int
         public let coveredPeople: Int
         public let reportDay: String
+        public let hasPaymentMethod: Bool
 
         public init(
             activeUntil: String?,
@@ -685,7 +782,8 @@ public enum ConvosAPI {
             monthlyRateCents: Int,
             seats: Int,
             coveredPeople: Int = 0,
-            reportDay: String = "1st"
+            reportDay: String = "1st",
+            hasPaymentMethod: Bool = false
         ) {
             self.activeUntil = activeUntil
             self.coverageActive = coverageActive
@@ -695,6 +793,7 @@ public enum ConvosAPI {
             self.seats = seats
             self.coveredPeople = coveredPeople
             self.reportDay = reportDay
+            self.hasPaymentMethod = hasPaymentMethod
         }
 
         public init(from decoder: Decoder) throws {
@@ -707,6 +806,27 @@ public enum ConvosAPI {
             seats = try container.decode(Int.self, forKey: .seats)
             coveredPeople = try container.decodeIfPresent(Int.self, forKey: .coveredPeople) ?? 0
             reportDay = try container.decodeIfPresent(String.self, forKey: .reportDay) ?? "1st"
+            hasPaymentMethod = try container.decodeIfPresent(Bool.self, forKey: .hasPaymentMethod) ?? false
+        }
+    }
+
+    public struct GoldilocksPaymentMethodSetupResponse: Codable, Sendable {
+        /// Hosted Stripe Checkout (setup mode) URL the app opens in the browser.
+        public let checkoutUrl: String
+        /// Stripe Checkout Session id, passed back to confirm the saved card.
+        public let sessionId: String
+
+        public init(checkoutUrl: String, sessionId: String) {
+            self.checkoutUrl = checkoutUrl
+            self.sessionId = sessionId
+        }
+    }
+
+    public struct GoldilocksPaymentMethodConfirmResponse: Codable, Sendable {
+        public let hasPaymentMethod: Bool
+
+        public init(hasPaymentMethod: Bool) {
+            self.hasPaymentMethod = hasPaymentMethod
         }
     }
 
@@ -747,6 +867,7 @@ public enum ConvosAPI {
         public let seats: Int
         public let coveredPeople: Int
         public let reportDay: String
+        public let hasPaymentMethod: Bool
         public let activated: Bool
         public let deductedCents: Int
 
@@ -759,6 +880,7 @@ public enum ConvosAPI {
             seats: Int = 0,
             coveredPeople: Int = 0,
             reportDay: String = "1st",
+            hasPaymentMethod: Bool = false,
             activated: Bool = false,
             deductedCents: Int = 0
         ) {
@@ -770,6 +892,7 @@ public enum ConvosAPI {
             self.seats = seats
             self.coveredPeople = coveredPeople
             self.reportDay = reportDay
+            self.hasPaymentMethod = hasPaymentMethod
             self.activated = activated
             self.deductedCents = deductedCents
         }
@@ -862,58 +985,6 @@ public enum ConvosAPI {
         public init(version: Int) {
             self.version = version
         }
-    }
-
-    // MARK: - Common Error Response
-
-    public struct ErrorResponse: Codable {
-        public let error: String
-        public let details: [ValidationError]?
-        public let hint: String?
-    }
-
-    public struct ValidationError: Codable {
-        public let code: String
-        public let expected: String?
-        public let received: String?
-        public let path: [String]
-        public let message: String
-    }
-
-    // MARK: - v2/assets/renew-batch
-    // POST /v2/assets/renew-batch
-    // Purpose: Renew (copy-to-self) multiple S3 assets to reset their lifecycle expiration
-    // Returns: 200 with BatchRenewResponse body
-    // Errors: 400 (invalid body), 401 (unauthorized), 500 (server error)
-
-    struct BatchRenewRequest: Codable {
-        let assetKeys: [String]
-    }
-
-    struct BatchRenewResponse: Codable {
-        let renewed: Int
-        let failed: Int
-        let results: [AssetResult]
-
-        struct AssetResult: Codable {
-            let key: String
-            let success: Bool
-            let error: String?
-        }
-    }
-
-    // MARK: - IAP Subscription verify
-
-    /// Verify body is just the signed Apple JWS. The `appAccountToken` lives
-    /// inside the signed payload and the backend extracts it from there + binds
-    /// it to the JWT-authenticated account on first call; sending it in the
-    /// body too would let a caller claim someone else's transaction.
-    struct VerifySubscriptionRequest: Encodable {
-        let jwsRepresentation: String
-    }
-
-    struct VerifySubscriptionResponse: Decodable {
-        let subscription: UserSubscription
     }
 }
 

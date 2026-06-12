@@ -123,7 +123,8 @@ struct AdminClientPeopleListView: View {
         do {
             let response = try await session.setEmeraldMembership(
                 clientInboxId: channel.clientInboxId,
-                enabled: newValue
+                enabled: newValue,
+                seatLimit: nil
             )
             emeraldEnabled = response.emeraldMembershipEnabled
         } catch {
@@ -193,13 +194,13 @@ struct AdminClientPeopleListView: View {
                     .font(.caption)
                     .foregroundStyle(.colorTextSecondary)
             }
-            if !member.phone.isEmpty {
-                Text("Phone: \(member.phone)")
+            ForEach(member.phones, id: \.self) { phone in
+                Text("Phone: \(phone)")
                     .font(.caption)
                     .foregroundStyle(.colorTextSecondary)
             }
-            if !member.address.isEmpty {
-                Text(member.address.singleLine)
+            ForEach(member.addresses, id: \.self) { address in
+                Text(address.display)
                     .font(.caption)
                     .foregroundStyle(.colorTextSecondary)
             }

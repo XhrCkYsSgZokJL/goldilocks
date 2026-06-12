@@ -1,17 +1,18 @@
-// Monthly balance tick.
+// Monthly seat promotion tick.
 //
-// Run once per day (via the agent process). On the 1st of each month,
-// charges $125 per covered person from the prepaid balance. On other
-// days this is a no-op. Emerald clients can go negative; others floor
-// at zero and coverage lapses.
+// Run once per day (via the agent process). On the 1st of each month it
+// promotes people whose initial $100 coverage window has ended into the
+// per-seat Stripe subscription quantity, so Stripe bills them from that
+// month on. On other days it is a no-op.
 //
-// Idempotent within a calendar month: skips clients whose
-// last_balance_tick_at is already in the current month.
+// Stripe does the actual charging and proration — this tick only keeps the
+// subscription quantity in sync with the people who should now be billed.
+// Idempotent within a calendar month via last_balance_tick_at.
 
-import { and, eq, gt, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, eq, gt, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { clients } from '../db/schema.js';
-import { computeMonthlyTick } from './balance.js';
+import { clients, coveredPersons } from '../db/schema.js';
+import { setSeatQuantity } from './subscriptions.js';
 import { logger } from '../observability/logger.js';
 import { emitBillingEvent } from '../observability/billing-events.js';
 
@@ -28,7 +29,7 @@ export async function runDailyBalanceTick(): Promise<TickResult> {
   const now = new Date();
   const dayOfMonth = now.getUTCDate();
 
-  // Only charge on the 1st of the month.
+  // Only promote seats on the 1st of the month.
   if (dayOfMonth !== 1) {
     return { processed: 0, deducted: 0, lapsed: 0, skipped: 0 };
   }
@@ -42,72 +43,59 @@ export async function runDailyBalanceTick(): Promise<TickResult> {
       and(
         eq(clients.coverageEnabled, true),
         gt(clients.coveredPeople, 0),
-        or(
-          isNull(clients.lastBalanceTickAt),
-          lt(clients.lastBalanceTickAt, monthStart),
-        ),
+        or(isNull(clients.lastBalanceTickAt), lt(clients.lastBalanceTickAt, monthStart)),
       ),
     );
 
   const result: TickResult = { processed: 0, deducted: 0, lapsed: 0, skipped: 0 };
 
   for (const client of eligible) {
-    const tick = computeMonthlyTick(client);
+    const [row] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(coveredPersons)
+      .where(
+        and(
+          eq(coveredPersons.clientId, client.id),
+          eq(coveredPersons.enabled, true),
+          lte(coveredPersons.recurringStartsAt, now),
+        ),
+      );
+    const recurringQty: number = row?.count ?? 0;
 
-    if (tick.deductedCents === 0) {
+    try {
+      await setSeatQuantity(client, recurringQty);
+    } catch (error) {
+      log.warn({ clientId: client.id, error }, 'failed to sync subscription seat quantity');
       result.skipped += 1;
       continue;
     }
 
-    await db
-      .update(clients)
-      .set({
-        billingBalanceCents: tick.newBalanceCents,
-        referralCreditCents: tick.newReferralCreditCents,
-        lastBalanceTickAt: now,
-      })
-      .where(eq(clients.id, client.id));
+    await db.update(clients).set({ lastBalanceTickAt: now }).where(eq(clients.id, client.id));
 
-    result.processed += 1;
-    result.deducted += tick.deductedCents;
-
-    // Record one renewal screening event per enabled covered person for
-    // the admin stats trend. Best-effort: analytics must never break the
-    // billing tick.
-    try {
-      await db.execute(sql`
-        INSERT INTO screening_events (client_id, person_id, kind, occurred_at)
-        SELECT ${client.id}::uuid, person_id, 'renewal', ${now}
-        FROM covered_persons
-        WHERE client_id = ${client.id}::uuid AND enabled = true
-      `);
-    } catch (error) {
-      log.warn({ clientId: client.id, error }, 'failed to record renewal screening events');
-    }
-
-    if (tick.coverageLapsed) {
-      result.lapsed += 1;
-      emitBillingEvent(log, {
-        event: 'billing.balance.zeroed',
-        clientId: client.id,
-        inboxId: client.inboxId,
-        context: { reason: 'monthly_tick', coveredPeople: client.coveredPeople },
-      });
-    } else {
+    if (recurringQty > 0) {
+      result.processed += 1;
+      // Best-effort renewal screening events for the admin stats trend.
+      try {
+        await db.execute(sql`
+          INSERT INTO screening_events (client_id, person_id, kind, occurred_at)
+          SELECT ${client.id}::uuid, person_id, 'renewal', ${now}
+          FROM covered_persons
+          WHERE client_id = ${client.id}::uuid AND enabled = true AND recurring_starts_at <= ${now}
+        `);
+      } catch (error) {
+        log.warn({ clientId: client.id, error }, 'failed to record renewal screening events');
+      }
       emitBillingEvent(log, {
         event: 'billing.balance.settled',
         clientId: client.id,
         inboxId: client.inboxId,
-        context: {
-          deductedCents: tick.deductedCents,
-          newBalanceCents: tick.newBalanceCents,
-          coveredPeople: client.coveredPeople,
-          emerald: client.emeraldMembershipEnabled,
-        },
+        context: { reason: 'monthly_promotion', recurringSeats: recurringQty },
       });
+    } else {
+      result.skipped += 1;
     }
   }
 
-  log.info(result, 'monthly balance tick complete');
+  log.info(result, 'monthly seat promotion tick complete');
   return result;
 }

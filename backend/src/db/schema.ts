@@ -161,19 +161,35 @@ export const clients = pgTable('clients', {
   // overrides the auto-computed tier from seats + coverage — see
   // `computeTier` in src/billing/tier.ts.
   emeraldMembershipEnabled: boolean('emerald_membership_enabled').notNull().default(false),
+  // How many people an Emerald client may enable (migration 030). Emerald
+  // clients are billed externally — no card or Stripe subscription.
+  emeraldSeatLimit: integer('emerald_seat_limit').notNull().default(0),
   // Report delivery day: '1st' or '14th' of each month (migration 021).
   reportDay: text('report_day').notNull().default('1st'),
   // Client-controlled coverage toggle (migration 022). When false, the
   // monthly tick skips this client and reports are not delivered.
   coverageEnabled: boolean('coverage_enabled').notNull().default(true),
   // How many people currently have active coverage (report delivered,
-  // live events running). The monthly tick charges $125 * this.
+  // live events running). The monthly tick charges $100 * this.
   coveredPeople: integer('covered_people').notNull().default(0),
   // When the monthly balance tick last ran for this client.
   lastBalanceTickAt: timestamp('last_balance_tick_at', { withTimezone: true }),
   // Unique referral code for shareable Gold code URL (migration 024).
   referralCode: text('referral_code').unique(),
   referralCreditCents: integer('referral_credit_cents').notNull().default(0),
+  // Stripe subscription billing (migration 029). The client has one
+  // per-seat subscription ($100/mo × enabled seats) created when their
+  // first person is enabled; the item id is cached so we can adjust the
+  // seat quantity without re-fetching the subscription. These replace the
+  // prepaid-balance model — balance columns above are deprecated.
+  stripeSubscriptionId: text('stripe_subscription_id'),
+  stripeSubscriptionItemId: text('stripe_subscription_item_id'),
+  // Set true once the client completes the Stripe setup checkout and a card
+  // is on file. Gates enabling people (the $100 fee is taken off-session).
+  hasPaymentMethod: boolean('has_payment_method').notNull().default(false),
+  // Admin-controlled "client review" flag (migration 031). Toggling posts
+  // an audit line to the Admins chat.
+  reviewOpen: boolean('review_open').notNull().default(false),
 });
 
 // Referral tracking (migration 024). One row per referred client.
@@ -341,6 +357,13 @@ export const coveredPersons = pgTable('covered_persons', {
   activatedAt: timestamp('activated_at', { withTimezone: true }).notNull().defaultNow(),
   initialReportSentAt: timestamp('initial_report_sent_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  // Stripe subscription billing (migration 029). initialFeePaidAt records
+  // when the one-time $100 initial-report fee was charged (null = never,
+  // so a first enable charges it; re-enables are free). recurringStartsAt
+  // is when this person rolls into the per-seat subscription quantity —
+  // the 1st of the month after next, since the $100 covers them until then.
+  initialFeePaidAt: timestamp('initial_fee_paid_at', { withTimezone: true }),
+  recurringStartsAt: timestamp('recurring_starts_at', { withTimezone: true }),
 });
 
 // Append-only log of person activations and monthly renewals (migration
