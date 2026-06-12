@@ -569,8 +569,9 @@ struct MembershipView: View {
                 PersonEditorSheet(
                     mode: .add,
                     onSave: { newMember in
+                        // No confirmation alert: the new row appearing in the
+                        // People list is the feedback.
                         plan.members.append(newMember)
-                        showVerifyResult("\(newMember.displayName) was added to your membership.")
                     }
                 )
             }
